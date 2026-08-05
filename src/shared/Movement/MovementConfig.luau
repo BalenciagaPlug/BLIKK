@@ -1,11 +1,14 @@
 local MovementConfig = {
 
-    Dash = {
-        Distance = 24,
-        Speed = 70,
-        Cooldown = 0.18,
-        DoubleTapWindow = 0.25,
-    },
+Dash = {
+    Distance = 24,
+    Speed = 70,
+    Duration = 0.14,
+    Cooldown = 0.18,
+    DoubleTapWindow = 0.25,
+    AirDashLimit = 1,
+    PreserveVerticalVelocity = true,
+},
 
     Jump = {
         Height = 7.2,
