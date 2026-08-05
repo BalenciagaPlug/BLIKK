@@ -1,29 +1,35 @@
+local InputConfig = require(script.Parent.InputConfig)
+
 local ActionBuffer = {}
 
 ActionBuffer.Buffer = {}
-ActionBuffer.MaxBufferTime = 0.35
+ActionBuffer.MaxBufferTime = InputConfig.ActionBufferDurationSeconds
 
 function ActionBuffer:Push(action)
-    table.insert(self.Buffer, {
-        Action = action,
-        Time = os.clock()
-    })
+	table.insert(self.Buffer, {
+		Action = action,
+		Time = os.clock(),
+	})
 
-    self:Cleanup()
+	self:Cleanup()
 end
 
 function ActionBuffer:Cleanup()
-    local now = os.clock()
+	local now = os.clock()
 
-    for i = #self.Buffer, 1, -1 do
-        if now - self.Buffer[i].Time > self.MaxBufferTime then
-            table.remove(self.Buffer, i)
-        end
-    end
+	for i = #self.Buffer, 1, -1 do
+		if now - self.Buffer[i].Time > self.MaxBufferTime then
+			table.remove(self.Buffer, i)
+		end
+	end
 end
 
 function ActionBuffer:GetBuffer()
-    return self.Buffer
+	return self.Buffer
+end
+
+function ActionBuffer:Clear()
+	table.clear(self.Buffer)
 end
 
 return ActionBuffer

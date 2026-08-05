@@ -10,47 +10,42 @@ local isDashing = false
 local airDashCount = 0
 local lastDashTime = 0
 local lastDirectionPress = {}
+local characterGeneration = 0
+local currentHumanoid = nil
+local currentRootPart = nil
+local stateChangedConnection = nil
+local cameraController = nil
 
-local directionVectors = {
-	Forward = Vector3.new(0, 0, -1),
-	Backward = Vector3.new(0, 0, 1),
-	Left = Vector3.new(-1, 0, 0),
-	Right = Vector3.new(1, 0, 0),
+local directionCoefficients = {
+	Forward = Vector2.new(0, 1),
+	Backward = Vector2.new(0, -1),
+	Left = Vector2.new(-1, 0),
+	Right = Vector2.new(1, 0),
 }
-
-local function getCharacterParts()
-	local player = Players.LocalPlayer
-	local character = player.Character or player.CharacterAdded:Wait()
-
-	local humanoid = character:WaitForChild("Humanoid")
-	local rootPart = character:WaitForChild("HumanoidRootPart")
-
-	return character, humanoid, rootPart
-end
 
 local function isAirborne(humanoid)
 	return humanoid.FloorMaterial == Enum.Material.Air
 end
 
-local function getWorldDirection(rootPart, action)
-	local localDirection = directionVectors[action]
+local function getCameraRelativeDirection(action)
+	local coefficient = directionCoefficients[action]
 
-	if not localDirection then
+	if not coefficient or not cameraController then
 		return nil
 	end
 
-	local worldDirection = rootPart.CFrame:VectorToWorldSpace(localDirection)
-	local flatDirection = Vector3.new(worldDirection.X, 0, worldDirection.Z)
+	local cameraForward, cameraRight = cameraController:GetFlatBasis()
+	local direction = cameraRight * coefficient.X + cameraForward * coefficient.Y
 
-	if flatDirection.Magnitude <= 0 then
+	if direction.Magnitude <= 0 then
 		return nil
 	end
 
-	return flatDirection.Unit
+	return direction.Unit
 end
 
-function MovementEngine:Dash(action)
-	if isDashing then
+function MovementEngine:Dash(direction, generation)
+	if isDashing or generation ~= characterGeneration then
 		return
 	end
 
@@ -60,22 +55,16 @@ function MovementEngine:Dash(action)
 		return
 	end
 
-	local _, humanoid, rootPart = getCharacterParts()
+	local humanoid = currentHumanoid
+	local rootPart = currentRootPart
 
-	if humanoid.Health <= 0 then
+	if not humanoid or not rootPart or humanoid.Health <= 0 then
 		return
 	end
 
 	local airborne = isAirborne(humanoid)
 
 	if airborne and airDashCount >= MovementConfig.Dash.AirDashLimit then
-		print("[BLIKK] Air dash unavailable")
-		return
-	end
-
-	local direction = getWorldDirection(rootPart, action)
-
-	if not direction then
 		return
 	end
 
@@ -91,7 +80,7 @@ function MovementEngine:Dash(action)
 	local dashSpeed = MovementConfig.Dash.Distance / dashDuration
 	local elapsed = 0
 
-	while elapsed < dashDuration do
+	while elapsed < dashDuration and generation == characterGeneration do
 		local deltaTime = RunService.Heartbeat:Wait()
 		elapsed += deltaTime
 
@@ -112,6 +101,10 @@ function MovementEngine:Dash(action)
 		)
 	end
 
+	if generation ~= characterGeneration then
+		return
+	end
+
 	if rootPart.Parent then
 		rootPart.AssemblyLinearVelocity = Vector3.new(
 			0,
@@ -121,63 +114,85 @@ function MovementEngine:Dash(action)
 	end
 
 	isDashing = false
-
-	print("[BLIKK] Dash complete:", action, airborne and "Air" or "Ground")
 end
 
 function MovementEngine:HandleAction(action)
-	if not directionVectors[action] then
+	if not directionCoefficients[action] then
 		return
 	end
 
 	local now = os.clock()
 	local previousPress = lastDirectionPress[action]
-
 	lastDirectionPress[action] = now
 
-	if previousPress
-		and now - previousPress <= MovementConfig.Dash.DoubleTapWindow then
-		task.spawn(function()
-			self:Dash(action)
-		end)
+	if not previousPress or now - previousPress > MovementConfig.Dash.DoubleTapWindow then
+		return
 	end
+
+	-- Capture the camera frame before yielding so turning during the dash cannot bend its path.
+	local direction = getCameraRelativeDirection(action)
+
+	if not direction then
+		return
+	end
+
+	local generation = characterGeneration
+	task.spawn(function()
+		self:Dash(direction, generation)
+	end)
 end
 
-function MovementEngine:BindCharacter()
-	local _, humanoid = getCharacterParts()
+function MovementEngine:BindCharacter(character)
+	characterGeneration += 1
 
+	if stateChangedConnection then
+		stateChangedConnection:Disconnect()
+		stateChangedConnection = nil
+	end
+
+	currentHumanoid = character:WaitForChild("Humanoid")
+	currentRootPart = character:WaitForChild("HumanoidRootPart")
 	airDashCount = 0
 	isDashing = false
+	lastDashTime = 0
+	lastDirectionPress = {}
 
-	humanoid.StateChanged:Connect(function(_, newState)
+	stateChangedConnection = currentHumanoid.StateChanged:Connect(function(_, newState)
 		if newState == Enum.HumanoidStateType.Landed
 			or newState == Enum.HumanoidStateType.Running
-			or newState == Enum.HumanoidStateType.RunningNoPhysics then
+			or newState == Enum.HumanoidStateType.RunningNoPhysics
+		then
 			airDashCount = 0
 		end
 	end)
 end
 
-function MovementEngine:Init(inputManager)
+function MovementEngine:Init(inputManager, gameplayCamera)
 	if isInitialised then
 		return
 	end
 
 	isInitialised = true
+	cameraController = gameplayCamera
 
 	local player = Players.LocalPlayer
-
-	self:BindCharacter()
-
-	player.CharacterAdded:Connect(function()
-		self:BindCharacter()
+	player.CharacterAdded:Connect(function(character)
+		self:BindCharacter(character)
 	end)
+
+	if player.Character then
+		self:BindCharacter(player.Character)
+	end
 
 	inputManager.ActionBegan.Event:Connect(function(action)
 		self:HandleAction(action)
 	end)
 
-	print("[BLIKK] Movement Engine Initialised")
+	inputManager.GameplayEnabledChanged.Event:Connect(function(isEnabled)
+		if not isEnabled then
+			lastDirectionPress = {}
+		end
+	end)
 end
 
 return MovementEngine
