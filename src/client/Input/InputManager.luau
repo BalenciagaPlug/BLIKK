@@ -15,10 +15,12 @@ InputManager.ActionEnded = Instance.new("BindableEvent")
 InputManager.GameplayEnabledChanged = Instance.new("BindableEvent")
 InputManager.InputBegan = Instance.new("BindableEvent")
 InputManager.InputEnded = Instance.new("BindableEvent")
+InputManager.SuppressionChanged = Instance.new("BindableEvent")
 
 local isInitialised = false
 local isGameplayEnabled = true
 local isBindingCaptureActive = false
+local isTextInputActive = false
 local tokenToAction = {}
 
 local function rebuildLookup()
@@ -83,7 +85,7 @@ function InputManager:Init()
 	BindingState.Changed.Event:Connect(rebuildLookup)
 
 	UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if isBindingCaptureActive or gameProcessed then
+		if isBindingCaptureActive or isTextInputActive or gameProcessed then
 			return
 		end
 
@@ -103,7 +105,7 @@ function InputManager:Init()
 	end)
 
 	UserInputService.InputChanged:Connect(function(input, gameProcessed)
-		if isBindingCaptureActive or gameProcessed or input.UserInputType ~= Enum.UserInputType.MouseWheel then
+		if isBindingCaptureActive or isTextInputActive or gameProcessed or input.UserInputType ~= Enum.UserInputType.MouseWheel then
 			return
 		end
 
@@ -131,6 +133,14 @@ end
 
 function InputManager:SetBindingCaptureActive(isActive)
 	isBindingCaptureActive = isActive
+	if isActive then ActionBuffer:Clear() end
+	self.SuppressionChanged:Fire(isBindingCaptureActive or isTextInputActive)
+end
+
+function InputManager:SetTextInputActive(isActive)
+	isTextInputActive = isActive
+	if isActive then ActionBuffer:Clear() end
+	self.SuppressionChanged:Fire(isBindingCaptureActive or isTextInputActive)
 end
 
 return InputManager

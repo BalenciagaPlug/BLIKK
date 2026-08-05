@@ -7,6 +7,8 @@ local MovementEngine = {}
 MovementEngine.DashStarted = Instance.new("BindableEvent")
 MovementEngine.DashUpdated = Instance.new("BindableEvent")
 MovementEngine.DashEnded = Instance.new("BindableEvent")
+MovementEngine.JumpAccepted = Instance.new("BindableEvent")
+MovementEngine.Landed = Instance.new("BindableEvent")
 
 local config = MovementConfig.Dash
 local isInitialised = false
@@ -125,7 +127,13 @@ local function tryDash(action, direction)
 end
 
 function MovementEngine:HandleAction(action)
-	if action == "Jump" then if humanoid and humanoid.Health > 0 then humanoid.Jump = true end return end
+	if action == "Jump" then
+		if humanoid and humanoid.Health > 0 then
+			humanoid.Jump = true
+			self.JumpAccepted:Fire(os.clock(), humanoid.FloorMaterial == Enum.Material.Air)
+		end
+		return
+	end
 	if not directions[action] then return end
 	heldDirections[action] = true
 	local now = os.clock()
@@ -141,6 +149,17 @@ function MovementEngine:HandleActionEnded(action)
 	if directions[action] then heldDirections[action] = nil end
 end
 
+function MovementEngine:GetMoveVector()
+	if not cameraController then return Vector3.zero end
+	local forward, right = cameraController:GetFlatBasis()
+	local movement = Vector3.zero
+	for action in heldDirections do
+		local coefficient = directions[action]
+		movement += right * coefficient.X + forward * coefficient.Y
+	end
+	return if movement.Magnitude > 1 then movement.Unit else movement
+end
+
 function MovementEngine:BindCharacter(character)
 	generation += 1
 	finishDash(true)
@@ -149,7 +168,10 @@ function MovementEngine:BindCharacter(character)
 	rootPart = character:WaitForChild("HumanoidRootPart")
 	airDashCount, lastDashTime, lastDirectionPress, heldDirections = 0, -math.huge, {}, {}
 	stateConnection = humanoid.StateChanged:Connect(function(_, newState)
-		if newState == Enum.HumanoidStateType.Landed or newState == Enum.HumanoidStateType.Running then airDashCount = 0 end
+		if newState == Enum.HumanoidStateType.Landed or newState == Enum.HumanoidStateType.Running then
+			airDashCount = 0
+			MovementEngine.Landed:Fire(os.clock())
+		end
 	end)
 end
 

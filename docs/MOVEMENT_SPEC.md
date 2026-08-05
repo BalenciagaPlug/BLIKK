@@ -1,294 +1,90 @@
-Create and directly write a comprehensive movement design specification into:
-
-docs/MOVEMENT_SPEC.md
-
-Read:
-- AGENTS.md
-- docs/BLIKK_LORE.md
-- the complete current movement, input, camera, settings and dash implementation
-- all relevant config modules
-
-Do not modify gameplay code in this task.
-Do not commit or push anything.
-
-PURPOSE
-
-MOVEMENT_SPEC.md must become the authoritative design and technical source of truth for all BLIKK movement systems.
-
-BLIKK is a Roblox movement-combat game inspired by the skill expression and responsiveness of GunZ: The Duel, but it must remain original and Roblox-native.
-
-The document must preserve the project’s current philosophy:
-
-- Movement is the game.
-- Responsiveness beats realism.
-- Player expression beats automation.
-- Animations and effects must communicate movement without delaying input.
-- Mechanics should combine into a high-skill K-style-inspired system.
-- BLIKK Movement Lab is the dedicated training environment.
-- Future competitive content belongs to BLIKK: The Duels.
-
-DOCUMENT REQUIREMENTS
-
-Include these sections:
-
 # BLIKK Movement Specification
 
 ## 1. Purpose
-Explain what the document controls and how Codex or developers must use it.
+
+This document is the movement source of truth for BLIKK. Gameplay feel is authoritative: responsiveness, predictable direction, and player expression take priority over realism or visual polish. Current behaviour is distinguished from provisional tuning and planned systems.
 
 ## 2. Movement Pillars
-Define:
-- responsiveness,
-- flow,
-- commitment,
-- readability,
-- consistency,
-- expression,
-- performance,
-- cancelability.
 
-Clarify where commitment is desirable and where control must be preserved.
+- **Responsiveness:** accepted input affects play immediately.
+- **Flow:** compatible actions chain without artificial pauses.
+- **Commitment:** recovery matters only when it creates readable, fair decisions.
+- **Readability:** players can understand direction, state, and cancellation.
+- **Consistency:** equal state and ordered input produce equal rules.
+- **Expression:** mastery comes from timing and composition, not automation.
+- **Performance:** movement remains identical at every visual quality tier.
+- **Cancelability:** transitions are explicit; presentation never traps gameplay.
 
 ## 3. Input Architecture
-Document the current intended flow:
 
-Physical Input
-→ Binding State
-→ Semantic Action
-→ Action Buffer
-→ Movement State
-→ Technique Detection
-→ Presentation
-
-Explain:
-- two binding slots,
-- rebinding,
-- double-tap detection,
-- input buffering,
-- settings suppression,
-- scoreboard/menu safety,
-- why mechanics must use semantic actions rather than hardcoded keys.
+Current flow is Physical Input → Binding State → Semantic Action → Action Buffer → Movement State → future Technique Detection → Presentation. Actions support primary and secondary bindings. Movement consumes semantic actions rather than hardcoded keys. Double taps and buffered sequences use ordered timestamps. Settings, menus, binding capture, and chat composition suppress gameplay actions safely.
 
 ## 4. Timing Philosophy
-Define timing in seconds rather than vague frame counts.
 
-Cover:
-- input windows,
-- buffer windows,
-- cancel windows,
-- cooldowns,
-- recovery,
-- early/late tolerance,
-- why high-level techniques must remain fast enough for expert input,
-- why animation contact frames must not determine whether a valid input sequence succeeds.
+Timing is expressed in seconds. Input, buffer, cancel, cooldown, and recovery windows are independently configurable. Expert sequences must accept fast intentional input. Animation contact frames communicate outcomes but never decide whether a valid semantic sequence succeeds.
 
 ## 5. Movement State Model
-Define the expected state system, including:
 
-- Idle
-- Grounded Locomotion
-- Jumping
-- Falling
-- Ground Dash
-- Air Dash
-- Landing
-- Future Wall Interaction
-- Future Slash
-- Future Block
-- Future Weapon Action
-- Future Technique State
-
-Explain:
-- which states may overlap,
-- which are exclusive,
-- interruption rules,
-- cleanup,
-- respawn reset,
-- settings/menu interruption.
+Currently implemented states are grounded locomotion, jumping/falling, ground dash, air dash, landing reset, and client-side Training Katana slash/block presentation. Dash phases are Entry, Travel, and Exit. Planned states include wall interaction, authoritative weapon action, and composed techniques. Exclusive states own velocity while overlays such as presentation observe them. Death, respawn, menu entry, settings, and character replacement cancel stale state.
 
 ## 6. Dash Specification
-Document the current dash foundation and intended feel.
 
-Include:
-- double-tap directional activation,
-- camera-relative direction capture,
-- fixed travel direction,
-- ground and air dash differences,
-- one current air dash before landing,
-- entry/travel/exit phases,
-- momentum-retaining exit,
-- no run-in-place animation,
-- future cancel hooks,
-- effects and presentation independence.
+Directional double taps activate a camera-relative dash. Direction is captured on the accepted second tap and cannot bend during travel. Ground and air dashes have separate distance and cooldown values. One air dash is currently available before landing. Vertical momentum is preserved at activation.
 
-Record the current provisional starting values from MovementConfig, but clearly label them tunable rather than permanent.
+Current provisional values are 14.5 studs ground distance, 13 studs air distance, a 0.25-second double-tap window, 0.24-second ground cooldown, and 0.30-second air cooldown. Entry, travel, and exit last 0.035, 0.115, and 0.085 seconds. These are playtest values, not permanent balance.
 
-Also describe the target subjective feeling:
-- immediate,
-- explosive,
-- addictive,
-- repeatable,
-- readable,
-- suitable for chaining into K-style techniques.
+The intended result is immediate, explosive, addictive, repeatable, readable, and suitable for future K-style chaining. Animation, effects, and camera impulses remain independent from dash validity.
 
 ## 7. Jump and Air Control
-Define:
-- jump responsibility,
-- vertical momentum preservation,
-- air control expectations,
-- landing reset,
-- future wall-jump compatibility,
-- why dash must not destroy jump timing.
+
+Humanoid jump currently supplies vertical movement. Dash preserves vertical momentum and must not erase jump timing. Landing resets the air-dash allowance. Future air control and wall jumps must integrate through explicit state transitions rather than replacing the current dash contract.
 
 ## 8. Camera Relationship
-Document:
-- centred crosshair,
-- camera-relative movement,
-- character yaw,
-- captured dash heading,
-- no mid-dash bending,
-- neutral horizon-facing framing,
-- no camera latency,
-- subtle configurable feedback only.
 
-Reference CAMERA_SPEC.md as the future detailed source without inventing content that is not written yet.
+The crosshair remains mathematically centred. Locomotion and dash use the flat camera basis, character yaw follows camera yaw, and accepted dash headings remain fixed. Neutral framing looks toward the horizon without camera latency. Presentation feedback must be subtle and configurable. See `CAMERA_SPEC.md` for camera rules.
 
 ## 9. Presentation Rules
-For every movement mechanic, require relevant:
 
-- authored animation slots,
-- procedural fallback,
-- directional poses,
-- VFX,
-- camera feedback,
-- audio hooks,
-- effects-quality scaling,
-- Reduced Effects behaviour.
-
-Clarify:
-- gameplay may never depend on presentation assets loading,
-- no fabricated animation or sound IDs,
-- no copyrighted GunZ assets,
-- cleanup on interruption/death/respawn,
-- presentation must respond instantly to cancellation.
+Movement presentation may provide authored animation hooks, procedural fallbacks, directional poses, VFX, camera feedback, and audio. Gameplay never waits for assets. Do not fabricate asset IDs or use copyrighted assets. Presentation must clean up on cancellation, death, respawn, and replacement, and must scale through effects quality and Reduced Effects.
 
 ## 10. K-Style Technique Framework
-Define each future technique conceptually without implementing it:
 
-- Butterfly
-- Double Butterfly
-- Triple Butterfly
-- Slash Shot
-- Reload Shot
-- Half Step
-- Reload Half Step
-- Wall Cancel
-- Future advanced combinations
+Butterfly candidate detection is currently implemented as lightweight local telemetry. An airborne slash cancelled into block inside the configured timing creates a candidate; additional valid cancels in the same airborne sequence create chain candidates. Landing, invalid state, input suppression, character replacement, or weapon switching breaks the sequence. Wall jumps continue the airborne sequence and expose provisional Wall Butterfly hooks. No candidate awards score, progression, damage, or tutorial completion.
 
-For each technique, describe:
-- semantic action sequence,
-- purpose,
-- required underlying primitives,
-- why timing must be configurable,
-- detection should come from action order and timing rather than animation coincidence.
-
-Do not invent final timing values yet.
-Mark them as playtest-driven.
+Double Butterfly, Triple Butterfly, Slash Shot, Reload Shot, Half Step, Reload Half Step, formal Wall Butterfly, Wall Cancel, and later combinations remain planned. Detection uses semantic action order and timestamps rather than animation coincidence.
 
 ## 11. Cancellation Model
-Define:
-- hard cancel,
-- soft cancel,
-- buffered follow-up,
-- presentation-only interruption,
-- movement-state interruption.
 
-Explain how future slash, block, reload and weapon-swap actions should integrate without rewriting dash.
+- A hard cancel ends the source state immediately.
+- A soft cancel enters defined recovery or retained momentum.
+- A buffered follow-up executes when its eligibility window opens.
+- A presentation interruption stops visuals without changing gameplay state.
+- A movement interruption transfers velocity ownership through an explicit transition.
+
+The current Training Katana implements buffered slash-to-block presentation cancellation without changing velocity. Future authoritative combat actions must preserve this contract without rewriting dash.
+
+Training Katana cancel timing is owned by the per-weapon profile in `TechniqueConfig`: 0.025 seconds anticipation, 0.115 seconds active swing, 0.160 seconds recovery, a 0.055–0.205-second cancel window, 0.080 seconds early buffering, 0.035 seconds post-cancel block blend, 0.070 seconds landing forgiveness, 0.060 seconds air-action forgiveness, and a 0.045-second repeated-sequence lockout. All values are provisional.
+
+### 11.1 Wall Interaction Foundation
+
+Wall contact and wall jump are currently implemented as a client-side prototype. Detection uses one bounded forward/side raycast path, authored wall metadata where available, and a conservative vertical-geometry fallback. Wall launch combines outward normal, held camera-relative input, and retained tangential momentum. Immediate same-wall repetition is rejected; alternating walls remain chainable. See `WALL_INTERACTION.md` for states, metadata, calibration geometry, and limitations.
 
 ## 12. Environment Requirements
-Explain how Movement Lab geometry must support:
 
-- dash lanes,
-- side-dash readability,
-- wall-jump practice,
-- wall-cancel corners,
-- Butterfly spacing,
-- Triple Butterfly rhythm,
-- shotgun swap lanes,
-- elevated routes,
-- open duel space,
-- repeatable movement loops.
-
-Clarify that the environment must be measured against real character scale and movement distances.
+Movement environments require measured streets, side-dash visibility, opposing walls, corner transitions, elevated routes, duel space, drop routes, and repeatable loops. District Zero provides natural practice geometry for social and advanced play; it is not a tutorial. A future tutorial map may explicitly teach dash, Flash Step, Light Step, Block Step, Block Launch, Slash Shot, Reload Shot, and Double Butterfly.
 
 ## 13. Networking Direction
-State that current work is a client-side feel prototype.
 
-Document future goals:
-- responsive client prediction,
-- server validation,
-- anti-cheat considerations,
-- authoritative combat,
-- tolerance for latency,
-- preserving feel without trusting impossible movement.
-
-Do not design the full networking protocol yet.
+Current movement is a responsive client-side feel prototype. Future competitive play requires client prediction, server validation, latency tolerance, authoritative combat, and rejection of impossible movement. No full movement protocol is specified yet.
 
 ## 14. Performance Requirements
-Include:
-- no unnecessary per-frame allocations,
-- no leaking connections,
-- no duplicate respawn listeners,
-- pooled effects where useful,
-- potato-PC support,
-- quality tiers,
-- movement identical across visual-quality settings,
-- diagnostics disabled by default.
+
+Avoid unnecessary per-frame allocations, leaked connections, duplicate respawn listeners, and unbounded histories. Pool effects when useful. Diagnostics remain disabled by default. Visual quality may change presentation but never movement or collision.
 
 ## 15. Testing Standard
-Create a repeatable movement playtest checklist covering:
 
-- activation reliability,
-- direction correctness,
-- ground/air behaviour,
-- held-input behaviour,
-- interruption,
-- respawn,
-- rebinding,
-- settings suppression,
-- effects quality,
-- subjective feel.
+Playtests cover activation reliability, four-direction correctness, captured headings, ground and air limits, held inputs, jump momentum, interruption, death, respawn, rebinding, menu/chat/settings suppression, effects tiers, environment clearance, and subjective rhythm. Roblox Studio testing and owner feel approval are mandatory.
 
 ## 16. Definition of Done
-A movement feature is not complete merely because it executes.
 
-It must:
-- function reliably,
-- feel intentional,
-- have relevant animation/presentation,
-- expose config,
-- survive respawn,
-- respect rebinding and menus,
-- scale to low-end hardware,
-- support future techniques,
-- pass Roblox Studio playtesting,
-- receive user approval before Git checkpoint.
-
-STYLE REQUIREMENTS
-
-- Professional Markdown.
-- Clear and authoritative.
-- Detailed enough for long-term development.
-- Avoid generic enterprise filler.
-- Match BLIKK’s current rapid-prototype stage.
-- Distinguish current implemented behaviour from future design intent.
-- Do not claim systems exist when they do not.
-- Preserve the project’s terminology.
-- Keep gameplay feel central.
-
-At completion, report:
-1. Sections written.
-2. Existing code/config inspected.
-3. Current behaviour documented.
-4. Future behaviour marked as planned.
-5. Any inconsistencies or design questions discovered.
+A movement feature must function reliably, feel intentional, expose tuning through shared config, support appropriate presentation, survive respawn, respect semantic rebinding and interface suppression, run on low-end hardware, integrate with future techniques, pass Studio testing, and receive owner approval before any Git checkpoint description is prepared.

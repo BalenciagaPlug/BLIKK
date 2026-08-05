@@ -14,6 +14,8 @@ local config = MovementConfig.Dash.Presentation
 local activeAction = nil
 local poseJoints = {}
 local gameplayCamera = nil
+local airReady = false
+local humanoidStateConnection = nil
 
 local directionPose = {
 	Forward = { Pitch = -1, Roll = 0, Twist = 1 },
@@ -46,6 +48,7 @@ end
 
 function Controller:Interrupt()
 	activeAction = nil
+	airReady = false
 	resetJoints()
 	if gameplayCamera then gameplayCamera:SetDashFovOffset(0) end
 end
@@ -102,7 +105,16 @@ local function emitStreaks(rootPart, direction, grounded)
 end
 
 local function applyPose()
-	if not activeAction or SessionSettings:Get("ReducedEffects") or not config.Enabled then return end
+	if (not activeAction and not airReady) or not config.Enabled then return end
+	if airReady and not activeAction then
+		if poseJoints.Root then poseJoints.Root.Transform = CFrame.Angles(math.rad(-7), 0, 0) end
+		if poseJoints.Waist then poseJoints.Waist.Transform = CFrame.Angles(math.rad(4), 0, 0) end
+		if poseJoints.LeftShoulder then poseJoints.LeftShoulder.Transform = CFrame.Angles(math.rad(-18), 0, math.rad(-12)) end
+		if poseJoints.RightShoulder then poseJoints.RightShoulder.Transform = CFrame.Angles(math.rad(-18), 0, math.rad(12)) end
+		if poseJoints.LeftHip then poseJoints.LeftHip.Transform = CFrame.Angles(math.rad(15), 0, math.rad(-7)) end
+		if poseJoints.RightHip then poseJoints.RightHip.Transform = CFrame.Angles(math.rad(-9), 0, math.rad(7)) end
+		return
+	end
 	local pose = directionPose[activeAction]
 	if not pose then return end
 	local lean = math.rad(config.CharacterLeanDegrees)
@@ -111,20 +123,33 @@ local function applyPose()
 	local tuck = math.rad(config.HipTuckDegrees)
 	if poseJoints.Root then poseJoints.Root.Transform = CFrame.Angles(pose.Pitch * lean, twist, pose.Roll * lean) end
 	if poseJoints.Waist then poseJoints.Waist.Transform = CFrame.Angles(pose.Pitch * lean * 0.45, -twist, pose.Roll * lean * 0.6) end
-	if poseJoints.LeftShoulder then poseJoints.LeftShoulder.Transform = CFrame.Angles(-brace, 0, -pose.Roll * brace * 0.5) end
-	if poseJoints.RightShoulder then poseJoints.RightShoulder.Transform = CFrame.Angles(-brace, 0, -pose.Roll * brace * 0.5) end
-	if poseJoints.LeftHip then poseJoints.LeftHip.Transform = CFrame.Angles(tuck + pose.Pitch * tuck, 0, -pose.Roll * tuck) end
-	if poseJoints.RightHip then poseJoints.RightHip.Transform = CFrame.Angles(-tuck + pose.Pitch * tuck, 0, -pose.Roll * tuck) end
+	if poseJoints.LeftShoulder then poseJoints.LeftShoulder.Transform = CFrame.Angles(-brace, 0, -pose.Roll * brace * 0.8) end
+	if poseJoints.RightShoulder then poseJoints.RightShoulder.Transform = CFrame.Angles(-brace, 0, pose.Roll * brace * 0.35) end
+	if poseJoints.LeftHip then poseJoints.LeftHip.Transform = CFrame.Angles(tuck + pose.Pitch * tuck, 0, -pose.Roll * tuck * 1.2) end
+	if poseJoints.RightHip then poseJoints.RightHip.Transform = CFrame.Angles(-tuck + pose.Pitch * tuck, 0, pose.Roll * tuck * 0.45) end
 end
 
 function Controller:Init(movementEngine, cameraController)
 	gameplayCamera = cameraController
 	local player = Players.LocalPlayer
-	player.CharacterAdded:Connect(function(character) self:Interrupt(); bindPoseJoints(character) end)
-	if player.Character then bindPoseJoints(player.Character) end
+	local function bindCharacter(character)
+		self:Interrupt()
+		bindPoseJoints(character)
+		if humanoidStateConnection then humanoidStateConnection:Disconnect() end
+		local humanoid = character:WaitForChild("Humanoid")
+		humanoidStateConnection = humanoid.StateChanged:Connect(function(_, nextState)
+			if nextState == Enum.HumanoidStateType.Landed or nextState == Enum.HumanoidStateType.Running then
+				airReady = false
+				if not activeAction then resetJoints() end
+			end
+		end)
+	end
+	player.CharacterAdded:Connect(bindCharacter)
+	if player.Character then bindCharacter(player.Character) end
 	movementEngine.DashStarted.Event:Connect(function(action, direction, grounded)
 		if not config.Enabled then return end
 		activeAction = action
+		airReady = false
 		local rootPart = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 		if rootPart and config.Enabled then emitStreaks(rootPart, direction, grounded) end
 		if not SessionSettings:Get("ReducedEffects") then cameraController:SetDashFovOffset(config.CameraFovImpulseDegrees) end
@@ -139,9 +164,11 @@ function Controller:Init(movementEngine, cameraController)
 			cameraController:SetDashFovOffset(config.CameraFovImpulseDegrees * (1 - progress) ^ 2)
 		end
 	end)
-	movementEngine.DashEnded.Event:Connect(function() self:Interrupt() end)
-	SessionSettings.Changed.Event:Connect(function(key, value)
-		if key == "ReducedEffects" and value then self:Interrupt() end
+	movementEngine.DashEnded.Event:Connect(function(_, _, grounded)
+		activeAction = nil
+		airReady = not grounded
+		cameraController:SetDashFovOffset(0)
+		if not airReady then resetJoints() end
 	end)
 	RunService:BindToRenderStep("BLIKKDashPose", Enum.RenderPriority.Character.Value + 1, applyPose)
 end

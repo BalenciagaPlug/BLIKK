@@ -33,6 +33,12 @@ local SettingsConfig = {
 		InputOverlayScale = 1,
 		ReducedEffects = false,
 		EffectsQuality = "HIGH",
+		BladeTrailVisible = true,
+		BladeTrailOpacity = 0.28,
+		ChatVisible = true,
+		ChatOpacity = 0.42,
+		ChatScale = 1,
+		ChatTimestamps = true,
 	},
 
 	ExtrasRanges = {
@@ -44,6 +50,9 @@ local SettingsConfig = {
 		UIScale = { Minimum = 0.75, Maximum = 1.25, Step = 0.05 },
 		HudScale = { Minimum = 0.75, Maximum = 1.25, Step = 0.05 },
 		InputOverlayScale = { Minimum = 0.75, Maximum = 1.4, Step = 0.05 },
+		ChatOpacity = { Minimum = 0.15, Maximum = 0.85, Step = 0.05 },
+		ChatScale = { Minimum = 0.75, Maximum = 1.25, Step = 0.05 },
+		BladeTrailOpacity = { Minimum = 0.05, Maximum = 0.8, Step = 0.05 },
 	},
 }
 

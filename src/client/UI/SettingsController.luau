@@ -110,6 +110,8 @@ local displaySliders = {
 	{ Key = "HudScale", Label = "GAMEPLAY HUD SCALE", Decimals = 0, Suffix = "%", DisplayMultiplier = 100 },
 	{ Key = "InputOverlayScale", Label = "INPUT OVERLAY SCALE", Decimals = 0, Suffix = "%", DisplayMultiplier = 100 },
 	{ Key = "InputOverlayOpacity", Label = "INPUT OVERLAY OPACITY", Decimals = 0, Suffix = "%", DisplayMultiplier = 100 },
+	{ Key = "ChatOpacity", Label = "CHAT OPACITY", Decimals = 0, Suffix = "%", DisplayMultiplier = 100 },
+	{ Key = "ChatScale", Label = "CHAT SCALE", Decimals = 0, Suffix = "%", DisplayMultiplier = 100 },
 }
 
 local function addCorner(instance, radiusPixels)
@@ -617,7 +619,7 @@ local function createExtrasPage(parent)
 	content.BackgroundTransparency = 1
 	content.BorderSizePixel = 0
 	content.Size = UDim2.fromScale(1, 1)
-	content.CanvasSize = UDim2.fromOffset(0, 610)
+	content.CanvasSize = UDim2.fromOffset(0, 835)
 	content.ScrollBarThickness = 5
 	content.ScrollBarImageColor3 = colors.AccentDim
 	content.Parent = parent
@@ -627,17 +629,19 @@ local function createExtrasPage(parent)
 	for index, definition in displaySliders do
 		createSlider(content, definition, index, SessionSettings, SettingsConfig.ExtrasRanges)
 	end
-	createToggle(content, "HudVisible", "GAMEPLAY HUD", 1, SessionSettings, 322)
-	createToggle(content, "InputOverlayVisible", "LIVE INPUT OVERLAY", 1, SessionSettings, 373)
-	createToggle(content, "ReducedEffects", "REDUCED DASH EFFECTS", 1, SessionSettings, 424)
-	local quality = createButton(content, "EffectsQuality", "EFFECTS QUALITY // " .. SessionSettings:Get("EffectsQuality"), UDim2.fromOffset(16, 478), UDim2.new(1, -32, 0, 38))
+	createToggle(content, "HudVisible", "GAMEPLAY HUD", 1, SessionSettings, 444)
+	createToggle(content, "InputOverlayVisible", "LIVE INPUT OVERLAY", 1, SessionSettings, 495)
+	createToggle(content, "ReducedEffects", "REDUCED DASH EFFECTS", 1, SessionSettings, 546)
+	createToggle(content, "ChatVisible", "BLIKK CHAT", 1, SessionSettings, 597)
+	createToggle(content, "ChatTimestamps", "CHAT TIMESTAMPS", 1, SessionSettings, 648)
+	local quality = createButton(content, "EffectsQuality", "EFFECTS QUALITY // " .. SessionSettings:Get("EffectsQuality"), UDim2.fromOffset(16, 700), UDim2.new(1, -32, 0, 38))
 	quality.Activated:Connect(function()
 		local current = SessionSettings:Get("EffectsQuality")
 		local nextValue = if current == "HIGH" then "MEDIUM" elseif current == "MEDIUM" then "LOW" else "HIGH"
 		SessionSettings:Set("EffectsQuality", nextValue)
 		quality.Text = "EFFECTS QUALITY // " .. nextValue
 	end)
-	createLabel(content, "ResolutionNote", "ROBLOX CONTROLS WINDOW / MONITOR RESOLUTION. BLIKK ONLY SCALES ITS OWN UI.", UDim2.fromOffset(16, 530), UDim2.new(1, -32, 0, 34), 9, colors.TextMuted).TextWrapped = true
+	createLabel(content, "ResolutionNote", "ROBLOX CONTROLS RESOLUTION, PRIVACY AND TEXT FILTERING. BLIKK SCALES ONLY ITS OWN UI.", UDim2.fromOffset(16, 752), UDim2.new(1, -32, 0, 34), 9, colors.TextMuted).TextWrapped = true
 end
 
 local function selectTab(tabName)

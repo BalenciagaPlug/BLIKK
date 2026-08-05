@@ -154,3 +154,9 @@ BLIKK fighters are independent operatives registered through a private operation
 The Operations Hub is the fighter’s preparation space: a dark industrial terminal for selecting assignments, reviewing equipment, managing appearance, and entering training. The Movement Lab is the first active operation, built to develop the movement discipline required for later combat.
 
 Male and female fighters share the same competitive capabilities. Appearance, armour, and identity are expressive choices and must not create hidden movement or combat advantages.
+
+## District Zero
+
+District Zero is the first district repurposed by the operations network as a public Movement Lab. It remains a lived-in industrial neighbourhood rather than a formal tutorial facility. Fighters orient around the old Clock Tower and discover movement routes through Market, Court, Transit Station, Generator, Parking Garage, Canal, Construction, Apartments, and the service alleys.
+
+The Clock Tower dominates the skyline and serves as the district's universal callout. District Zero supports practice, demonstrations, informal duels, and social activity. Explicit lessons belong to a future dedicated tutorial environment, not this district.

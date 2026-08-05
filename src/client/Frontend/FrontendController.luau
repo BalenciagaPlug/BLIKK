@@ -1,7 +1,9 @@
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local CharacterCreationController = require(script.Parent.CharacterCreationController)
 local CharacterProfilesController = require(script.Parent.CharacterProfilesController)
+local MultiplayerBrowserController = require(script.Parent.MultiplayerBrowserController)
 local NavigationController = require(script.Parent.NavigationController)
 local OperationsHubController = require(script.Parent.OperationsHubController)
 local SplashScreenController = require(script.Parent.SplashScreenController)
@@ -14,6 +16,7 @@ local frontendGui = nil
 local inputManagerReference = nil
 local gameplayCameraReference = nil
 local settingsControllerReference = nil
+local chatControllerReference = nil
 
 local function setFrontendActive(isActive)
 	frontendGui.Enabled = isActive
@@ -29,16 +32,18 @@ function FrontendController:ReturnToOperationsHub()
 	if not isInitialised or not isInGameplay then return false end
 	isInGameplay = false
 	setFrontendActive(true)
+	chatControllerReference:SetContext("Hidden")
 	NavigationController:GoTo("OperationsHub", CharacterProfilesController:GetSelectedProfile())
 	return true
 end
 
-function FrontendController:Init(inputManager, gameplayCamera, fighterController, settingsController, musicController)
+function FrontendController:Init(inputManager, gameplayCamera, fighterController, settingsController, musicController, chatController)
 	if isInitialised then return end
 	isInitialised = true
 	inputManagerReference = inputManager
 	gameplayCameraReference = gameplayCamera
 	settingsControllerReference = settingsController
+	chatControllerReference = chatController
 	inputManager:SetGameplayEnabled(false)
 	gameplayCamera:SetInterfaceOpen(true)
 	SessionSettings:Set("HudVisible", false)
@@ -57,20 +62,28 @@ function FrontendController:Init(inputManager, gameplayCamera, fighterController
 		isInGameplay = true
 		NavigationController:Suspend()
 		setFrontendActive(false)
+		chatController:SetContext("Training")
+		local remotes = ReplicatedStorage:WaitForChild("BLIKKRemotes")
+		remotes:WaitForChild("RequestMovementLabSpawn"):FireServer()
 		musicController:SetContext("MovementLab")
 	end
 
 	NavigationController:Register("Splash", SplashScreenController:Create(frontendGui, NavigationController))
 	NavigationController:Register("Creation", CharacterCreationController:CreatePage(frontendGui, NavigationController))
 	NavigationController:Register("Profiles", CharacterProfilesController:CreatePage(frontendGui, NavigationController, fighterController))
+	NavigationController:Register("Multiplayer", MultiplayerBrowserController:CreatePage(frontendGui, NavigationController))
 	NavigationController:Register("OperationsHub", OperationsHubController:CreatePage(
 		frontendGui,
 		enterMovementLab,
 		function() settingsController:OpenFromFrontend() end,
+		function() NavigationController:GoTo("Multiplayer") end,
 		inputManager
 	))
 	settingsController:SetReturnToMenuCallback(function() self:ReturnToOperationsHub() end)
 	settingsController:SetFrontendActive(true)
+	NavigationController.Changed.Event:Connect(function(route)
+		if not isInGameplay then chatController:SetContext(if route == "Multiplayer" then "Lobby" else "Hidden") end
+	end)
 	NavigationController:GoTo("Splash")
 end
 

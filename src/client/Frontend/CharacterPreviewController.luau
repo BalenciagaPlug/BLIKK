@@ -262,7 +262,7 @@ function Controller:Render(viewportFrame, profile, enableIdleHooks)
 		if activeGeneration ~= generation then if clone then clone:Destroy() end; return end
 		if not clone then
 			if clone then clone:Destroy() end
-			loading.Text = "PREVIEW UNAVAILABLE"
+			loading.Text = "INITIALIZING FIGHTER..."
 			return
 		end
 

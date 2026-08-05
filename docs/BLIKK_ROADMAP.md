@@ -52,18 +52,18 @@ Sprint 010
 
 Movement Lab
 
-- Town-inspired arena
-- Practice routes
-- Wall practice
-- Dash lanes
-- BF training
-- TBF training
+- Blueprint-authored 500-by-500 District Zero training district
+- 106-stud Clock Tower landmark and layered natural routes
+- Blueprint spawn A/B/C with contested-spawn scoring
+- Local Multiplayer Browser and Create Lobby shell
+- TextChatService-backed BLIKK chat presentation
+- Future dedicated tutorial-map separation
 
 Sprint 011
 
 Starter Combat
 
-- Training Katana
+- Training Katana presentation foundation
 - Training Shotguns
 - Equip
 - Unequip
@@ -75,7 +75,9 @@ Starter Combat
 
 # Phase 3 — K-Style
 
-- Butterfly
+- Butterfly candidate rhythm prototype
+- Wall-contact and wall-jump foundation
+- Authoritative/final Butterfly validation
 - Double Butterfly
 - Triple Butterfly
 - Slash Shot

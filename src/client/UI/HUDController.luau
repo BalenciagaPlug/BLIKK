@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 local UIStyle = require(script.Parent.UIStyle)
 local Branding = require(ReplicatedStorage.Shared.Branding.Branding)
+local MeleeConfig = require(ReplicatedStorage.Shared.Combat.MeleePresentationConfig)
 
 local HUDController = {}
 
@@ -17,6 +18,13 @@ local healthValue = nil
 local healthConnection = nil
 local statusRoot = nil
 local weaponRoot = nil
+local weaponSlotLabel = nil
+local weaponNameLabel = nil
+local weaponStatsLabel = nil
+local ammoTrack = nil
+local ammoLabel = nil
+local weaponSilhouette = nil
+local dataStateLabel = nil
 
 local function applyHudScale()
 	local scale = SessionSettings:Get("UIScale") * SessionSettings:Get("HudScale")
@@ -288,6 +296,14 @@ local function createWeaponSilhouette(parent)
 	createLine(parent, "Grip", UDim2.fromOffset(119, 30), UDim2.fromOffset(16, 31), metal, -14)
 end
 
+local function createKatanaSilhouette(parent)
+	createLine(parent, "Blade", UDim2.fromOffset(69, 27), UDim2.fromOffset(202, 7), colors.TextMuted, -8)
+	createLine(parent, "Edge", UDim2.fromOffset(72, 24), UDim2.fromOffset(198, 2), colors.Text, -8)
+	createLine(parent, "Guard", UDim2.fromOffset(54, 27), UDim2.fromOffset(31, 5), colors.Accent, -8)
+	createLine(parent, "Grip", UDim2.fromOffset(7, 33), UDim2.fromOffset(55, 9), colors.Metal, -8)
+	createLine(parent, "Pommel", UDim2.fromOffset(3, 36), UDim2.fromOffset(10, 13), colors.TechniqueDark, -8)
+end
+
 local function createWeaponBlock(parent)
 	local size = style.WeaponSize
 	local root = Instance.new("Frame")
@@ -299,8 +315,8 @@ local function createWeaponBlock(parent)
 	weaponRoot = root
 	Instance.new("UIScale").Parent = root
 
-	createLabel(root, "Slot", "SLOT --", UDim2.fromOffset(4, 0), UDim2.fromOffset(74, 18), 10, colors.Accent)
-	local weaponName = createLabel(
+	weaponSlotLabel = createLabel(root, "Slot", "SLOT --", UDim2.fromOffset(4, 0), UDim2.fromOffset(110, 18), 10, colors.Accent)
+	weaponNameLabel = createLabel(
 		root,
 		"WeaponName",
 		"UNARMED",
@@ -309,10 +325,10 @@ local function createWeaponBlock(parent)
 		style.WeaponNameTextSize,
 		colors.Text
 	)
-	weaponName.Font = UIStyle.Fonts.Strong
-	weaponName.TextStrokeTransparency = 0
-	weaponName.TextColor3 = Color3.fromRGB(255, 252, 235)
-	createLabel(
+	weaponNameLabel.Font = UIStyle.Fonts.Strong
+	weaponNameLabel.TextStrokeTransparency = 0
+	weaponNameLabel.TextColor3 = Color3.fromRGB(255, 252, 235)
+	weaponStatsLabel = createLabel(
 		root,
 		"WeaponStats",
 		"DAMAGE --  |  DELAY --",
@@ -322,7 +338,7 @@ local function createWeaponBlock(parent)
 		colors.TextMuted
 	)
 
-	local ammoTrack = Instance.new("Frame")
+	ammoTrack = Instance.new("Frame")
 	ammoTrack.Name = "AmmoTrack"
 	ammoTrack.BackgroundColor3 = colors.Text
 	ammoTrack.BorderSizePixel = 0
@@ -330,7 +346,7 @@ local function createWeaponBlock(parent)
 	ammoTrack.Size = UDim2.fromOffset(218, 13)
 	ammoTrack.Parent = root
 	addStroke(ammoTrack, colors.EdgeDark, 2)
-	createLabel(
+	ammoLabel = createLabel(
 		root,
 		"Ammo",
 		"-- / --",
@@ -341,14 +357,14 @@ local function createWeaponBlock(parent)
 		Enum.TextXAlignment.Right
 	)
 
-	local silhouette = Instance.new("Frame")
-	silhouette.Name = "WeaponIconPlaceholder"
-	silhouette.BackgroundTransparency = 1
-	silhouette.Position = UDim2.fromOffset(34, 88)
-	silhouette.Size = UDim2.fromOffset(288, 62)
-	silhouette.Parent = root
-	createWeaponSilhouette(silhouette)
-	createLabel(
+	weaponSilhouette = Instance.new("Frame")
+	weaponSilhouette.Name = "WeaponIconPlaceholder"
+	weaponSilhouette.BackgroundTransparency = 1
+	weaponSilhouette.Position = UDim2.fromOffset(34, 88)
+	weaponSilhouette.Size = UDim2.fromOffset(288, 62)
+	weaponSilhouette.Parent = root
+	createWeaponSilhouette(weaponSilhouette)
+	dataStateLabel = createLabel(
 		root,
 		"DataState",
 		"WEAPON DATA // PLACEHOLDER READY",
@@ -357,6 +373,35 @@ local function createWeaponBlock(parent)
 		8,
 		colors.TextMuted
 	)
+end
+
+local function clearSilhouette()
+	for _, child in weaponSilhouette:GetChildren() do child:Destroy() end
+end
+
+local function updateWeapon(fighterController)
+	local fighter = fighterController:GetFighter()
+	local slotId = fighter.ActiveWeaponSlot
+	local definition = fighterController:GetWeaponDefinition(slotId)
+	if not definition then return end
+	weaponSlotLabel.Text = "SLOT // " .. (slotId == "Melee" and "MELEE" or string.upper(slotId))
+	weaponNameLabel.Text = definition.DisplayName
+	clearSilhouette()
+	if slotId == "Melee" and definition.Id == "TrainingKatana" then
+		local total = MeleeConfig.Slash.AnticipationSeconds + MeleeConfig.Slash.ActiveSeconds + MeleeConfig.Slash.RecoverySeconds
+		weaponStatsLabel.Text = string.format("DAMAGE --  |  SLASH %.0f MS", total * 1000)
+		ammoTrack.Visible = false
+		ammoLabel.Visible = false
+		dataStateLabel.Text = "PRESENTATION ONLY // NO HITBOX"
+		createKatanaSilhouette(weaponSilhouette)
+	else
+		weaponStatsLabel.Text = "DAMAGE --  |  DELAY --"
+		ammoTrack.Visible = true
+		ammoLabel.Visible = true
+		ammoLabel.Text = "-- / --"
+		dataStateLabel.Text = "WEAPON DATA // PLACEHOLDER READY"
+		createWeaponSilhouette(weaponSilhouette)
+	end
 end
 
 local function updateHealth(humanoid)
@@ -379,7 +424,7 @@ local function bindCharacter(character)
 	end)
 end
 
-function HUDController:Init()
+function HUDController:Init(fighterController)
 	if isInitialised then
 		return
 	end
@@ -400,6 +445,7 @@ function HUDController:Init()
 	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	createStatusBlock(screenGui)
 	createWeaponBlock(screenGui)
+	updateWeapon(fighterController)
 	applyHudScale()
 	screenGui.Enabled = SessionSettings:Get("HudVisible")
 	screenGui.Parent = playerGui
@@ -413,6 +459,9 @@ function HUDController:Init()
 	end)
 
 	player.CharacterAdded:Connect(bindCharacter)
+	fighterController.LoadoutChanged.Event:Connect(function(changeType)
+		if changeType == "ActiveWeaponSlot" or changeType == "Weapon" then updateWeapon(fighterController) end
+	end)
 
 	if player.Character then
 		bindCharacter(player.Character)

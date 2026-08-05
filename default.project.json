@@ -31,6 +31,9 @@
         "$className": "Part",
         "$properties": {
           "Anchored": true,
+          "CanCollide": false,
+          "CanQuery": false,
+          "CanTouch": false,
           "Color": [
             0.38823,
             0.37254,
@@ -46,7 +49,8 @@
             512,
             20,
             512
-          ]
+          ],
+          "Transparency": 1
         }
       }
     },
