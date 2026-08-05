@@ -147,3 +147,27 @@ Every sprint must:
 - support future expansion
 - end with Roblox Studio playtesting
 - end with a Git checkpoint after approval
+# BLIKK Roadmap
+
+## Current Prototype
+
+- Crosshair camera and camera-relative movement.
+- Configurable phased directional dash.
+- Two-slot semantic input rebinding.
+- BLIKK fighter foundation with session loadouts.
+- Splash, local character profiles, Operations Hub, and Movement Lab entry flow.
+
+## Near-Term Foundations
+
+- Persist up to five fighter profiles through server-validated DataStores.
+- Replace avatar-compatible placeholders with original BLIKK fighter rigs and authored appearances.
+- Add equipment switching and presentation without combat behavior.
+- Build the Operations Hub shop, inventory, and character-management domains.
+- Add authored idle, equip, unequip, and directional movement animations.
+
+## Future Gameplay
+
+- Server-authoritative combat and movement validation.
+- Weapon behavior, melee primitives, and explicit cancellation rules.
+- K-style technique combinations built from reusable actions.
+- Training environments and multiplayer operations.

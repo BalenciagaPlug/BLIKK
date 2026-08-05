@@ -1,7 +1,9 @@
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 local UIStyle = require(script.Parent.UIStyle)
+local Branding = require(ReplicatedStorage.Shared.Branding.Branding)
 
 local HUDController = {}
 
@@ -113,20 +115,15 @@ local function createEmblem(parent)
 	inner.Parent = diamond
 	addStroke(inner, colors.Backdrop, 2)
 
-	local brand = createLabel(
-		inner,
-		"Brand",
-		"B",
-		UDim2.fromScale(0, 0),
-		UDim2.fromScale(1, 1),
-		68,
-		colors.Text,
-		Enum.TextXAlignment.Center
-	)
-	brand.Font = UIStyle.Fonts.Gothic
-	brand.Rotation = -45
-	brand.TextStrokeTransparency = 0
-	brand.ZIndex = 6
+	Branding.CreateIconLogo(inner, {
+		Name = "Brand",
+		Color = colors.Text,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Rotation = -45,
+		Size = Branding.Sizes.Hud,
+		ZIndex = 6,
+	})
 
 	createRivet(holder, UDim2.fromOffset(63, 4))
 	createRivet(holder, UDim2.fromOffset(122, 63))

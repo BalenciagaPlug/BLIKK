@@ -147,3 +147,10 @@ Create the highest skill ceiling movement shooter ever built on Roblox.
 Create mechanics that players spend thousands of hours mastering.
 
 Build a game that players still talk about ten years later.
+# BLIKK Lore Foundation
+
+BLIKK fighters are independent operatives registered through a private operations network. A player account may maintain up to five fighter profiles, each representing a distinct operative identity rather than the player’s Roblox avatar.
+
+The Operations Hub is the fighter’s preparation space: a dark industrial terminal for selecting assignments, reviewing equipment, managing appearance, and entering training. The Movement Lab is the first active operation, built to develop the movement discipline required for later combat.
+
+Male and female fighters share the same competitive capabilities. Appearance, armour, and identity are expressive choices and must not create hidden movement or combat advantages.

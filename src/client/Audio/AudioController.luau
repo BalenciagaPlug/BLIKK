@@ -26,7 +26,9 @@ end
 local function updateVolumes()
 	local masterVolume = SessionSettings:Get("MasterVolume")
 	masterGroup.Volume = masterVolume
-	musicGroup.Volume = masterVolume * SessionSettings:Get("MusicVolume")
+	musicGroup.Volume = if SessionSettings:Get("MusicMuted")
+		then 0
+		else masterVolume * SessionSettings:Get("MusicVolume")
 	soundEffectsGroup.Volume = masterVolume * SessionSettings:Get("SoundEffectsVolume")
 	dashGroup.Volume = soundEffectsGroup.Volume
 end
@@ -44,7 +46,7 @@ function AudioController:Init()
 	updateVolumes()
 
 	SessionSettings.Changed.Event:Connect(function(key)
-		if key == "MasterVolume" or key == "MusicVolume" or key == "SoundEffectsVolume" then
+		if key == "MasterVolume" or key == "MusicVolume" or key == "MusicMuted" or key == "SoundEffectsVolume" then
 			updateVolumes()
 		end
 	end)

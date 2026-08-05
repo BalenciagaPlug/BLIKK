@@ -12,6 +12,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local CameraConfig = require(Shared.Camera.CameraConfig)
 local ActionCatalogue = require(Shared.Input.ActionCatalogue)
 local SettingsConfig = require(Shared.Settings.SettingsConfig)
+local Branding = require(Shared.Branding.Branding)
 
 local SettingsController = {}
 
@@ -39,6 +40,12 @@ local pendingConflict = nil
 local gearHotkeyLabel = nil
 local viewportLabel = nil
 local aspectLabel = nil
+local confirmationFrame = nil
+local returnToMenuCallback = nil
+local isFrontendActive = false
+local returnButton = nil
+local openContext = "Gameplay"
+local settingsGui = nil
 
 local cameraSliders = {
 	{
@@ -444,12 +451,13 @@ local function createSoundPage(parent)
 	for index, definition in soundSliders do
 		createSlider(parent, definition, index, SessionSettings, SettingsConfig.AudioRanges)
 	end
+	createToggle(parent, "MusicMuted", "MUTE MUSIC", 1, SessionSettings, 252)
 
 	createLabel(
 		parent,
 		"SoundNote",
 		"These controls affect BLIKK_Master, BLIKK_Music and BLIKK_SoundEffects.\nRoblox platform and CoreGui audio are not modified.",
-		UDim2.fromOffset(16, 270),
+		UDim2.fromOffset(16, 312),
 		UDim2.new(1, -32, 0, 54),
 		11,
 		colors.TextMuted
@@ -649,9 +657,11 @@ local function setOpen(nextIsOpen)
 	isOpen = nextIsOpen
 	backdrop.Visible = isOpen
 	panel.Visible = isOpen
-	gearButton.Visible = not isOpen
-	inputManager:SetGameplayEnabled(not isOpen)
-	gameplayCamera:SetInterfaceOpen(isOpen)
+	gearButton.Visible = not isOpen and not isFrontendActive
+	inputManager:SetGameplayEnabled(not isOpen and not isFrontendActive)
+	gameplayCamera:SetInterfaceOpen(isOpen or isFrontendActive)
+	if not isOpen and confirmationFrame then confirmationFrame.Visible = false end
+	if returnButton then returnButton.Visible = isOpen and openContext == "Gameplay" end
 
 	if not isOpen then
 		activeSlider = nil
@@ -818,12 +828,12 @@ local function createInterface()
 		existing:Destroy()
 	end
 
-	local screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "BLIKKSettings"
-	screenGui.DisplayOrder = UIStyle.DisplayOrders.Settings
-	screenGui.IgnoreGuiInset = false
-	screenGui.ResetOnSpawn = false
-	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	settingsGui = Instance.new("ScreenGui")
+	settingsGui.Name = "BLIKKSettings"
+	settingsGui.DisplayOrder = UIStyle.DisplayOrders.Settings
+	settingsGui.IgnoreGuiInset = false
+	settingsGui.ResetOnSpawn = false
+	settingsGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
 	backdrop = Instance.new("Frame")
 	backdrop.Name = "Backdrop"
@@ -831,10 +841,10 @@ local function createInterface()
 	backdrop.BackgroundTransparency = 0.35
 	backdrop.Size = UDim2.fromScale(1, 1)
 	backdrop.Visible = false
-	backdrop.Parent = screenGui
+	backdrop.Parent = settingsGui
 
 	gearButton = createButton(
-		screenGui,
+		settingsGui,
 		"SettingsGear",
 		"",
 		UDim2.new(0, 18, 1, -62),
@@ -854,7 +864,7 @@ local function createInterface()
 	panel.Position = UDim2.fromScale(0.5, 0.5)
 	panel.Size = UDim2.fromOffset(720, 560)
 	panel.Visible = false
-	panel.Parent = screenGui
+	panel.Parent = settingsGui
 	addCorner(panel, 3)
 	addStroke(panel, colors.Edge, 2)
 	panelScale = Instance.new("UIScale")
@@ -867,20 +877,18 @@ local function createInterface()
 	accentLine.Size = UDim2.new(1, 0, 0, 3)
 	accentLine.Parent = panel
 
-	createLabel(
-		panel,
-		"Title",
-		"BLIKK // SYSTEM",
-		UDim2.fromOffset(18, 14),
-		UDim2.fromOffset(360, 28),
-		20,
-		colors.Text
-	)
+	Branding.CreateIconLogo(panel, {
+		Name = "SettingsBrand",
+		Position = UDim2.fromOffset(18, 9),
+		Size = Branding.Sizes.Settings,
+		Color = colors.TextMuted,
+		ZIndex = 2,
+	})
 	createLabel(
 		panel,
 		"Subtitle",
 		"SESSION SETTINGS // USE YOUR SETTINGS BIND TO CLOSE",
-		UDim2.fromOffset(18, 42),
+		UDim2.fromOffset(94, 23),
 		UDim2.fromOffset(420, 16),
 		10,
 		colors.TextMuted
@@ -893,6 +901,15 @@ local function createInterface()
 		UDim2.new(1, -130, 0, 17),
 		UDim2.fromOffset(112, 32)
 	)
+	returnButton = createButton(
+		panel,
+		"ReturnToMenu",
+		"RETURN TO MENU",
+		UDim2.new(1, -154, 0, 54),
+		UDim2.fromOffset(136, 24)
+	)
+	returnButton.TextSize = 10
+	returnButton.TextColor3 = colors.Blood
 
 	local tabNames = { "VIDEO", "SOUND", "CONTROLS", "EXTRAS" }
 
@@ -929,13 +946,58 @@ local function createInterface()
 	refreshBindingButtons()
 
 	gearButton.Activated:Connect(function()
+		openContext = "Gameplay"
+		settingsGui.DisplayOrder = UIStyle.DisplayOrders.Settings
 		setOpen(true)
 	end)
 	closeButton.Activated:Connect(function()
 		setOpen(false)
 	end)
 
-	screenGui.Parent = playerGui
+	confirmationFrame = Instance.new("Frame")
+	confirmationFrame.Name = "ReturnConfirmation"
+	confirmationFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+	confirmationFrame.BackgroundColor3 = colors.PanelLight
+	confirmationFrame.Position = UDim2.fromScale(0.5, 0.5)
+	confirmationFrame.Size = UDim2.fromOffset(430, 210)
+	confirmationFrame.Visible = false
+	confirmationFrame.ZIndex = 20
+	confirmationFrame.Parent = panel
+	addStroke(confirmationFrame, colors.Blood, 2)
+	local confirmationTitle = createLabel(
+		confirmationFrame, "Title", "RETURN TO MENU?", UDim2.fromOffset(22, 22),
+		UDim2.new(1, -44, 0, 30), 20, colors.Text, Enum.TextXAlignment.Center
+	)
+	confirmationTitle.ZIndex = 21
+	local confirmationCopy = createLabel(
+		confirmationFrame, "Copy", "Current Movement Lab progress for this session may be lost.",
+		UDim2.fromOffset(30, 68), UDim2.new(1, -60, 0, 48), 12, colors.TextMuted,
+		Enum.TextXAlignment.Center
+	)
+	confirmationCopy.TextWrapped = true
+	confirmationCopy.ZIndex = 21
+	local yesButton = createButton(
+		confirmationFrame, "Yes", "YES", UDim2.fromOffset(38, 142), UDim2.fromOffset(166, 42)
+	)
+	yesButton.ZIndex = 21
+	yesButton.TextColor3 = colors.Blood
+	local noButton = createButton(
+		confirmationFrame, "No", "NO", UDim2.new(1, -204, 0, 142), UDim2.fromOffset(166, 42)
+	)
+	noButton.ZIndex = 21
+	returnButton.Activated:Connect(function()
+		confirmationFrame.Visible = true
+	end)
+	noButton.Activated:Connect(function()
+		confirmationFrame.Visible = false
+	end)
+	yesButton.Activated:Connect(function()
+		if not returnToMenuCallback then return end
+		confirmationFrame.Visible = false
+		returnToMenuCallback()
+	end)
+
+	settingsGui.Parent = playerGui
 	updateResponsiveScale()
 
 	local currentCamera = Workspace.CurrentCamera
@@ -961,6 +1023,10 @@ function SettingsController:Init(gameplayInputManager, cameraController)
 	createInterface()
 
 	UserInputService.InputBegan:Connect(function(input)
+		if confirmationFrame and confirmationFrame.Visible and input.KeyCode == Enum.KeyCode.Escape then
+			confirmationFrame.Visible = false
+			return
+		end
 		if not captureAction then
 			return
 		end
@@ -994,10 +1060,41 @@ function SettingsController:Init(gameplayInputManager, cameraController)
 
 	BindingState.Changed.Event:Connect(refreshBindingButtons)
 	inputManager.ActionBegan.Event:Connect(function(action)
-		if action == "Settings" and not captureAction then
+		if (action == "Settings" or action == "Cancel") and confirmationFrame and confirmationFrame.Visible then
+			confirmationFrame.Visible = false
+		elseif action == "Settings" and not captureAction and not isFrontendActive then
+			openContext = "Gameplay"
+			settingsGui.DisplayOrder = UIStyle.DisplayOrders.Settings
 			setOpen(not isOpen)
 		end
 	end)
+end
+
+function SettingsController:SetReturnToMenuCallback(callback)
+	returnToMenuCallback = callback
+end
+
+function SettingsController:OpenFromFrontend()
+	if not isFrontendActive then return false end
+	openContext = "Frontend"
+	settingsGui.DisplayOrder = 110
+	setOpen(true)
+	return true
+end
+
+function SettingsController:SetFrontendActive(isActive)
+	isFrontendActive = isActive
+	if isActive and isOpen then
+		setOpen(false)
+	elseif gearButton then
+		gearButton.Visible = not isActive
+	end
+	if inputManager and gameplayCamera then
+		inputManager:SetGameplayEnabled(not isActive and not isOpen)
+		gameplayCamera:SetInterfaceOpen(isActive or isOpen)
+	end
+	if not isActive and settingsGui then settingsGui.DisplayOrder = UIStyle.DisplayOrders.Settings end
+	if returnButton then returnButton.Visible = isOpen and openContext == "Gameplay" end
 end
 
 return SettingsController

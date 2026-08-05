@@ -1,9 +1,11 @@
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local StarterGui = game:GetService("StarterGui")
 
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 
 local UIStyle = require(script.Parent.UIStyle)
+local Branding = require(ReplicatedStorage.Shared.Branding.Branding)
 
 local ScoreboardController = {}
 
@@ -107,7 +109,12 @@ local function createInterface()
 	accent.BorderSizePixel = 0
 	accent.Size = UDim2.new(1, 0, 0, 3)
 	accent.Parent = panel
-	createLabel(panel, "BLIKK // MOVEMENT LAB", UDim2.fromOffset(18, 15), UDim2.fromOffset(390, 26), 20, colors.Text)
+	Branding.CreateIconLogo(panel, {
+		Name = "ScoreboardBrand",
+		Position = UDim2.fromOffset(18, 10),
+		Size = Branding.Sizes.Scoreboard,
+	})
+	createLabel(panel, "MOVEMENT LAB", UDim2.fromOffset(92, 17), UDim2.fromOffset(294, 26), 18, colors.Text)
 	createLabel(panel, "MODE // TRAINING", UDim2.fromOffset(18, 45), UDim2.fromOffset(220, 18), 10, colors.TextMuted)
 	createLabel(panel, "MAP // MOVEMENT LAB", UDim2.fromOffset(244, 45), UDim2.fromOffset(230, 18), 10, colors.TextMuted)
 	elapsedLabel = createLabel(

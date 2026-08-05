@@ -25,6 +25,7 @@ local rootPart = nil
 local crosshairGui = nil
 local characterDiedConnection = nil
 local dashFovOffsetDegrees = 0
+local isGameplayActive = false
 
 local function createCrosshairLine(name, size, position)
 	local line = Instance.new("Frame")
@@ -93,6 +94,7 @@ end
 
 local function shouldCaptureMouse()
 	return hasWindowFocus
+		and isGameplayActive
 		and not isMenuOpen
 		and not isSettingsOpen
 		and not isCursorReleased
@@ -118,6 +120,7 @@ local function updateMouseCapture()
 
 	if crosshairGui then
 		local crosshairEnabled = isCharacterAlive()
+			and isGameplayActive
 			and not isMenuOpen
 			and not isSettingsOpen
 			and not isCursorReleased
@@ -156,6 +159,9 @@ local function bindCharacter(newCharacter)
 end
 
 local function updateCamera()
+	if not isGameplayActive then
+		return
+	end
 	if not isCharacterAlive() then
 		return
 	end
@@ -195,6 +201,16 @@ end
 
 function GameplayCamera:SetInterfaceOpen(isOpen)
 	isSettingsOpen = isOpen
+	updateMouseCapture()
+end
+
+function GameplayCamera:SetGameplayActive(isActive)
+	isGameplayActive = isActive
+	if not isActive then
+		dashFovOffsetDegrees = 0
+		local currentCamera = Workspace.CurrentCamera
+		if currentCamera then currentCamera.CameraType = Enum.CameraType.Custom end
+	end
 	updateMouseCapture()
 end
 

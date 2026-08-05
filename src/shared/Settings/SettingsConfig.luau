@@ -2,6 +2,7 @@ local SettingsConfig = {
 	AudioDefaults = {
 		MasterVolume = 1,
 		MusicVolume = 0.7,
+		MusicMuted = false,
 		SoundEffectsVolume = 1,
 	},
 
