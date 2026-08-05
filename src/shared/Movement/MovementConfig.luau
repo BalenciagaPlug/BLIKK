@@ -1,40 +1,57 @@
 local MovementConfig = {
 	Dash = {
-		Distance = 12,
-		Duration = 0.14,
-		Cooldown = 0.18,
-		DoubleTapWindow = 0.25,
+		DoubleTapWindowSeconds = 0.25,
+		GroundDistanceStuds = 14.5,
+		AirDistanceStuds = 13,
+		EntryDurationSeconds = 0.035,
+		TravelDurationSeconds = 0.115,
+		ExitDurationSeconds = 0.085,
+		EntrySpeedMultiplier = 0.9,
+		PeakSpeedMultiplier = 1.55,
+		TravelEndSpeedMultiplier = 1.0,
+		ExitMomentumRetention = 0.34,
+		GroundCooldownSeconds = 0.24,
+		AirCooldownSeconds = 0.30,
 		AirDashLimit = 1,
-		PreserveVerticalVelocity = true,
+		VerticalMomentumMode = "PreserveAtActivation",
+		MinimumActivationSpeedStudsPerSecond = 0,
+		CancelWindows = {
+			FutureTechniqueOpenSeconds = 0.05,
+			FutureTechniqueCloseSeconds = 0.19,
+		},
+		Presentation = {
+			Enabled = true,
+			CharacterLeanDegrees = 16,
+			CounterTwistDegrees = 8,
+			ArmBraceDegrees = 22,
+			HipTuckDegrees = 14,
+			CameraFovImpulseDegrees = 3.5,
+			EffectIntensity = 0.8,
+			StreakCount = 3,
+			StreakHeightsStuds = { 2.15, 0, -2.15 },
+			StreakWidthsStuds = { 0.12, 0.16, 0.1 },
+			StreakLengthStuds = 8.5,
+			StreakLifetimeSeconds = 0.24,
+			StreakTransparency = 0.28,
+			MediumLifetimeMultiplier = 0.72,
+			MediumWidthMultiplier = 0.8,
+			LowStreakCount = 1,
+			LowLifetimeMultiplier = 0.5,
+			GroundAccentSizeStuds = 2.8,
+			GroundAccentLifetimeSeconds = 0.12,
+			SoundId = "",
+			AnimationIds = { Forward = "", Backward = "", Left = "", Right = "" },
+		},
+		Diagnostics = { Enabled = false },
 	},
 
-	Jump = {
-		Height = 7.2,
-	},
-
-	Slash = {
-		Cooldown = 0.28,
-	},
-
-	Block = {
-		Instant = true,
-	},
-
-	Butterfly = {
-		Window = 0.12,
-	},
-
-	SlashShot = {
-		Window = 0.18,
-	},
-
-	ReloadShot = {
-		Window = 0.16,
-	},
-
-	HalfStep = {
-		Window = 0.20,
-	},
+	Jump = { Height = 7.2 },
+	Slash = { Cooldown = 0.28 },
+	Block = { Instant = true },
+	Butterfly = { Window = 0.12 },
+	SlashShot = { Window = 0.18 },
+	ReloadShot = { Window = 0.16 },
+	HalfStep = { Window = 0.20 },
 }
 
 return MovementConfig

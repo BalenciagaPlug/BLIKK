@@ -24,6 +24,7 @@ local UIStyle = {
 	Fonts = {
 		Primary = Enum.Font.Code,
 		Strong = Enum.Font.RobotoMono,
+		Gothic = Enum.Font.GrenzeGotisch,
 	},
 	DisplayOrders = {
 		Hud = 5,
@@ -31,9 +32,9 @@ local UIStyle = {
 	},
 	HUD = {
 		ScreenMarginPixels = 18,
-		StatusSize = Vector2.new(344, 154),
+		StatusSize = Vector2.new(590, 152),
 		MatchSize = Vector2.new(244, 108),
-		WeaponSize = Vector2.new(324, 138),
+		WeaponSize = Vector2.new(344, 154),
 		PanelTransparency = 0.08,
 		ShadowOffsetPixels = 5,
 		EdgeThicknessPixels = 1,
@@ -45,9 +46,25 @@ local UIStyle = {
 		MeterSegmentCount = 12,
 		PlayerNameTextSize = 19,
 		TimerTextSize = 27,
-		WeaponNameTextSize = 17,
+		WeaponNameTextSize = 20,
 		AmmoCurrentTextSize = 30,
 		AmmoReserveTextSize = 15,
+		EmblemSizePixels = 126,
+		StatusRailStartPixels = 132,
+		StatusRailWidthPixels = 442,
+		PrimaryBarHeightPixels = 22,
+		SecondaryBarHeightPixels = 18,
+	},
+	InputOverlay = {
+		ScreenOffsetPixels = Vector2.new(24, 270),
+		TotalSize = Vector2.new(420, 252),
+		KeyboardSize = Vector2.new(268, 158),
+		StandardKeySize = Vector2.new(40, 36),
+		MouseOffsetPixels = Vector2.new(290, 4),
+		MouseSize = Vector2.new(110, 140),
+		OverflowKeySize = Vector2.new(55, 26),
+		OverflowColumns = 6,
+		ActiveTransparency = 0.08,
 	},
 }
 

@@ -1,15 +1,16 @@
-local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local CameraSettings = require(script.Parent.Parent.Camera.CameraSettings)
+local BindingState = require(script.Parent.Parent.Input.BindingState)
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 local UIStyle = require(script.Parent.UIStyle)
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local CameraConfig = require(Shared.Camera.CameraConfig)
+local ActionCatalogue = require(Shared.Input.ActionCatalogue)
 local SettingsConfig = require(Shared.Settings.SettingsConfig)
 
 local SettingsController = {}
@@ -20,7 +21,6 @@ local isInitialised = false
 local isOpen = false
 local inputManager = nil
 local gameplayCamera = nil
-local playerControls = nil
 local panel = nil
 local panelScale = nil
 local backdrop = nil
@@ -30,9 +30,15 @@ local sliderControls = {}
 local toggleControls = {}
 local tabButtons = {}
 local tabPages = {}
-
-local INPUT_BLOCK_ACTION = "BLIKKSettingsInputBlock"
-local INPUT_BLOCK_PRIORITY = 3000
+local bindingButtons = {}
+local captureAction = nil
+local captureSlot = nil
+local conflictFrame = nil
+local conflictLabel = nil
+local pendingConflict = nil
+local gearHotkeyLabel = nil
+local viewportLabel = nil
+local aspectLabel = nil
 
 local cameraSliders = {
 	{
@@ -90,6 +96,13 @@ local soundSliders = {
 		Suffix = "%",
 		DisplayMultiplier = 100,
 	},
+}
+
+local displaySliders = {
+	{ Key = "UIScale", Label = "BLIKK UI SCALE", Decimals = 0, Suffix = "%", DisplayMultiplier = 100 },
+	{ Key = "HudScale", Label = "GAMEPLAY HUD SCALE", Decimals = 0, Suffix = "%", DisplayMultiplier = 100 },
+	{ Key = "InputOverlayScale", Label = "INPUT OVERLAY SCALE", Decimals = 0, Suffix = "%", DisplayMultiplier = 100 },
+	{ Key = "InputOverlayOpacity", Label = "INPUT OVERLAY OPACITY", Decimals = 0, Suffix = "%", DisplayMultiplier = 100 },
 }
 
 local function addCorner(instance, radiusPixels)
@@ -444,79 +457,179 @@ local function createSoundPage(parent)
 end
 
 local function createControlsPage(parent)
-	createSectionHeader(parent, "CONTROLS", "REBINDING ARRIVES IN THE NEXT CONTROLS SPRINT")
+	createSectionHeader(parent, "CONTROLS", "TWO SLOTS // ESC CANCELS // RESET CLEARS")
 
-	local actions = {
-		{ "MOVE FORWARD", "W" },
-		{ "MOVE LEFT", "A" },
-		{ "MOVE BACKWARD", "S" },
-		{ "MOVE RIGHT", "D" },
-		{ "JUMP", "SPACE" },
-		{ "PRIMARY / SECONDARY", "MOUSE 1 / 2" },
-		{ "SETTINGS", "M" },
-	}
+	local list = Instance.new("ScrollingFrame")
+	list.Name = "ActionList"
+	list.BackgroundTransparency = 1
+	list.BorderSizePixel = 0
+	list.Position = UDim2.fromOffset(8, 64)
+	list.Size = UDim2.new(1, -16, 1, -112)
+	list.CanvasSize = UDim2.fromOffset(0, #ActionCatalogue.Ordered * 45)
+	list.ScrollBarThickness = 5
+	list.ScrollBarImageColor3 = colors.AccentDim
+	list.Parent = parent
 
-	for index, action in actions do
+	for index, definition in ActionCatalogue.Ordered do
 		local row = Instance.new("Frame")
-		row.Name = "Action" .. index
+		row.Name = definition.Id
 		row.BackgroundColor3 = colors.Backdrop
 		row.BackgroundTransparency = 0.3
-		row.Position = UDim2.fromOffset(16, 68 + (index - 1) * 48)
-		row.Size = UDim2.new(1, -32, 0, 40)
-		row.Parent = parent
+		row.Position = UDim2.fromOffset(8, (index - 1) * 45)
+		row.Size = UDim2.new(1, -18, 0, 39)
+		row.Parent = list
 		addStroke(row, colors.EdgeDark, 1)
 		createLabel(
 			row,
 			"ActionName",
-			action[1],
-			UDim2.fromOffset(12, 10),
-			UDim2.new(1, -174, 0, 20),
-			12,
+			string.upper(definition.Name),
+			UDim2.fromOffset(9, 4),
+			UDim2.new(1, -268, 0, 18),
+			10,
 			colors.Text
 		)
 		createLabel(
 			row,
-			"Binding",
-			action[2],
-			UDim2.new(1, -156, 0, 10),
-			UDim2.fromOffset(144, 20),
-			12,
-			colors.Accent,
-			Enum.TextXAlignment.Right
+			"Group",
+			string.upper(definition.Group),
+			UDim2.fromOffset(9, 21),
+			UDim2.fromOffset(110, 13),
+			8,
+			colors.TextMuted
 		)
+
+		bindingButtons[definition.Id] = {}
+		for slotIndex, slot in { "Primary", "Secondary" } do
+			local button = createButton(
+				row,
+				slot,
+				"",
+				UDim2.new(1, -252 + (slotIndex - 1) * 102, 0, 6),
+				UDim2.fromOffset(96, 27)
+			)
+			button.TextSize = 9
+			bindingButtons[definition.Id][slot] = button
+			button.Activated:Connect(function()
+				captureAction = definition.Id
+				captureSlot = slot
+				inputManager:SetBindingCaptureActive(true)
+				button.Text = "PRESS INPUT..."
+				button.TextColor3 = colors.Blood
+			end)
+		end
+
+		local reset = createButton(
+			row,
+			"Reset",
+			"RST",
+			UDim2.new(1, -45, 0, 6),
+			UDim2.fromOffset(38, 27)
+		)
+		reset.TextSize = 9
+		reset.Activated:Connect(function()
+			BindingState:ResetAction(definition.Id)
+		end)
 	end
+
+	local resetAll = createButton(
+		parent,
+		"ResetAllControls",
+		"RESET ALL CONTROLS",
+		UDim2.fromOffset(16, 420),
+		UDim2.fromOffset(180, 30)
+	)
+	resetAll.TextColor3 = colors.Accent
+	resetAll.Activated:Connect(function()
+		BindingState:ResetAll()
+	end)
+
+	conflictFrame = Instance.new("Frame")
+	conflictFrame.Name = "Conflict"
+	conflictFrame.BackgroundColor3 = colors.PanelLight
+	conflictFrame.Position = UDim2.fromOffset(58, 152)
+	conflictFrame.Size = UDim2.new(1, -116, 0, 145)
+	conflictFrame.Visible = false
+	conflictFrame.ZIndex = 10
+	conflictFrame.Parent = parent
+	addStroke(conflictFrame, colors.Blood, 2)
+	conflictLabel = createLabel(
+		conflictFrame,
+		"Message",
+		"",
+		UDim2.fromOffset(14, 14),
+		UDim2.new(1, -28, 0, 68),
+		11,
+		colors.Text
+	)
+	conflictLabel.TextWrapped = true
+	conflictLabel.ZIndex = 11
+	local replaceButton = createButton(
+		conflictFrame,
+		"Replace",
+		"REPLACE OLD BIND",
+		UDim2.fromOffset(14, 96),
+		UDim2.fromOffset(152, 32)
+	)
+	replaceButton.ZIndex = 11
+	local cancelButton = createButton(
+		conflictFrame,
+		"Cancel",
+		"CANCEL",
+		UDim2.new(1, -112, 0, 96),
+		UDim2.fromOffset(98, 32)
+	)
+	cancelButton.ZIndex = 11
+	replaceButton.Activated:Connect(function()
+		if pendingConflict then
+			local replaced = BindingState:Replace(
+				pendingConflict.Action,
+				pendingConflict.Slot,
+				pendingConflict.Token,
+				pendingConflict.OldAction,
+				pendingConflict.OldSlot
+			)
+
+			if not replaced then
+				conflictLabel.Text = "THAT BIND IS THE LAST ACCESS PATH FOR A PROTECTED ACTION. ASSIGN A SECONDARY BIND FIRST."
+				return
+			end
+		end
+		pendingConflict = nil
+		conflictFrame.Visible = false
+	end)
+	cancelButton.Activated:Connect(function()
+		pendingConflict = nil
+		conflictFrame.Visible = false
+	end)
 end
 
 local function createExtrasPage(parent)
-	createSectionHeader(parent, "EXTRAS", "HONEST PROTOTYPE DISPLAY OPTIONS")
-	createToggle(parent, "HudVisible", "GAMEPLAY HUD", 1, SessionSettings)
-
-	local unavailable = Instance.new("Frame")
-	unavailable.Name = "ReducedEffectsUnavailable"
-	unavailable.BackgroundColor3 = colors.Backdrop
-	unavailable.BackgroundTransparency = 0.55
-	unavailable.Position = UDim2.fromOffset(16, 123)
-	unavailable.Size = UDim2.new(1, -32, 0, 54)
-	unavailable.Parent = parent
-	addStroke(unavailable, colors.EdgeDark, 1)
-	createLabel(
-		unavailable,
-		"Name",
-		"REDUCED EFFECTS",
-		UDim2.fromOffset(12, 8),
-		UDim2.new(1, -24, 0, 18),
-		12,
-		colors.TextMuted
-	)
-	createLabel(
-		unavailable,
-		"Status",
-		"UNAVAILABLE // NO GAMEPLAY EFFECTS EXIST YET",
-		UDim2.fromOffset(12, 28),
-		UDim2.new(1, -24, 0, 16),
-		10,
-		colors.TextMuted
-	)
+	local content = Instance.new("ScrollingFrame")
+	content.Name = "DisplayOptions"
+	content.BackgroundTransparency = 1
+	content.BorderSizePixel = 0
+	content.Size = UDim2.fromScale(1, 1)
+	content.CanvasSize = UDim2.fromOffset(0, 610)
+	content.ScrollBarThickness = 5
+	content.ScrollBarImageColor3 = colors.AccentDim
+	content.Parent = parent
+	createSectionHeader(content, "DISPLAY / EXTRAS", "VIEWPORT IS READ-ONLY // SESSION PREVIEW")
+	viewportLabel = createLabel(content, "Viewport", "CURRENT VIEWPORT // --", UDim2.fromOffset(16, 48), UDim2.fromOffset(260, 16), 10, colors.Text)
+	aspectLabel = createLabel(content, "Aspect", "ASPECT // --", UDim2.new(1, -190, 0, 48), UDim2.fromOffset(170, 16), 10, colors.TextMuted, Enum.TextXAlignment.Right)
+	for index, definition in displaySliders do
+		createSlider(content, definition, index, SessionSettings, SettingsConfig.ExtrasRanges)
+	end
+	createToggle(content, "HudVisible", "GAMEPLAY HUD", 1, SessionSettings, 322)
+	createToggle(content, "InputOverlayVisible", "LIVE INPUT OVERLAY", 1, SessionSettings, 373)
+	createToggle(content, "ReducedEffects", "REDUCED DASH EFFECTS", 1, SessionSettings, 424)
+	local quality = createButton(content, "EffectsQuality", "EFFECTS QUALITY // " .. SessionSettings:Get("EffectsQuality"), UDim2.fromOffset(16, 478), UDim2.new(1, -32, 0, 38))
+	quality.Activated:Connect(function()
+		local current = SessionSettings:Get("EffectsQuality")
+		local nextValue = if current == "HIGH" then "MEDIUM" elseif current == "MEDIUM" then "LOW" else "HIGH"
+		SessionSettings:Set("EffectsQuality", nextValue)
+		quality.Text = "EFFECTS QUALITY // " .. nextValue
+	end)
+	createLabel(content, "ResolutionNote", "ROBLOX CONTROLS WINDOW / MONITOR RESOLUTION. BLIKK ONLY SCALES ITS OWN UI.", UDim2.fromOffset(16, 530), UDim2.new(1, -32, 0, 34), 9, colors.TextMuted).TextWrapped = true
 end
 
 local function selectTab(tabName)
@@ -526,30 +639,6 @@ local function selectTab(tabName)
 		tabButtons[name].BackgroundColor3 = if selected then colors.AccentDim else colors.Raised
 		tabButtons[name].TextColor3 = if selected then colors.Accent else colors.TextMuted
 	end
-end
-
-local function blockGameplayInput()
-	return Enum.ContextActionResult.Sink
-end
-
-local function getPlayerControls()
-	local playerScripts = player:FindFirstChild("PlayerScripts")
-	local playerModuleScript = playerScripts and playerScripts:FindFirstChild("PlayerModule")
-
-	if not playerModuleScript then
-		return nil
-	end
-
-	local success, controls = pcall(function()
-		local playerModule = require(playerModuleScript)
-		return playerModule:GetControls()
-	end)
-
-	if success then
-		return controls
-	end
-
-	return nil
 end
 
 local function setOpen(nextIsOpen)
@@ -564,43 +653,38 @@ local function setOpen(nextIsOpen)
 	inputManager:SetGameplayEnabled(not isOpen)
 	gameplayCamera:SetInterfaceOpen(isOpen)
 
-	if isOpen then
-		if playerControls then
-			playerControls:Disable()
-		end
-
-		ContextActionService:BindActionAtPriority(
-			INPUT_BLOCK_ACTION,
-			blockGameplayInput,
-			false,
-			INPUT_BLOCK_PRIORITY,
-			Enum.KeyCode.W,
-			Enum.KeyCode.A,
-			Enum.KeyCode.S,
-			Enum.KeyCode.D,
-			Enum.KeyCode.Space,
-			Enum.KeyCode.Q,
-			Enum.KeyCode.E,
-			Enum.KeyCode.R,
-			Enum.UserInputType.MouseButton1,
-			Enum.UserInputType.MouseButton2,
-			Enum.UserInputType.MouseButton3
-		)
-	else
+	if not isOpen then
 		activeSlider = nil
-		ContextActionService:UnbindAction(INPUT_BLOCK_ACTION)
-
-		if playerControls then
-			playerControls:Enable()
-		end
 	end
 end
 
 local function decorateGear(button)
+	button.BackgroundColor3 = colors.PanelLight
+	button.BackgroundTransparency = 0.08
+	local edgeStroke = button:FindFirstChildOfClass("UIStroke")
+	if edgeStroke then
+		edgeStroke.Color = colors.Metal
+		edgeStroke.Thickness = 2
+	end
+	local gradient = Instance.new("UIGradient")
+	gradient.Color = ColorSequence.new(colors.Metal, colors.Panel)
+	gradient.Rotation = 120
+	gradient.Parent = button
+
+	local topWear = Instance.new("Frame")
+	topWear.Name = "TopWear"
+	topWear.BackgroundColor3 = colors.TextMuted
+	topWear.BackgroundTransparency = 0.62
+	topWear.BorderSizePixel = 0
+	topWear.Position = UDim2.fromOffset(5, 4)
+	topWear.Rotation = -4
+	topWear.Size = UDim2.fromOffset(24, 1)
+	topWear.Parent = button
+
 	local ring = Instance.new("Frame")
 	ring.Name = "Ring"
 	ring.AnchorPoint = Vector2.new(0.5, 0.5)
-	ring.BackgroundColor3 = colors.Accent
+	ring.BackgroundColor3 = colors.TextMuted
 	ring.Position = UDim2.fromScale(0.5, 0.44)
 	ring.Size = UDim2.fromOffset(17, 17)
 	ring.ZIndex = 2
@@ -621,7 +705,7 @@ local function decorateGear(button)
 		local tooth = Instance.new("Frame")
 		tooth.Name = "Tooth" .. index
 		tooth.AnchorPoint = Vector2.new(0.5, 0.5)
-		tooth.BackgroundColor3 = colors.Accent
+		tooth.BackgroundColor3 = colors.TextMuted
 		tooth.BorderSizePixel = 0
 		tooth.Position = UDim2.fromScale(0.5, 0.44)
 		tooth.Rotation = (index - 1) * 45
@@ -630,7 +714,7 @@ local function decorateGear(button)
 		tooth.Parent = button
 	end
 
-	local hotkeyLabel = createLabel(
+	gearHotkeyLabel = createLabel(
 		button,
 		"Hotkey",
 		"M",
@@ -640,7 +724,72 @@ local function decorateGear(button)
 		colors.Text,
 		Enum.TextXAlignment.Center
 	)
-	hotkeyLabel.ZIndex = 4
+	gearHotkeyLabel.ZIndex = 4
+	gearHotkeyLabel.TextStrokeColor3 = colors.Backdrop
+	gearHotkeyLabel.TextStrokeTransparency = 0
+end
+
+local function refreshBindingButtons()
+	for _, definition in ActionCatalogue.Ordered do
+		local buttons = bindingButtons[definition.Id]
+
+		if buttons then
+			buttons.Primary.Text = ActionCatalogue.GetDisplayName(BindingState:Get(definition.Id, "Primary"))
+			buttons.Secondary.Text = ActionCatalogue.GetDisplayName(BindingState:Get(definition.Id, "Secondary"))
+			buttons.Primary.TextColor3 = colors.Accent
+			buttons.Secondary.TextColor3 = colors.TextMuted
+		end
+	end
+
+	if gearHotkeyLabel then
+		gearHotkeyLabel.Text = ActionCatalogue.GetDisplayName(BindingState:Get("Settings", "Primary"))
+	end
+end
+
+local function cancelCapture()
+	if not captureAction then
+		return
+	end
+
+	captureAction = nil
+	captureSlot = nil
+	inputManager:SetBindingCaptureActive(false)
+	refreshBindingButtons()
+end
+
+local function acceptCapturedToken(token)
+	if not captureAction or not captureSlot then
+		return
+	end
+
+	local action = captureAction
+	local slot = captureSlot
+	captureAction = nil
+	captureSlot = nil
+	inputManager:SetBindingCaptureActive(false)
+
+	local oldAction, oldSlot = BindingState:FindOwner(token, action, slot)
+
+	if oldAction then
+		pendingConflict = {
+			Action = action,
+			Slot = slot,
+			Token = token,
+			OldAction = oldAction,
+			OldSlot = oldSlot,
+		}
+		conflictLabel.Text = string.format(
+			"%s IS ALREADY BOUND TO %s (%s). REPLACE IT?",
+			ActionCatalogue.GetDisplayName(token),
+			string.upper(ActionCatalogue.ById[oldAction].Name),
+			string.upper(oldSlot)
+		)
+		conflictFrame.Visible = true
+	else
+		BindingState:Set(action, slot, token)
+	end
+
+	refreshBindingButtons()
 end
 
 local function updateResponsiveScale()
@@ -652,7 +801,13 @@ local function updateResponsiveScale()
 
 	local viewport = currentCamera.ViewportSize
 	local scale = math.min(viewport.X / 900, viewport.Y / 680, 1)
-	panelScale.Scale = math.clamp(scale, 0.72, 1)
+	panelScale.Scale = math.clamp(scale, 0.72, 1) * SessionSettings:Get("UIScale")
+	if viewportLabel and aspectLabel then
+		viewportLabel.Text = string.format("CURRENT VIEWPORT // %d x %d", math.round(viewport.X), math.round(viewport.Y))
+		local ratio = viewport.X / math.max(viewport.Y, 1)
+		local aspect = if math.abs(ratio - 16 / 9) < 0.04 then "16:9" elseif math.abs(ratio - 16 / 10) < 0.04 then "16:10" elseif math.abs(ratio - 4 / 3) < 0.04 then "4:3" elseif ratio >= 2 then "ULTRAWIDE" else "CUSTOM"
+		aspectLabel.Text = "ASPECT // " .. aspect
+	end
 end
 
 local function createInterface()
@@ -682,12 +837,15 @@ local function createInterface()
 		screenGui,
 		"SettingsGear",
 		"",
-		UDim2.new(0, 18, 1, -60),
-		UDim2.fromOffset(42, 42)
+		UDim2.new(0, 18, 1, -62),
+		UDim2.fromOffset(46, 46)
 	)
-	gearButton.BackgroundColor3 = colors.Panel
 	gearButton.Text = ""
 	decorateGear(gearButton)
+	local gearScale = Instance.new("UIScale")
+	gearScale.Name = "BLIKKScale"
+	gearScale.Scale = SessionSettings:Get("UIScale")
+	gearScale.Parent = gearButton
 
 	panel = Instance.new("Frame")
 	panel.Name = "SettingsPanel"
@@ -721,7 +879,7 @@ local function createInterface()
 	createLabel(
 		panel,
 		"Subtitle",
-		"SESSION SETTINGS // PRESS M TO CLOSE",
+		"SESSION SETTINGS // USE YOUR SETTINGS BIND TO CLOSE",
 		UDim2.fromOffset(18, 42),
 		UDim2.fromOffset(420, 16),
 		10,
@@ -731,7 +889,7 @@ local function createInterface()
 	local closeButton = createButton(
 		panel,
 		"Close",
-		"CLOSE  [M]",
+		"CLOSE",
 		UDim2.new(1, -130, 0, 17),
 		UDim2.fromOffset(112, 32)
 	)
@@ -768,6 +926,7 @@ local function createInterface()
 	createControlsPage(tabPages.CONTROLS)
 	createExtrasPage(tabPages.EXTRAS)
 	selectTab("VIDEO")
+	refreshBindingButtons()
 
 	gearButton.Activated:Connect(function()
 		setOpen(true)
@@ -783,6 +942,12 @@ local function createInterface()
 	if currentCamera then
 		currentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(updateResponsiveScale)
 	end
+	SessionSettings.Changed.Event:Connect(function(key)
+		if key == "UIScale" then
+			updateResponsiveScale()
+			gearScale.Scale = SessionSettings:Get("UIScale")
+		end
+	end)
 end
 
 function SettingsController:Init(gameplayInputManager, cameraController)
@@ -793,16 +958,29 @@ function SettingsController:Init(gameplayInputManager, cameraController)
 	isInitialised = true
 	inputManager = gameplayInputManager
 	gameplayCamera = cameraController
-	playerControls = getPlayerControls()
 	createInterface()
 
 	UserInputService.InputBegan:Connect(function(input)
-		if input.KeyCode == Enum.KeyCode.M and not UserInputService:GetFocusedTextBox() then
-			setOpen(not isOpen)
+		if not captureAction then
+			return
+		end
+
+		if input.KeyCode == Enum.KeyCode.Escape then
+			cancelCapture()
+		else
+			local token = ActionCatalogue.TokenFromInput(input)
+			if token then
+				acceptCapturedToken(token)
+			end
 		end
 	end)
 
 	UserInputService.InputChanged:Connect(function(input)
+		if captureAction and input.UserInputType == Enum.UserInputType.MouseWheel then
+			acceptCapturedToken(if input.Position.Z > 0 then "MouseWheelUp" else "MouseWheelDown")
+			return
+		end
+
 		if activeSlider and input.UserInputType == Enum.UserInputType.MouseMovement then
 			setSliderFromScreenX(activeSlider, input.Position.X)
 		end
@@ -811,6 +989,13 @@ function SettingsController:Init(gameplayInputManager, cameraController)
 	UserInputService.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
 			activeSlider = nil
+		end
+	end)
+
+	BindingState.Changed.Event:Connect(refreshBindingButtons)
+	inputManager.ActionBegan.Event:Connect(function(action)
+		if action == "Settings" and not captureAction then
+			setOpen(not isOpen)
 		end
 	end)
 end

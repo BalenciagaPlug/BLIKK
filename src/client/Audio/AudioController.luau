@@ -8,6 +8,7 @@ local isInitialised = false
 local masterGroup = nil
 local musicGroup = nil
 local soundEffectsGroup = nil
+local dashGroup = nil
 
 local function getOrCreateSoundGroup(name)
 	local existing = SoundService:FindFirstChild(name)
@@ -27,6 +28,7 @@ local function updateVolumes()
 	masterGroup.Volume = masterVolume
 	musicGroup.Volume = masterVolume * SessionSettings:Get("MusicVolume")
 	soundEffectsGroup.Volume = masterVolume * SessionSettings:Get("SoundEffectsVolume")
+	dashGroup.Volume = soundEffectsGroup.Volume
 end
 
 function AudioController:Init()
@@ -38,6 +40,7 @@ function AudioController:Init()
 	masterGroup = getOrCreateSoundGroup("BLIKK_Master")
 	musicGroup = getOrCreateSoundGroup("BLIKK_Music")
 	soundEffectsGroup = getOrCreateSoundGroup("BLIKK_SoundEffects")
+	dashGroup = getOrCreateSoundGroup("BLIKK_Dash")
 	updateVolumes()
 
 	SessionSettings.Changed.Event:Connect(function(key)

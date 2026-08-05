@@ -1,3 +1,4 @@
+local ActionCatalogue = require(script.Parent.ActionCatalogue)
 local InputConfig = require(script.Parent.InputConfig)
 
 local ActionBuffer = {}
@@ -6,6 +7,10 @@ ActionBuffer.Buffer = {}
 ActionBuffer.MaxBufferTime = InputConfig.ActionBufferDurationSeconds
 
 function ActionBuffer:Push(action)
+	if not ActionCatalogue.ById[action] then
+		return
+	end
+
 	table.insert(self.Buffer, {
 		Action = action,
 		Time = os.clock(),

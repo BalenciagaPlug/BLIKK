@@ -1,37 +1,74 @@
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 
+local BindingState = require(script.Parent.BindingState)
+
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local ActionBuffer = require(Shared.Input.ActionBuffer)
+local ActionCatalogue = require(Shared.Input.ActionCatalogue)
 
 local InputManager = {}
 
 InputManager.ActionBegan = Instance.new("BindableEvent")
+InputManager.ActionEnded = Instance.new("BindableEvent")
 InputManager.GameplayEnabledChanged = Instance.new("BindableEvent")
+InputManager.InputBegan = Instance.new("BindableEvent")
+InputManager.InputEnded = Instance.new("BindableEvent")
 
 local isInitialised = false
 local isGameplayEnabled = true
+local isBindingCaptureActive = false
+local tokenToAction = {}
 
-local keyboardActions = {
-	[Enum.KeyCode.W] = "Forward",
-	[Enum.KeyCode.A] = "Left",
-	[Enum.KeyCode.S] = "Backward",
-	[Enum.KeyCode.D] = "Right",
+local function rebuildLookup()
+	table.clear(tokenToAction)
 
-	[Enum.KeyCode.Space] = "Jump",
-	[Enum.KeyCode.Q] = "Weapon1",
-	[Enum.KeyCode.E] = "Weapon2",
-	[Enum.KeyCode.R] = "Reload",
-}
+	for _, definition in ActionCatalogue.Ordered do
+		local slots = BindingState:GetActionBindings(definition.Id)
 
-local mouseActions = {
-	[Enum.UserInputType.MouseButton1] = "Primary",
-	[Enum.UserInputType.MouseButton2] = "Secondary",
-	[Enum.UserInputType.MouseButton3] = "MiddleMouse",
-}
+		for _, token in slots do
+			if token then
+				tokenToAction[token] = definition.Id
+			end
+		end
+	end
+end
 
-local function getAction(input)
-	return keyboardActions[input.KeyCode] or mouseActions[input.UserInputType]
+local function isInterfaceAction(action)
+	local definition = ActionCatalogue.ById[action]
+	return definition and definition.Group == "Interface"
+end
+
+local function beginToken(token)
+	InputManager.InputBegan:Fire(token)
+
+	local action = tokenToAction[token]
+
+	if not action or (not isGameplayEnabled and not isInterfaceAction(action)) then
+		return
+	end
+
+	ActionBuffer:Push(action)
+	InputManager.ActionBegan:Fire(action, os.clock())
+end
+
+local function endToken(token)
+	InputManager.InputEnded:Fire(token)
+
+	local action = tokenToAction[token]
+
+	if action then
+		InputManager.ActionEnded:Fire(action, os.clock())
+	end
+end
+
+local function disableRobloxControls()
+	local player = Players.LocalPlayer
+	local playerScripts = player:WaitForChild("PlayerScripts")
+	local playerModuleScript = playerScripts:WaitForChild("PlayerModule")
+	local playerModule = require(playerModuleScript)
+	playerModule:GetControls():Disable()
 end
 
 function InputManager:Init()
@@ -40,20 +77,41 @@ function InputManager:Init()
 	end
 
 	isInitialised = true
+	rebuildLookup()
+	task.spawn(disableRobloxControls)
+
+	BindingState.Changed.Event:Connect(rebuildLookup)
 
 	UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if gameProcessed or not isGameplayEnabled then
+		if isBindingCaptureActive or gameProcessed then
 			return
 		end
 
-		local action = getAction(input)
+		local token = ActionCatalogue.TokenFromInput(input)
 
-		if not action then
+		if token then
+			beginToken(token)
+		end
+	end)
+
+	UserInputService.InputEnded:Connect(function(input)
+		local token = ActionCatalogue.TokenFromInput(input)
+
+		if token then
+			endToken(token)
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input, gameProcessed)
+		if isBindingCaptureActive or gameProcessed or input.UserInputType ~= Enum.UserInputType.MouseWheel then
 			return
 		end
 
-		ActionBuffer:Push(action)
-		self.ActionBegan:Fire(action, os.clock())
+		local token = if input.Position.Z > 0 then "MouseWheelUp" else "MouseWheelDown"
+		beginToken(token)
+		task.delay(0.12, function()
+			endToken(token)
+		end)
 	end)
 end
 
@@ -69,6 +127,10 @@ function InputManager:SetGameplayEnabled(isEnabled)
 	end
 
 	self.GameplayEnabledChanged:Fire(isEnabled)
+end
+
+function InputManager:SetBindingCaptureActive(isActive)
+	isBindingCaptureActive = isActive
 end
 
 return InputManager

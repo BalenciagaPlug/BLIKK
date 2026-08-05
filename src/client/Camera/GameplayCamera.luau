@@ -16,6 +16,7 @@ local isInitialised = false
 local hasWindowFocus = true
 local isMenuOpen = false
 local isSettingsOpen = false
+local isCursorReleased = false
 local yawRadians = 0
 local pitchRadians = 0
 local character = nil
@@ -23,6 +24,7 @@ local humanoid = nil
 local rootPart = nil
 local crosshairGui = nil
 local characterDiedConnection = nil
+local dashFovOffsetDegrees = 0
 
 local function createCrosshairLine(name, size, position)
 	local line = Instance.new("Frame")
@@ -90,7 +92,11 @@ local function isCharacterAlive()
 end
 
 local function shouldCaptureMouse()
-	return hasWindowFocus and not isMenuOpen and not isSettingsOpen and isCharacterAlive()
+	return hasWindowFocus
+		and not isMenuOpen
+		and not isSettingsOpen
+		and not isCursorReleased
+		and isCharacterAlive()
 end
 
 local function updateMouseCapture()
@@ -114,6 +120,7 @@ local function updateMouseCapture()
 		local crosshairEnabled = isCharacterAlive()
 			and not isMenuOpen
 			and not isSettingsOpen
+			and not isCursorReleased
 
 		if crosshairGui.Enabled ~= crosshairEnabled then
 			crosshairGui.Enabled = crosshairEnabled
@@ -161,7 +168,7 @@ local function updateCamera()
 	end
 
 	currentCamera.CameraType = Enum.CameraType.Scriptable
-	currentCamera.FieldOfView = CameraSettings:Get("FieldOfViewDegrees")
+	currentCamera.FieldOfView = CameraSettings:Get("FieldOfViewDegrees") + dashFovOffsetDegrees
 
 	local focusPosition = rootPart.Position
 		+ Vector3.new(0, CameraSettings:Get("CameraHeightAboveRootStuds"), 0)
@@ -195,7 +202,11 @@ function GameplayCamera:ResetPitchToNeutral()
 	pitchRadians = math.rad(CameraConfig.NeutralPitchDegrees)
 end
 
-function GameplayCamera:Init()
+function GameplayCamera:SetDashFovOffset(offsetDegrees)
+	dashFovOffsetDegrees = offsetDegrees
+end
+
+function GameplayCamera:Init(inputManager)
 	if isInitialised then
 		return
 	end
@@ -246,6 +257,19 @@ function GameplayCamera:Init()
 	end
 
 	RunService.RenderStepped:Connect(updateCamera)
+
+	inputManager.ActionBegan.Event:Connect(function(action)
+		if action == "ReleaseCursor" then
+			isCursorReleased = true
+			updateMouseCapture()
+		end
+	end)
+	inputManager.ActionEnded.Event:Connect(function(action)
+		if action == "ReleaseCursor" then
+			isCursorReleased = false
+			updateMouseCapture()
+		end
+	end)
 end
 
 return GameplayCamera

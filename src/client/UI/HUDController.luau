@@ -13,6 +13,19 @@ local screenGui = nil
 local healthFill = nil
 local healthValue = nil
 local healthConnection = nil
+local statusRoot = nil
+local weaponRoot = nil
+
+local function applyHudScale()
+	local scale = SessionSettings:Get("UIScale") * SessionSettings:Get("HudScale")
+	for _, target in { statusRoot, weaponRoot } do
+		if target then
+			local scaler = target:FindFirstChildOfClass("UIScale") or Instance.new("UIScale")
+			scaler.Scale = scale
+			scaler.Parent = target
+		end
+	end
+end
 
 local function addStroke(instance, color, thickness)
 	local stroke = Instance.new("UIStroke")
@@ -31,6 +44,8 @@ local function createLabel(parent, name, text, position, size, textSize, color, 
 	label.Text = text
 	label.TextColor3 = color
 	label.TextSize = textSize
+	label.TextStrokeColor3 = Color3.new(0, 0, 0)
+	label.TextStrokeTransparency = 0.25
 	label.TextTruncate = Enum.TextTruncate.AtEnd
 	label.TextXAlignment = alignment or Enum.TextXAlignment.Left
 	label.Parent = parent
@@ -49,491 +64,300 @@ local function createLine(parent, name, position, size, color, rotation)
 	return line
 end
 
-local function createCornerBracket(parent, name, horizontalPosition, verticalPosition, xDirection, yDirection)
-	local length = style.BracketLengthPixels
-	local thickness = style.BracketThicknessPixels
-
-	local horizontal = createLine(
-		parent,
-		name .. "Horizontal",
-		horizontalPosition,
-		UDim2.fromOffset(length, thickness),
-		colors.Metal
-	)
-	horizontal.AnchorPoint = Vector2.new(if xDirection < 0 then 1 else 0, 0)
-
-	local vertical = createLine(
-		parent,
-		name .. "Vertical",
-		verticalPosition,
-		UDim2.fromOffset(thickness, length),
-		colors.Metal
-	)
-	vertical.AnchorPoint = Vector2.new(0, if yDirection < 0 then 1 else 0)
+local function createRivet(parent, position)
+	local rivet = Instance.new("Frame")
+	rivet.AnchorPoint = Vector2.new(0.5, 0.5)
+	rivet.BackgroundColor3 = colors.Backdrop
+	rivet.Position = position
+	rivet.Size = UDim2.fromOffset(14, 14)
+	rivet.ZIndex = 5
+	rivet.Parent = parent
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(1, 0)
+	corner.Parent = rivet
+	addStroke(rivet, colors.Metal, 2)
+	createLine(rivet, "Slot", UDim2.fromOffset(3, 6), UDim2.fromOffset(8, 2), colors.Metal, -22)
 end
 
-local function createPanel(parent, name, position, size, accentColor)
-	local shadow = Instance.new("Frame")
-	shadow.Name = name .. "Shadow"
-	shadow.BackgroundColor3 = Color3.new(0, 0, 0)
-	shadow.BackgroundTransparency = 0.35
-	shadow.BorderSizePixel = 0
-	shadow.Position = position + UDim2.fromOffset(style.ShadowOffsetPixels, style.ShadowOffsetPixels)
-	shadow.Size = size
-	shadow.Parent = parent
+local function createEmblem(parent)
+	local holder = Instance.new("Frame")
+	holder.Name = "BLIKKEmblem"
+	holder.BackgroundTransparency = 1
+	holder.Position = UDim2.fromOffset(0, 10)
+	holder.Size = UDim2.fromOffset(style.EmblemSizePixels, style.EmblemSizePixels)
+	holder.ZIndex = 4
+	holder.Parent = parent
 
-	local panel = Instance.new("Frame")
-	panel.Name = name
-	panel.BackgroundColor3 = colors.Panel
-	panel.BackgroundTransparency = style.PanelTransparency
-	panel.BorderSizePixel = 0
-	panel.Position = position
-	panel.Size = size
-	panel.Parent = parent
-	addStroke(panel, colors.EdgeDark, style.EdgeThicknessPixels)
-
+	local diamond = Instance.new("Frame")
+	diamond.Name = "MetalDiamond"
+	diamond.AnchorPoint = Vector2.new(0.5, 0.5)
+	diamond.BackgroundColor3 = colors.Metal
+	diamond.Position = UDim2.fromScale(0.5, 0.5)
+	diamond.Rotation = 45
+	diamond.Size = UDim2.fromOffset(88, 88)
+	diamond.ZIndex = 4
+	diamond.Parent = holder
+	addStroke(diamond, colors.EdgeDark, 4)
 	local gradient = Instance.new("UIGradient")
-	gradient.Color = ColorSequence.new(colors.PanelLight, colors.Panel)
-	gradient.Rotation = 115
-	gradient.Parent = panel
+	gradient.Color = ColorSequence.new(colors.TextMuted, colors.PanelLight)
+	gradient.Rotation = 90
+	gradient.Parent = diamond
 
-	createLine(
-		panel,
-		"TopSignal",
-		UDim2.fromOffset(0, 0),
-		UDim2.new(0.68, 0, 0, style.AccentLineThicknessPixels),
-		accentColor
-	)
-	createLine(
-		panel,
-		"TopDeadZone",
-		UDim2.new(0.68, 5, 0, 0),
-		UDim2.new(0.22, 0, 0, 1),
-		colors.Edge
-	)
-	createLine(
-		panel,
-		"BloodNotch",
-		UDim2.new(1, -30, 0, 5),
-		UDim2.fromOffset(23, 4),
-		colors.Blood,
-		-12
-	)
+	local inner = Instance.new("Frame")
+	inner.AnchorPoint = Vector2.new(0.5, 0.5)
+	inner.BackgroundColor3 = colors.Panel
+	inner.BackgroundTransparency = 0.12
+	inner.Position = UDim2.fromScale(0.5, 0.5)
+	inner.Size = UDim2.fromOffset(70, 70)
+	inner.ZIndex = 5
+	inner.Parent = diamond
+	addStroke(inner, colors.Backdrop, 2)
 
-	createCornerBracket(
-		panel,
-		"TopLeft",
-		UDim2.fromOffset(-4, -4),
-		UDim2.fromOffset(-4, -4),
-		1,
-		1
+	local brand = createLabel(
+		inner,
+		"Brand",
+		"B",
+		UDim2.fromScale(0, 0),
+		UDim2.fromScale(1, 1),
+		68,
+		colors.Text,
+		Enum.TextXAlignment.Center
 	)
-	createCornerBracket(
-		panel,
-		"BottomRight",
-		UDim2.new(1, 4, 1, 2),
-		UDim2.new(1, 2, 1, 4),
-		-1,
-		-1
-	)
+	brand.Font = UIStyle.Fonts.Gothic
+	brand.Rotation = -45
+	brand.TextStrokeTransparency = 0
+	brand.ZIndex = 6
 
-	return panel
+	createRivet(holder, UDim2.fromOffset(63, 4))
+	createRivet(holder, UDim2.fromOffset(122, 63))
+	createRivet(holder, UDim2.fromOffset(63, 122))
+	createRivet(holder, UDim2.fromOffset(4, 63))
 end
 
-local function addMeterSegments(track)
-	for index = 1, style.MeterSegmentCount - 1 do
-		createLine(
-			track,
-			"Segment" .. index,
-			UDim2.fromScale(index / style.MeterSegmentCount, 0),
-			UDim2.fromOffset(1, track.Size.Y.Offset),
-			colors.Backdrop
-		).ZIndex = 3
-	end
-end
-
-local function createMeter(parent, name, labelText, positionY, color, darkColor, height)
-	local label = createLabel(
-		parent,
-		name .. "Label",
-		labelText,
-		UDim2.fromOffset(16, positionY - 2),
-		UDim2.fromOffset(54, height + 4),
-		10,
-		colors.TextMuted
-	)
-	label.Font = UIStyle.Fonts.Strong
-
+local function createMeter(parent, name, positionY, height, fillColor, darkColor, initialScale)
+	local railStart = style.StatusRailStartPixels
 	local track = Instance.new("Frame")
 	track.Name = name .. "Track"
 	track.BackgroundColor3 = colors.Backdrop
 	track.BorderSizePixel = 0
-	track.Position = UDim2.fromOffset(70, positionY)
-	track.Size = UDim2.new(1, -86, 0, height)
+	track.Position = UDim2.fromOffset(railStart, positionY)
+	track.Size = UDim2.fromOffset(style.StatusRailWidthPixels, height)
 	track.Parent = parent
-	addStroke(track, colors.EdgeDark, 1)
+	addStroke(track, colors.Metal, 2)
+
+	local inset = Instance.new("Frame")
+	inset.Name = "Inset"
+	inset.BackgroundColor3 = colors.EdgeDark
+	inset.BorderSizePixel = 0
+	inset.Position = UDim2.fromOffset(4, 4)
+	inset.Size = UDim2.new(1, -8, 1, -8)
+	inset.ClipsDescendants = true
+	inset.Parent = track
 
 	local fill = Instance.new("Frame")
 	fill.Name = "Fill"
-	fill.BackgroundColor3 = color
+	fill.BackgroundColor3 = fillColor
 	fill.BorderSizePixel = 0
-	fill.Size = UDim2.fromScale(0, 1)
-	fill.ZIndex = 2
-	fill.Parent = track
-
+	fill.Size = UDim2.fromScale(initialScale, 1)
+	fill.Parent = inset
 	local gradient = Instance.new("UIGradient")
-	gradient.Color = ColorSequence.new(darkColor, color)
+	gradient.Color = ColorSequence.new(darkColor, fillColor)
+	gradient.Rotation = 90
 	gradient.Parent = fill
-	addMeterSegments(track)
 
-	return fill
+	createLine(
+		track,
+		"LowerWear",
+		UDim2.new(0, 4, 1, -5),
+		UDim2.new(1, -8, 0, 1),
+		colors.TextDark
+	)
+	for index = 1, 5 do
+		createLine(
+			track,
+			"Wear" .. index,
+			UDim2.fromOffset(28 + index * 67, 4 + (index % 2) * 7),
+			UDim2.fromOffset(18 + (index % 3) * 5, 1),
+			colors.TextMuted,
+			-8 + index * 3
+		).BackgroundTransparency = 0.72
+	end
+	createLine(
+		track,
+		"EndCap",
+		UDim2.new(1, -12, 0, 2),
+		UDim2.fromOffset(8, height - 4),
+		colors.Metal,
+		-20
+	)
+
+	return fill, track
 end
 
 local function createStatusBlock(parent)
-	local size = style.StatusSize
-	local panel = createPanel(
-		parent,
-		"PlayerStatus",
-		UDim2.fromOffset(style.ScreenMarginPixels, style.ScreenMarginPixels),
-		UDim2.fromOffset(size.X, size.Y),
-		colors.Accent
-	)
+	local root = Instance.new("Frame")
+	root.Name = "PlayerStatus"
+	root.BackgroundTransparency = 1
+	root.Position = UDim2.fromOffset(8, 5)
+	root.Size = UDim2.fromOffset(style.StatusSize.X, style.StatusSize.Y)
+	root.Parent = parent
+	statusRoot = root
+	Instance.new("UIScale").Parent = root
 
-	local identityPlate = Instance.new("Frame")
-	identityPlate.Name = "IdentityPlate"
-	identityPlate.BackgroundColor3 = colors.Backdrop
-	identityPlate.BackgroundTransparency = 0.1
-	identityPlate.BorderSizePixel = 0
-	identityPlate.Position = UDim2.fromOffset(10, 11)
-	identityPlate.Size = UDim2.new(1, -20, 0, 43)
-	identityPlate.Parent = panel
-	addStroke(identityPlate, colors.EdgeDark, 1)
-
-	createLabel(
-		identityPlate,
-		"BrandMark",
-		"B//",
-		UDim2.fromOffset(8, 4),
-		UDim2.fromOffset(42, 31),
-		21,
-		colors.AccentBright
-	).Font = UIStyle.Fonts.Strong
 	createLine(
-		identityPlate,
-		"IdentityDivider",
-		UDim2.fromOffset(50, 7),
-		UDim2.fromOffset(2, 27),
-		colors.Blood
+		root,
+		"TopBrace",
+		UDim2.fromOffset(style.StatusRailStartPixels - 9, 25),
+		UDim2.fromOffset(style.StatusRailWidthPixels + 18, 5),
+		colors.Metal
 	)
-	createLabel(
-		identityPlate,
-		"PlayerName",
-		string.upper(player.DisplayName),
-		UDim2.fromOffset(62, 2),
-		UDim2.new(1, -126, 0, 25),
-		style.PlayerNameTextSize,
-		colors.Text
-	).Font = UIStyle.Fonts.Strong
-	createLabel(
-		identityPlate,
-		"PrototypeStatus",
-		"MOVEMENT LAB // LOCAL",
-		UDim2.fromOffset(63, 25),
-		UDim2.new(1, -126, 0, 14),
-		9,
+	local level = createLabel(
+		root,
+		"Level",
+		"LV. --",
+		UDim2.fromOffset(style.StatusRailStartPixels + 8, 0),
+		UDim2.fromOffset(78, 27),
+		22,
 		colors.TextMuted
 	)
+	level.Font = UIStyle.Fonts.Gothic
 	createLabel(
-		identityPlate,
-		"Level",
-		"LV --",
-		UDim2.new(1, -61, 0, 8),
-		UDim2.fromOffset(50, 24),
-		13,
-		colors.Accent,
-		Enum.TextXAlignment.Right
+		root,
+		"PlayerName",
+		string.upper(player.DisplayName),
+		UDim2.fromOffset(style.StatusRailStartPixels + 94, 4),
+		UDim2.fromOffset(280, 23),
+		15,
+		colors.Text
 	)
 
 	healthFill = createMeter(
-		panel,
+		root,
 		"Health",
-		"HEALTH",
-		66,
-		colors.Health,
-		colors.HealthDark,
-		style.HealthMeterHeightPixels
+		31,
+		style.PrimaryBarHeightPixels,
+		Color3.fromRGB(31, 142, 221),
+		Color3.fromRGB(13, 66, 118),
+		1
 	)
 	createMeter(
-		panel,
-		"Defence",
-		"DEF",
-		96,
-		colors.Defence,
-		colors.DefenceDark,
-		style.SecondaryMeterHeightPixels
-	)
-	createMeter(
-		panel,
-		"Technique",
-		"TECH",
-		121,
-		colors.Technique,
+		root,
+		"Armour",
+		61,
+		style.PrimaryBarHeightPixels,
+		colors.Accent,
 		colors.TechniqueDark,
-		style.SecondaryMeterHeightPixels
+		0
 	)
 
 	healthValue = createLabel(
-		panel,
+		root,
 		"HealthValue",
 		"-- / --",
-		UDim2.new(1, -112, 0, 63),
-		UDim2.fromOffset(96, 18),
-		11,
+		UDim2.fromOffset(style.StatusRailStartPixels, 33),
+		UDim2.fromOffset(style.StatusRailWidthPixels, 18),
+		13,
 		colors.Text,
-		Enum.TextXAlignment.Right
+		Enum.TextXAlignment.Center
 	)
 	createLabel(
-		panel,
-		"DefenceValue",
-		"READY // --",
-		UDim2.new(1, -104, 0, 91),
-		UDim2.fromOffset(88, 16),
-		9,
+		root,
+		"ArmourValue",
+		"ARMOUR // --",
+		UDim2.fromOffset(style.StatusRailStartPixels, 63),
+		UDim2.fromOffset(style.StatusRailWidthPixels, 18),
+		12,
 		colors.TextMuted,
-		Enum.TextXAlignment.Right
+		Enum.TextXAlignment.Center
 	)
 	createLabel(
-		panel,
-		"TechniqueValue",
-		"READY // --",
-		UDim2.new(1, -104, 0, 116),
-		UDim2.fromOffset(88, 16),
-		9,
-		colors.TextMuted,
-		Enum.TextXAlignment.Right
-	)
-end
-
-local function createMatchBlock(parent)
-	local size = style.MatchSize
-	local panel = createPanel(
-		parent,
-		"MatchStatus",
-		UDim2.new(1, -(size.X + style.ScreenMarginPixels), 0, style.ScreenMarginPixels),
-		UDim2.fromOffset(size.X, size.Y),
-		colors.Accent
-	)
-
-	createLabel(
-		panel,
-		"ModeCode",
-		"LAB_01 // SESSION",
-		UDim2.fromOffset(13, 9),
-		UDim2.new(1, -26, 0, 15),
+		root,
+		"PrototypeState",
+		"MOVEMENT LAB // LOCAL PROTOTYPE",
+		UDim2.fromOffset(style.StatusRailStartPixels + 4, 91),
+		UDim2.fromOffset(340, 15),
 		9,
 		colors.TextMuted
 	)
-	createLabel(
-		panel,
-		"Mode",
-		"MOVEMENT LAB",
-		UDim2.fromOffset(13, 23),
-		UDim2.new(1, -26, 0, 22),
-		15,
-		colors.Text
-	).Font = UIStyle.Fonts.Strong
-	createLine(
-		panel,
-		"Divider",
-		UDim2.fromOffset(13, 48),
-		UDim2.new(1, -26, 0, 1),
-		colors.EdgeDark
-	)
-	createLabel(
-		panel,
-		"Timer",
-		"--:--",
-		UDim2.fromOffset(13, 50),
-		UDim2.fromOffset(112, 34),
-		style.TimerTextSize,
-		colors.AccentBright
-	).Font = UIStyle.Fonts.Strong
-	createLabel(
-		panel,
-		"Round",
-		"ROUND // --",
-		UDim2.new(1, -111, 0, 53),
-		UDim2.fromOffset(98, 17),
-		10,
-		colors.TextMuted,
-		Enum.TextXAlignment.Right
-	)
-	createLabel(
-		panel,
-		"Score",
-		"SCORE // -- : --",
-		UDim2.new(1, -137, 0, 73),
-		UDim2.fromOffset(124, 17),
-		10,
-		colors.TextMuted,
-		Enum.TextXAlignment.Right
-	)
-	createLine(
-		panel,
-		"PendingMark",
-		UDim2.new(1, -44, 1, -12),
-		UDim2.fromOffset(31, 3),
-		colors.Blood
-	)
+	createEmblem(root)
 end
 
 local function createWeaponSilhouette(parent)
-	local silhouetteColor = colors.Metal
-	createLine(
-		parent,
-		"Receiver",
-		UDim2.fromOffset(15, 25),
-		UDim2.fromOffset(77, 13),
-		silhouetteColor,
-		-3
-	)
-	createLine(
-		parent,
-		"UpperRail",
-		UDim2.fromOffset(27, 19),
-		UDim2.fromOffset(52, 4),
-		colors.TextMuted,
-		-3
-	)
-	createLine(
-		parent,
-		"Barrel",
-		UDim2.fromOffset(87, 27),
-		UDim2.fromOffset(42, 5),
-		silhouetteColor,
-		-3
-	)
-	createLine(
-		parent,
-		"Grip",
-		UDim2.fromOffset(58, 37),
-		UDim2.fromOffset(14, 27),
-		silhouetteColor,
-		-15
-	)
-	createLine(
-		parent,
-		"Stock",
-		UDim2.fromOffset(5, 29),
-		UDim2.fromOffset(23, 8),
-		colors.TextMuted,
-		12
-	)
+	local metal = colors.Metal
+	createLine(parent, "Receiver", UDim2.fromOffset(28, 18), UDim2.fromOffset(150, 14), metal, -2)
+	createLine(parent, "Rail", UDim2.fromOffset(52, 10), UDim2.fromOffset(92, 5), colors.TextMuted, -2)
+	createLine(parent, "Barrel", UDim2.fromOffset(174, 20), UDim2.fromOffset(104, 6), metal, -2)
+	createLine(parent, "Stock", UDim2.fromOffset(2, 20), UDim2.fromOffset(45, 10), colors.TextMuted, 10)
+	createLine(parent, "Grip", UDim2.fromOffset(119, 30), UDim2.fromOffset(16, 31), metal, -14)
 end
 
 local function createWeaponBlock(parent)
 	local size = style.WeaponSize
-	local panel = createPanel(
-		parent,
-		"WeaponStatus",
-		UDim2.new(1, -(size.X + style.ScreenMarginPixels), 1, -(size.Y + style.ScreenMarginPixels)),
-		UDim2.fromOffset(size.X, size.Y),
-		colors.Blood
-	)
+	local root = Instance.new("Frame")
+	root.Name = "WeaponStatus"
+	root.BackgroundTransparency = 1
+	root.Position = UDim2.new(1, -(size.X + 20), 1, -(size.Y + 18))
+	root.Size = UDim2.fromOffset(size.X, size.Y)
+	root.Parent = parent
+	weaponRoot = root
+	Instance.new("UIScale").Parent = root
 
-	local iconArea = Instance.new("Frame")
-	iconArea.Name = "WeaponIconPlaceholder"
-	iconArea.BackgroundColor3 = colors.Backdrop
-	iconArea.BackgroundTransparency = 0.16
-	iconArea.BorderSizePixel = 0
-	iconArea.Position = UDim2.fromOffset(12, 15)
-	iconArea.Size = UDim2.fromOffset(142, 74)
-	iconArea.Parent = panel
-	addStroke(iconArea, colors.EdgeDark, 1)
-	createLine(
-		iconArea,
-		"ScanLine",
-		UDim2.fromOffset(8, 10),
-		UDim2.new(1, -16, 0, 1),
-		colors.AccentDim
-	)
-	createWeaponSilhouette(iconArea)
-	createLabel(
-		iconArea,
-		"Placeholder",
-		"ICON // READY",
-		UDim2.fromOffset(8, 57),
-		UDim2.new(1, -16, 0, 12),
-		8,
-		colors.TextDark
-	)
-
-	local slotChip = Instance.new("Frame")
-	slotChip.Name = "SlotChip"
-	slotChip.BackgroundColor3 = colors.AccentDim
-	slotChip.BorderSizePixel = 0
-	slotChip.Position = UDim2.fromOffset(166, 14)
-	slotChip.Size = UDim2.fromOffset(66, 19)
-	slotChip.Parent = panel
-	createLabel(
-		slotChip,
-		"Slot",
-		"SLOT --",
-		UDim2.fromOffset(6, 1),
-		UDim2.new(1, -12, 1, -2),
-		10,
-		colors.AccentBright
-	)
-	createLabel(
-		panel,
+	createLabel(root, "Slot", "SLOT --", UDim2.fromOffset(4, 0), UDim2.fromOffset(74, 18), 10, colors.Accent)
+	local weaponName = createLabel(
+		root,
 		"WeaponName",
 		"UNARMED",
-		UDim2.fromOffset(166, 35),
-		UDim2.new(1, -178, 0, 25),
+		UDim2.fromOffset(4, 17),
+		UDim2.fromOffset(250, 24),
 		style.WeaponNameTextSize,
 		colors.Text
-	).Font = UIStyle.Fonts.Strong
-	createLabel(
-		panel,
-		"AmmoCurrent",
-		"--",
-		UDim2.fromOffset(164, 59),
-		UDim2.fromOffset(68, 35),
-		style.AmmoCurrentTextSize,
-		colors.Text
-	).Font = UIStyle.Fonts.Strong
-	createLabel(
-		panel,
-		"AmmoDivider",
-		"/",
-		UDim2.fromOffset(230, 67),
-		UDim2.fromOffset(18, 24),
-		18,
-		colors.Blood
 	)
+	weaponName.Font = UIStyle.Fonts.Strong
+	weaponName.TextStrokeTransparency = 0
+	weaponName.TextColor3 = Color3.fromRGB(255, 252, 235)
 	createLabel(
-		panel,
-		"AmmoReserve",
-		"--",
-		UDim2.fromOffset(248, 71),
-		UDim2.fromOffset(58, 21),
-		style.AmmoReserveTextSize,
+		root,
+		"WeaponStats",
+		"DAMAGE --  |  DELAY --",
+		UDim2.fromOffset(4, 42),
+		UDim2.fromOffset(260, 18),
+		11,
 		colors.TextMuted
 	)
-	createLine(
-		panel,
-		"FooterDivider",
-		UDim2.fromOffset(12, 101),
-		UDim2.new(1, -24, 0, 1),
-		colors.EdgeDark
-	)
+
+	local ammoTrack = Instance.new("Frame")
+	ammoTrack.Name = "AmmoTrack"
+	ammoTrack.BackgroundColor3 = colors.Text
+	ammoTrack.BorderSizePixel = 0
+	ammoTrack.Position = UDim2.fromOffset(4, 66)
+	ammoTrack.Size = UDim2.fromOffset(218, 13)
+	ammoTrack.Parent = root
+	addStroke(ammoTrack, colors.EdgeDark, 2)
 	createLabel(
-		panel,
+		root,
+		"Ammo",
+		"-- / --",
+		UDim2.fromOffset(233, 62),
+		UDim2.fromOffset(103, 22),
+		15,
+		colors.Text,
+		Enum.TextXAlignment.Right
+	)
+
+	local silhouette = Instance.new("Frame")
+	silhouette.Name = "WeaponIconPlaceholder"
+	silhouette.BackgroundTransparency = 1
+	silhouette.Position = UDim2.fromOffset(34, 88)
+	silhouette.Size = UDim2.fromOffset(288, 62)
+	silhouette.Parent = root
+	createWeaponSilhouette(silhouette)
+	createLabel(
+		root,
 		"DataState",
-		"WEAPON LINK // PLACEHOLDER READY",
-		UDim2.fromOffset(12, 108),
-		UDim2.new(1, -24, 0, 17),
-		9,
+		"WEAPON DATA // PLACEHOLDER READY",
+		UDim2.fromOffset(4, 136),
+		UDim2.fromOffset(250, 14),
+		8,
 		colors.TextMuted
 	)
 end
@@ -578,14 +402,16 @@ function HUDController:Init()
 	screenGui.ResetOnSpawn = false
 	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	createStatusBlock(screenGui)
-	createMatchBlock(screenGui)
 	createWeaponBlock(screenGui)
+	applyHudScale()
 	screenGui.Enabled = SessionSettings:Get("HudVisible")
 	screenGui.Parent = playerGui
 
 	SessionSettings.Changed.Event:Connect(function(key, value)
 		if key == "HudVisible" then
 			screenGui.Enabled = value
+		elseif key == "UIScale" or key == "HudScale" then
+			applyHudScale()
 		end
 	end)
 
