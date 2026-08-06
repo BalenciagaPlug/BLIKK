@@ -47,6 +47,7 @@ local MeleePresentationConfig = {
 
 	Pose = {
 		IdleBlendSpeed = 18,
+		AirborneBlendSpeed = 20,
 		ActionBlendSpeed = 28,
 		AirReadyTorsoDegrees = -7,
 		AirReadyHipDegrees = 13,
@@ -55,6 +56,11 @@ local MeleePresentationConfig = {
 			RightShoulder = Vector3.new(-15, -5, 8),
 			RightElbow = Vector3.new(-30, 0, 0),
 			RightWrist = Vector3.new(4, -4, 6),
+		},
+		EquippedAirborneOffsets = {
+			RightShoulder = Vector3.new(-1, 0, -1),
+			RightElbow = Vector3.new(-2, 0, 0),
+			RightWrist = Vector3.new(1, 0, 1),
 		},
 	},
 }

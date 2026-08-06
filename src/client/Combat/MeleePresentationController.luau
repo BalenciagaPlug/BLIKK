@@ -302,7 +302,8 @@ local function poseForState(now)
 		end
 	end
 	if state == "Holstered" or state == "Interrupted" or state == "Equipping" or state == "Unequipping" then return nil end
-	if (dashActive or wallPresentationActive) and state ~= "Slashing" and state ~= "Blocking" then return nil end
+	if wallPresentationActive and state ~= "Slashing" and state ~= "Blocking" then return nil end
+	if dashActive and not airborne and state ~= "Slashing" and state ~= "Blocking" then return nil end
 	local poses = {}
 	if state == "Slashing" then
 		local elapsed = now - stateStarted
@@ -319,10 +320,14 @@ local function poseForState(now)
 		poses.RightElbow = CFrame.Angles(math.rad(-35), 0, 0)
 	else
 		for alias, degrees in Config.Pose.EquippedIdle do
+			if dashActive and alias == "Waist" then continue end
+			if airborne then
+				degrees += Config.Pose.EquippedAirborneOffsets[alias] or Vector3.zero
+			end
 			poses[alias] = CFrame.Angles(math.rad(degrees.X), math.rad(degrees.Y), math.rad(degrees.Z))
 		end
 	end
-	if airborne then
+	if airborne and not dashActive then
 		poses.Root = poses.Root or CFrame.Angles(math.rad(Config.Pose.AirReadyTorsoDegrees), 0, 0)
 		poses.LeftHip = CFrame.Angles(math.rad(Config.Pose.AirReadyHipDegrees), 0, math.rad(-5))
 		poses.RightHip = CFrame.Angles(math.rad(-Config.Pose.AirReadyHipDegrees * 0.65), 0, math.rad(5))
@@ -340,7 +345,10 @@ local function applyPose(deltaTime)
 	end
 	table.clear(ownedPoseJoints)
 	local blockBlend = if state == "Blocking" then math.clamp((now - stateStarted) / Config.Slash.PostCancelBlockEnterBlendSeconds, 0, 1) else 1
-	local idleBlend = 1 - math.exp(-Config.Pose.IdleBlendSpeed * deltaTime)
+	local idleBlendSpeed = if isAirborne()
+		then Config.Pose.AirborneBlendSpeed
+		else Config.Pose.IdleBlendSpeed
+	local idleBlend = 1 - math.exp(-idleBlendSpeed * deltaTime)
 	local blend = if state == "MeleeIdle" then idleBlend else blockBlend
 	for alias, joint in poseJoints do
 		if poses[alias] then joint.Transform = joint.Transform:Lerp(poses[alias], blend); ownedPoseJoints[alias] = true end

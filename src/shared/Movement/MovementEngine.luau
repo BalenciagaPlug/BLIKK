@@ -100,7 +100,9 @@ local function stepDash(deltaTime)
 	local speed = state.BaseSpeed * multiplier
 	state.PeakSpeed = math.max(state.PeakSpeed, speed)
 	local vertical = rootPart.AssemblyLinearVelocity.Y
-	if config.VerticalMomentumMode == "PreserveAtActivation" then vertical = state.VerticalVelocity end
+	if state.Grounded and config.VerticalMomentumMode == "PreserveAtActivation" then
+		vertical = state.VerticalVelocity
+	end
 	rootPart.AssemblyLinearVelocity = Vector3.new(state.Direction.X * speed, vertical, state.Direction.Z * speed)
 	MovementEngine.DashUpdated:Fire(state.Action, phase, math.clamp(state.Elapsed / total, 0, 1))
 	if state.Elapsed >= total then finishDash(false) end
