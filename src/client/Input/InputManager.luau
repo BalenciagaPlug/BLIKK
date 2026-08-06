@@ -10,6 +10,8 @@ local ActionCatalogue = require(Shared.Input.ActionCatalogue)
 
 local InputManager = {}
 
+local PLAYER_MODULE_LOOKUP_TIMEOUT_SECONDS = 5
+
 InputManager.ActionBegan = Instance.new("BindableEvent")
 InputManager.ActionEnded = Instance.new("BindableEvent")
 InputManager.GameplayEnabledChanged = Instance.new("BindableEvent")
@@ -22,6 +24,16 @@ local isGameplayEnabled = true
 local isBindingCaptureActive = false
 local isTextInputActive = false
 local tokenToAction = {}
+local hasWarnedControlsUnavailable = false
+
+local function warnControlsUnavailable(reason)
+	if hasWarnedControlsUnavailable then
+		return
+	end
+
+	hasWarnedControlsUnavailable = true
+	warn("[BLIKK INPUT] Standard Roblox controls could not be disabled: " .. reason)
+end
 
 local function rebuildLookup()
 	table.clear(tokenToAction)
@@ -67,10 +79,28 @@ end
 
 local function disableRobloxControls()
 	local player = Players.LocalPlayer
-	local playerScripts = player:WaitForChild("PlayerScripts")
-	local playerModuleScript = playerScripts:WaitForChild("PlayerModule")
-	local playerModule = require(playerModuleScript)
-	playerModule:GetControls():Disable()
+	local playerScripts = player:WaitForChild("PlayerScripts", PLAYER_MODULE_LOOKUP_TIMEOUT_SECONDS)
+	if not playerScripts then
+		warnControlsUnavailable("PlayerScripts was not available within the lookup timeout")
+		return
+	end
+
+	local playerModuleScript = playerScripts:WaitForChild(
+		"PlayerModule",
+		PLAYER_MODULE_LOOKUP_TIMEOUT_SECONDS
+	)
+	if not playerModuleScript then
+		warnControlsUnavailable("PlayerModule was not available within the lookup timeout")
+		return
+	end
+
+	local didDisable, disableError = pcall(function()
+		local playerModule = require(playerModuleScript)
+		playerModule:GetControls():Disable()
+	end)
+	if not didDisable then
+		warnControlsUnavailable(tostring(disableError))
+	end
 end
 
 function InputManager:Init()

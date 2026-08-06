@@ -10,8 +10,11 @@ local SplashScreenController = require(script.Parent.SplashScreenController)
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 
 local FrontendController = {}
+
+local REMOTE_LOOKUP_TIMEOUT_SECONDS = 5
 local isInitialised = false
 local isInGameplay = false
+local hasWarnedMissingSpawnRemote = false
 local frontendGui = nil
 local inputManagerReference = nil
 local gameplayCameraReference = nil
@@ -59,12 +62,21 @@ function FrontendController:Init(inputManager, gameplayCamera, fighterController
 
 	local function enterMovementLab()
 		if isInGameplay then return end
+		local remotes = ReplicatedStorage:WaitForChild("BLIKKRemotes", REMOTE_LOOKUP_TIMEOUT_SECONDS)
+		local requestSpawn = remotes
+			and remotes:WaitForChild("RequestMovementLabSpawn", REMOTE_LOOKUP_TIMEOUT_SECONDS)
+		if not requestSpawn or not requestSpawn:IsA("RemoteEvent") then
+			if not hasWarnedMissingSpawnRemote then
+				hasWarnedMissingSpawnRemote = true
+				warn("[BLIKK FRONTEND] Movement Lab is unavailable because its spawn remote did not initialise.")
+			end
+			return
+		end
 		isInGameplay = true
 		NavigationController:Suspend()
 		setFrontendActive(false)
 		chatController:SetContext("Training")
-		local remotes = ReplicatedStorage:WaitForChild("BLIKKRemotes")
-		remotes:WaitForChild("RequestMovementLabSpawn"):FireServer()
+		requestSpawn:FireServer()
 		musicController:SetContext("MovementLab")
 	end
 

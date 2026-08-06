@@ -160,11 +160,11 @@ function ModularUrbanKit:Windows(parent, center, size, height, frontSign)
 			local x = (column - (columns + 1) * 0.5) * math.min(12, size.X / columns)
 			local y = math.min(height - 5, 5 + (floorIndex - 1) * 11)
 			for _, face in { -1, 1 } do
-				part(parent, "Window", Vector3.new(5, 4.5, 0.18), CFrame.new(center.X + x, y, center.Z + face * (size.Z * 0.5 + 0.11)), self.Palette.Window, Enum.Material.Glass, { CanCollide = false, CanQuery = false, CastShadow = false })
+				part(parent, "Window", Vector3.new(5, 4.5, 0.18), CFrame.new(center.X + x, y, center.Z + face * (size.Y * 0.5 + 0.11)), self.Palette.Window, Enum.Material.Glass, { CanCollide = false, CanQuery = false, CastShadow = false })
 			end
 		end
 	end
-	if frontSign then self.Context.Sign(parent, "BuildingSign", frontSign, Vector3.new(center.X, 7.5, center.Z + size.Z * 0.5 + 0.2), 180, math.min(size.X - 6, 28)) end
+	if frontSign then self.Context.Sign(parent, "BuildingSign", frontSign, Vector3.new(center.X, 7.5, center.Z + size.Y * 0.5 + 0.2), 180, math.min(size.X - 6, 28)) end
 end
 
 function ModularUrbanKit:Building(parent, name, definition, options)
