@@ -70,19 +70,52 @@ local function makeSign(parent, name, text, position, yaw, width)
 	return plate
 end
 
-local function makeLamp(parent, position, tier, color)
-	makePart(parent, "StreetLampPost", Vector3.new(0.45, 12, 0.45), CFrame.new(position + Vector3.new(0, 6, 0)), Config.Palette.Steel, Enum.Material.Metal, { CastShadow = false })
-	local head = makePart(parent, "StreetLampHead", Vector3.new(1.7, 0.55, 1.7), CFrame.new(position + Vector3.new(0, 12, 0)), color or Config.Palette.Lamp, Enum.Material.Neon, { CanCollide = false, CanQuery = false, CastShadow = false, Attributes = { BLIKK_QualityTier = tier }, Tags = { "BLIKK_EnvironmentLight" } })
-	local light = Instance.new("PointLight")
-	light.Name = "DistrictPractical"
-	light.Brightness = if tier == "ESSENTIAL" then 1.5 else 1.05
-	light.Color = color or Config.Palette.Lamp
-	light.Range = if tier == "ESSENTIAL" then 27 else 21
-	light.Shadows = tier == "ESSENTIAL"
+local function configureLight(light, owner, tier, purpose, brightness, range, castsShadowsAtHigh)
 	light:SetAttribute("BLIKK_QualityTier", tier)
-	light.Parent = head
+	light:SetAttribute("BLIKK_BaseBrightness", brightness)
+	light:SetAttribute("BLIKK_BaseRange", range)
+	owner:SetAttribute("BLIKK_QualityTier", tier)
+	owner:SetAttribute("BLIKK_LightPurpose", purpose)
+	owner:SetAttribute("BLIKK_CastsShadowsAtHigh", castsShadowsAtHigh == true)
+	tag(owner, "BLIKK_EnvironmentLight")
 	counts.Lights += 1
 	counts.Instances += 1
+end
+
+local function makeLamp(parent, position, tier, profile, castsShadowsAtHigh, name)
+	if counts.Lights >= Config.Lighting.LightCountLimits.MaximumTotal then return end
+	makePart(parent, "StreetLampPost", Vector3.new(0.45, 12, 0.45), CFrame.new(position + Vector3.new(0, 6, 0)), Config.Palette.Steel, Enum.Material.Metal, { CastShadow = false })
+	local head = makePart(parent, name or "StreetLampHead", Vector3.new(1.7, 0.55, 1.7), CFrame.new(position + Vector3.new(0, 12, 0)), profile.FixtureColor, Enum.Material.Neon, { CanCollide = false, CanQuery = false, CastShadow = false })
+	local light = Instance.new("PointLight")
+	light.Name = "DistrictPractical"
+	light.Brightness = profile.Brightness
+	light.Color = profile.LightColor
+	light.Range = profile.RangeStuds
+	light.Shadows = castsShadowsAtHigh == true
+	light.Parent = head
+	configureLight(light, head, tier, if tier == "ESSENTIAL" then "STREET" else "LANDMARK", profile.Brightness, profile.RangeStuds, castsShadowsAtHigh)
+end
+
+local function makeRouteFill(parent, definition)
+	if counts.Lights >= Config.Lighting.LightCountLimits.MaximumTotal then return end
+	local profile = Config.Lighting.RouteFillLights
+	local anchor = makePart(parent, definition.Name .. "FillAnchor", Vector3.new(0.2, 0.2, 0.2), CFrame.new(definition.Position), Color3.new(), Enum.Material.SmoothPlastic, {
+		CanCollide = false,
+		CanQuery = false,
+		CanTouch = false,
+		CastShadow = false,
+		Transparency = 1,
+	})
+	local brightness = definition.Brightness or profile.DefaultBrightness
+	local range = definition.RangeStuds or profile.DefaultRangeStuds
+	local light = Instance.new("PointLight")
+	light.Name = "DistrictRouteFill"
+	light.Brightness = brightness
+	light.Color = definition.Color or profile.DefaultColor
+	light.Range = range
+	light.Shadows = false
+	light.Parent = anchor
+	configureLight(light, anchor, "ESSENTIAL", definition.Purpose, brightness, range, false)
 end
 
 local kit = ModularUrbanKit.new({ Part = makePart, Container = makeContainer, Sign = makeSign, Tag = tag, Palette = Config.Palette })
@@ -196,7 +229,7 @@ local function buildStandardBuildings(parent)
 		end
 		if name == "GeneratorStation" then
 			kit:RooftopDetail(model, "Generator", Vector3.new(definition.Center.X, definition.RoofHeight + 2, definition.Center.Z))
-			makeLamp(model, Vector3.new(definition.Center.X, definition.RoofHeight + 1, definition.Center.Z), "HIGH", Config.Palette.Purple)
+			makeLamp(model, Vector3.new(definition.Center.X, definition.RoofHeight + 1, definition.Center.Z), "HIGH", Config.Lighting.LandmarkAccents, false, "GeneratorAccentHead")
 		end
 		if name == "ParkingGarage" then
 			model:SetAttribute("BLIKK_CombatPocket", true)
@@ -317,10 +350,16 @@ end
 
 local function buildStreetProps(parent)
 	local props = makeContainer("Folder", parent, "StreetProps")
-	for _, position in {
-		Vector3.new(-120, 0, -130), Vector3.new(-24, 0, -150), Vector3.new(62, 0, -143), Vector3.new(177, 0, -138),
-		Vector3.new(-120, 0, 22), Vector3.new(50, 0, 22), Vector3.new(183, 0, 32), Vector3.new(-82, 0, 178), Vector3.new(74, 0, 190),
-	} do makeLamp(props, position, "ESSENTIAL") end
+	for index, definition in Config.Lighting.StreetLights.Placements do
+		makeLamp(
+			props,
+			definition.Position,
+			"ESSENTIAL",
+			Config.Lighting.StreetLights,
+			definition.CastsShadowsAtHigh,
+			string.format("StreetLampHead%02d", index)
+		)
+	end
 	for _, position in { Vector3.new(-126, 0, -55), Vector3.new(48, 0, -120), Vector3.new(182, 0, 110), Vector3.new(-93, 0, 90) } do kit:StreetFurniture(props, "PowerPole", position, { HeightStuds = 20 }) end
 	for index, position in { Vector3.new(-72, 0, -130), Vector3.new(-58, 0, -130), Vector3.new(43, 0, -135), Vector3.new(60, 0, -135), Vector3.new(44, 0, 153), Vector3.new(60, 0, 153) } do
 		kit:Bollard(props, position)
@@ -332,6 +371,15 @@ local function buildStreetProps(parent)
 		{ "Planter", Vector3.new(-73, 0, 72) },
 	} do kit:StreetFurniture(props, definition[1], definition[2]) end
 	return props
+end
+
+local function buildRouteLighting(parent)
+	local lighting = makeContainer("Folder", parent, "RouteLighting")
+	lighting:SetAttribute("BLIKK_LightingOwner", "DistrictZero")
+	for _, definition in Config.Lighting.RouteFillLights.Placements do
+		makeRouteFill(lighting, definition)
+	end
+	return lighting
 end
 
 local function buildDevelopmentCalibration(parent)
@@ -365,28 +413,40 @@ local function buildSpawnPoints(parent)
 end
 
 local function applyLighting()
-	local profile = Config.Lighting
+	local profile = Config.Lighting.GlobalNightFill
 	Lighting.ClockTime = profile.ClockTime
 	Lighting.Brightness = profile.Brightness
+	Lighting.ExposureCompensation = profile.ExposureCompensation
 	Lighting.Ambient = profile.Ambient
 	Lighting.OutdoorAmbient = profile.OutdoorAmbient
+	Lighting.EnvironmentDiffuseScale = profile.EnvironmentDiffuseScale
+	Lighting.EnvironmentSpecularScale = profile.EnvironmentSpecularScale
+	Lighting.ShadowSoftness = profile.ShadowSoftness
 	Lighting.FogColor = profile.FogColor
+	Lighting.FogStart = profile.FogStartStuds
 	Lighting.FogEnd = profile.FogEndStuds
 	Lighting.GlobalShadows = true
 	local atmosphere = Lighting:FindFirstChild("BLIKK_DistrictZeroAtmosphere") or Instance.new("Atmosphere")
 	atmosphere.Name = "BLIKK_DistrictZeroAtmosphere"
 	atmosphere.Density = profile.AtmosphereDensity
 	atmosphere.Haze = profile.AtmosphereHaze
-	atmosphere.Color = Color3.fromRGB(166, 172, 192)
-	atmosphere.Decay = Color3.fromRGB(72, 62, 82)
+	atmosphere.Color = profile.AtmosphereColor
+	atmosphere.Decay = profile.AtmosphereDecay
 	atmosphere.Parent = Lighting
+	local post = Config.Lighting.PostProcessing
 	local grade = Lighting:FindFirstChild("BLIKK_DistrictZeroGrade") or Instance.new("ColorCorrectionEffect")
 	grade.Name = "BLIKK_DistrictZeroGrade"
-	grade.Brightness = 0.01
-	grade.Contrast = 0.1
-	grade.Saturation = -0.14
-	grade.TintColor = Color3.fromRGB(220, 215, 230)
+	grade.Brightness = post.ColorCorrectionBrightness
+	grade.Contrast = post.ColorCorrectionContrast
+	grade.Saturation = post.ColorCorrectionSaturation
+	grade.TintColor = post.ColorCorrectionTint
 	grade.Parent = Lighting
+	local bloom = Lighting:FindFirstChild("BLIKK_DistrictZeroBloom") or Instance.new("BloomEffect")
+	bloom.Name = "BLIKK_DistrictZeroBloom"
+	bloom.Intensity = post.BloomIntensity
+	bloom.Size = post.BloomSize
+	bloom.Threshold = post.BloomThreshold
+	bloom.Parent = Lighting
 end
 
 function Builder:Build()
@@ -400,6 +460,7 @@ function Builder:Build()
 	district:SetAttribute("BLIKK_WidthStuds", Config.Dimensions.WidthStuds)
 	district:SetAttribute("BLIKK_LengthStuds", Config.Dimensions.LengthStuds)
 	district:SetAttribute("BLIKK_Blueprint", "DZ-001 / DZ-002 / DZ-003 V1")
+	applyLighting()
 	buildGround(district)
 	local architecture = makeContainer("Folder", district, "Architecture")
 	local roofs = buildStandardBuildings(architecture)
@@ -411,6 +472,7 @@ function Builder:Build()
 	buildAlleys(architecture)
 	buildRoofConnections(district, roofs, courtRoof)
 	buildStreetProps(district)
+	buildRouteLighting(district)
 	buildDevelopmentCalibration(district)
 	buildSpawnPoints(district)
 	local audio = makeContainer("Folder", district, "AudioHooks")
@@ -419,7 +481,6 @@ function Builder:Build()
 		hook:SetAttribute("BLIKK_AudioAssetId", "")
 	end
 	for key, value in counts do district:SetAttribute("BLIKK_" .. key .. "Count", value) end
-	applyLighting()
 	return district
 end
 

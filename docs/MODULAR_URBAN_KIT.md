@@ -41,6 +41,15 @@ Compatible surfaces also retain the established `BLIKK_WallSurface` and `BLIKK_L
 - Preserve playable collision, route widths, gaps, and heights when replacing gray-box geometry.
 - Use movement metadata instead of arrows, tutorial signs, or invisible route advertising.
 
+## Environment Lighting Contract
+
+Generated environment-light owners carry the `BLIKK_EnvironmentLight` tag and store their
+quality tier, purpose, and High-quality shadow permission as attributes. Their child Light
+stores immutable base brightness and range attributes. Tagging occurs only after the Light
+and attributes exist, allowing the client quality controller to apply the current setting
+without a partially constructed owner. Lighting is static and bounded; builders must not
+introduce per-frame light updates or exceed their map-specific light and shadow budgets.
+
 ## District Zero Proof Pass
 
 District Zero exercises the kit through modular roof families and utilities, apartment fire escapes and ladders, construction scaffolding, alley clutter and conduits, and varied street furniture. This is a proof of reuse rather than an art-complete pass. Major building masses, road slabs, canal walls, Clock Tower geometry, the court, and several connective platforms intentionally remain authored gray-box geometry for later incremental replacement.

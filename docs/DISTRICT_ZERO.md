@@ -42,3 +42,16 @@ Blueprint spawns A, B, and C are placed at Garage West, Parking Southwest, and S
 ## Runtime Contract
 
 The deterministic map exists only at `Workspace/BLIKK_MovementLab/DistrictZero`. Rebuilding replaces that exact root. Static geometry is server-owned and anchored. Quality settings change only lighting presentation; collision and route geometry remain invariant.
+
+## Night Visibility
+
+District Zero remains a night map at 19.15 ClockTime. A restrained cool global fill keeps
+routes and character silhouettes readable without flattening the dark sky, while nine warm
+street practicals and the purple Generator accent retain the district's colour identity.
+
+Twenty-two invisible, deterministic route-fill anchors cover the three spawns, major
+intersections, wall channels, Station sublevel, Canal approaches, and principal roof routes.
+Together with the ten visible practicals, the map has a hard limit of 32 local lights. Only
+four authored street practicals cast shadows on High quality; Medium and Low use no
+light-cast shadows. Quality changes scale brightness and range from immutable base
+attributes, so repeated setting changes do not compound values or alter collision.
