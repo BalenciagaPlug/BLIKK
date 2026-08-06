@@ -25,7 +25,7 @@ Timing is expressed in seconds. Input, buffer, cancel, cooldown, and recovery wi
 
 ## 5. Movement State Model
 
-Currently implemented states are grounded locomotion, jumping/falling, ground dash, air dash, landing reset, and client-side Training Katana slash/block presentation. Dash phases are Entry, Travel, and Exit. Planned states include wall interaction, authoritative weapon action, and composed techniques. Exclusive states own velocity while overlays such as presentation observe them. Death, respawn, menu entry, settings, and character replacement cancel stale state.
+The client movement owner models `Grounded`, `JumpRising`, `AirborneFree`, ground/air/return dash, `WallApproach`, vertical and horizontal wall runs, `WallJumpRecovery`, `WallCancelFreedom`, and same-wall rejection. Dash phases remain Entry, Travel, and Exit. `MovementEngine` is the sole client gameplay writer of root velocity during dash and wall movement; sensing and presentation only report or observe state. Death, respawn, menu entry, settings, and character replacement cancel stale state.
 
 ## 6. Dash Specification
 
@@ -37,7 +37,7 @@ The intended result is immediate, explosive, addictive, repeatable, readable, an
 
 ## 7. Jump and Air Control
 
-Humanoid jump currently supplies vertical movement. Dash preserves vertical momentum and must not erase jump timing. Landing resets the air-dash allowance. Future air control and wall jumps must integrate through explicit state transitions rather than replacing the current dash contract.
+Humanoid jump supplies vertical movement with the configured 7.2-stud `JumpHeight`, a 0.12-second landing buffer, and 0.08-second grounded grace. Airborne jump presses do not create an open-air double jump; they may instead be consumed by an eligible wall action. Dash preserves live vertical momentum while airborne. Landing resets the normal air-dash allowance and all wall-return eligibility.
 
 ## 8. Camera Relationship
 
@@ -69,9 +69,11 @@ The current Training Katana implements buffered slash-to-block presentation canc
 
 Training Katana cancel timing is owned by the per-weapon profile in `TechniqueConfig`: 0.025 seconds anticipation, 0.115 seconds active swing, 0.160 seconds recovery, a 0.055–0.205-second cancel window, 0.080 seconds early buffering, 0.035 seconds post-cancel block blend, 0.070 seconds landing forgiveness, 0.060 seconds air-action forgiveness, and a 0.045-second repeated-sequence lockout. All values are provisional.
 
-### 11.1 Wall Interaction Foundation
+### 11.1 Movement Truth Wall Interaction
 
-Wall contact and wall jump are currently implemented as a client-side prototype. Detection uses one bounded forward/side raycast path, authored wall metadata where available, and a conservative vertical-geometry fallback. Wall launch combines outward normal, held camera-relative input, and retained tangential momentum. Immediate same-wall repetition is rejected; alternating walls remain chainable. See `WALL_INTERACTION.md` for states, metadata, calibration geometry, and limitations.
+Wall contact is sensed by a bounded forward/side spherecast path using authored wall metadata where available and a conservative vertical-geometry fallback. Head-on entry may begin a vertical run; a 15–45 degree approach to the wall plane may begin a horizontal run; other eligible airborne contact produces a standard wall jump. During a run, signed wall-plane distance maintains a rig-relative safety radius using bounded velocity correction rather than position changes. Manual jump exits, missing or changed contact, ceiling obstruction, clearance loss, height caps, and duration caps transfer once to an outward/upward recovery launch.
+
+The input edge that begins a wall run is consumed. Manual exit requires a newer Jump edge after the configured freshness delay. An accepted katana slash during the short wall-jump recovery cancels only that recovery and earns one time-limited return dash; it does not restore the normal air dash. Exit clears active contact, and same-wall reuse requires elapsed time, measured separation, a moved contact point, inward return velocity, a new spherecast contact, and another buffered Jump. See `WALL_INTERACTION.md` for calibration and diagnostics.
 
 ## 12. Environment Requirements
 

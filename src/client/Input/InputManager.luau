@@ -65,8 +65,9 @@ local function beginToken(token)
 		return
 	end
 
-	ActionBuffer:Push(action)
-	InputManager.ActionBegan:Fire(action, os.clock())
+	local timestamp = os.clock()
+	ActionBuffer:Push(action, timestamp)
+	InputManager.ActionBegan:Fire(action, timestamp)
 end
 
 local function endToken(token)

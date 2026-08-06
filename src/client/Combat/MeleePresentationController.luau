@@ -10,6 +10,8 @@ local Controller = {}
 Controller.StateChanged = Instance.new("BindableEvent")
 Controller.TechniqueHook = Instance.new("BindableEvent")
 
+local CHARACTER_PART_WAIT_SECONDS = 3
+
 local player = Players.LocalPlayer
 local fighterController
 local inputManager
@@ -138,14 +140,23 @@ end
 local function attachWeapon(mode)
 	if not weaponModel or not character then return false end
 	local attachment = if mode == "Equipped" then Config.TrainingKatana.EquippedAttachment else Config.TrainingKatana.HolsteredAttachment
-	local bodyPart = character:FindFirstChild(attachment.PartName)
-		or character:FindFirstChild(if mode == "Equipped" then "Right Arm" else "Torso")
+	local fallbackPartName = if mode == "Equipped" then "Right Arm" else "Torso"
+	local targetPartName = if humanoid and humanoid.RigType == Enum.HumanoidRigType.R6
+		then fallbackPartName
+		else attachment.PartName
+	local bodyPart = character:FindFirstChild(targetPartName)
+		or character:WaitForChild(targetPartName, CHARACTER_PART_WAIT_SECONDS)
 	if not bodyPart then return false end
+	local handle = weaponModel.PrimaryPart
+	if not handle then return false end
+	if gripJoint and (gripJoint.Parent ~= handle or gripJoint.Part1 ~= handle) then
+		gripJoint = nil
+	end
 	if not gripJoint then
 		gripJoint = Instance.new("Motor6D")
 		gripJoint.Name = "BLIKK_KatanaGrip"
-		gripJoint.Part1 = weaponModel.PrimaryPart
-		gripJoint.Parent = weaponModel.PrimaryPart
+		gripJoint.Part1 = handle
+		gripJoint.Parent = handle
 	end
 	gripJoint.Part0 = bodyPart
 	gripJoint.C0 = attachment.Offset
@@ -234,11 +245,13 @@ end
 
 local function acceptSlash()
 	if not isMeleeActive() or state == "Slashing" or state == "Equipping" or state == "Unequipping" then return end
+	local acceptedAt = os.clock()
 	bufferedBlockAt = nil
 	cancelWindowReported = false
 	setState("Slashing")
-	Controller.TechniqueHook:Fire("SlashAccepted", os.clock(), isAirborne())
-	if isAirborne() then Controller.TechniqueHook:Fire("AirSlashAccepted", os.clock()) end
+	movementEngine:ConfirmSlashAccepted(acceptedAt)
+	Controller.TechniqueHook:Fire("SlashAccepted", acceptedAt, isAirborne())
+	if isAirborne() then Controller.TechniqueHook:Fire("AirSlashAccepted", acceptedAt) end
 	diagnose("SlashAccepted")
 end
 
@@ -302,7 +315,6 @@ local function poseForState(now)
 		end
 	end
 	if state == "Holstered" or state == "Interrupted" or state == "Equipping" or state == "Unequipping" then return nil end
-	if wallPresentationActive and state ~= "Slashing" and state ~= "Blocking" then return nil end
 	if dashActive and not airborne and state ~= "Slashing" and state ~= "Blocking" then return nil end
 	local poses = {}
 	if state == "Slashing" then
@@ -320,6 +332,12 @@ local function poseForState(now)
 		poses.RightElbow = CFrame.Angles(math.rad(-35), 0, 0)
 	else
 		for alias, degrees in Config.Pose.EquippedIdle do
+			if wallPresentationActive
+				and alias ~= "RightShoulder"
+				and alias ~= "RightElbow"
+				and alias ~= "RightWrist" then
+				continue
+			end
 			if dashActive and alias == "Waist" then continue end
 			if airborne then
 				degrees += Config.Pose.EquippedAirborneOffsets[alias] or Vector3.zero
@@ -327,7 +345,7 @@ local function poseForState(now)
 			poses[alias] = CFrame.Angles(math.rad(degrees.X), math.rad(degrees.Y), math.rad(degrees.Z))
 		end
 	end
-	if airborne and not dashActive then
+	if airborne and not dashActive and not wallPresentationActive then
 		poses.Root = poses.Root or CFrame.Angles(math.rad(Config.Pose.AirReadyTorsoDegrees), 0, 0)
 		poses.LeftHip = CFrame.Angles(math.rad(Config.Pose.AirReadyHipDegrees), 0, math.rad(-5))
 		poses.RightHip = CFrame.Angles(math.rad(-Config.Pose.AirReadyHipDegrees * 0.65), 0, math.rad(5))
@@ -359,6 +377,7 @@ local function bindCharacter(nextCharacter)
 	interrupt("Interrupted")
 	disconnectCharacterConnections()
 	if weaponModel then weaponModel:Destroy() end
+	gripJoint = nil
 	character = nextCharacter
 	humanoid = character:WaitForChild("Humanoid")
 	bindJoints()
@@ -419,9 +438,9 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 	end)
 	movementEngine.DashEnded.Event:Connect(function() dashActive = false end)
 	wallInteractionController.StateChanged.Event:Connect(function(nextState)
-		wallPresentationActive = nextState == "WallContact"
-			or nextState == "WallJumping"
-			or nextState == "WallRecovery"
+		wallPresentationActive = nextState == "VerticalWallRun"
+			or nextState == "HorizontalWallRun"
+			or nextState == "WallJumpRecovery"
 		if wallPresentationActive then resetPose() end
 	end)
 	SessionSettings.Changed.Event:Connect(function(key)

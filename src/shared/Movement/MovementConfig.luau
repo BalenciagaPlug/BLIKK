@@ -47,7 +47,15 @@ local MovementConfig = {
 		Diagnostics = { Enabled = false },
 	},
 
-	Jump = { Height = 7.2 },
+	Ground = {
+		WalkSpeedStudsPerSecond = 16,
+	},
+
+	Jump = {
+		HeightStuds = 7.2,
+		InputBufferSeconds = 0.12,
+		GroundedGraceSeconds = 0.08,
+	},
 	Slash = { Cooldown = 0.28 },
 	Block = { Instant = true },
 	Butterfly = { Window = 0.12 },

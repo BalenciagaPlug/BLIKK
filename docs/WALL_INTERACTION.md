@@ -1,39 +1,40 @@
-# BLIKK Wall Interaction Foundation
+# BLIKK Movement Truth: Wall Interaction
 
-## Current Prototype
+## Ownership and States
 
-Wall interaction is a responsive client-side movement prototype. One controller owns detection, contact state, wall-jump velocity, same-wall protection, and procedural wall presentation. It does not implement wall running, climbing, ledge grabbing, combat outcomes, or server validation.
+`MovementEngine` owns all dash, wall-run, wall-launch, and recovery state and is the only client gameplay system that writes root velocity. `WallInteractionController` performs bounded sensing and procedural pose presentation; it reports contacts but never decides movement outcomes.
 
-The states are `None`, `WallApproach`, `WallContact`, `WallJumping`, `WallRecovery`, and `RecontactLocked`. Slash and block presentation have higher pose priority than wall presentation, so melee rhythm remains readable without changing wall-jump velocity.
+The wall path is `WallApproach` into `VerticalWallRun`, `HorizontalWallRun`, or a standard `WallJumpRecovery`. A manual or automatic run exit also enters `WallJumpRecovery`. An accepted slash during its cancel window enters `WallCancelFreedom` and earns one `WallReturnDash`. Landing returns to `Grounded` and clears all wall and air allowances.
 
-## Detection
+## Detection and Classification
 
-While airborne, the controller checks forward and two configurable side angles at a bounded interval. Raycasts exclude the local character and its attached weapon. Floors, ceilings, near-horizontal slopes, transparent helpers, non-query parts, non-colliding parts, and geometry below the configured usable dimensions are rejected.
+While airborne, the sensor checks the velocity or semantic movement heading plus two configurable side headings every 0.025 seconds. Spherecasts expand their reach with horizontal speed, exclude the complete local character assembly, and select the best stable contact by inward velocity, previous-wall stability, and distance. Floors, ceilings, slopes beyond the configured normal tolerance, transparent helpers, non-query/collision parts, and undersized fallback geometry are rejected. A run accepts only the original part and a compatible surface normal; a changed normal or wall loss expires through contact grace.
 
-Explicit metadata takes priority. Untagged vertical collidable geometry may use the configured prototype fallback. This fallback is provisional and should become stricter as authored maps mature.
+Head-on classification requires at least 72 percent inward motion, no more than 45 percent tangent motion, and meaningful inward speed. Angled classification requires an approach 15–45 degrees from the wall plane, at least 55 percent tangent motion, and meaningful inward and tangent speed. Contacts outside those bands remain eligible for the distinct standard wall jump rather than being forced into a wall run.
 
-## Wall-Jump Physics
+## Clearance and Current Calibration
 
-Wall launch combines the detected outward normal, camera-relative held movement, and retained tangential velocity. The current provisional values are 50 studs per second upward, 34 studs per second outward, 12 studs per second directional influence, and 65 percent tangential retention. These values are isolated in `TechniqueConfig.Wall`; normal jump and dash configuration is unchanged.
+Minimum wall clearance is the greater horizontal half-size of the active `HumanoidRootPart` and torso plus `0.30` studs. A representative 2-stud root therefore targets `1.30` studs from root centre to wall plane. Below that boundary, inward velocity is removed and outward correction is `(clearance error × 12)`, capped at `8 studs/s`. At or above the boundary, contact uses `0.75 studs/s` adhesion. The run exits if distance exceeds the boundary by `0.90` studs. No root CFrame or Position correction is used.
 
-The exact wall is locked for 0.280 seconds and must be left by at least 5 studs before direct reuse. Contact with another valid wall clears same-wall identity immediately. Landing clears all wall state.
+- Vertical run: 0.55 seconds maximum, upward velocity easing from 28 to 6 studs/s, 2.0 character-height cap.
+- Horizontal run: 0.82 seconds maximum, 92 percent tangent retention with a 10 studs/s floor, upward velocity easing from 12 to 0 studs/s, 1.0 character-height cap.
+- Standard/manual exit: 50 studs/s upward, 32 studs/s outward, 65 percent tangent retention.
+- Automatic vertical exit: 38 studs/s upward, 28 studs/s outward, 60 percent tangent retention.
+- Automatic horizontal exit: 33 studs/s upward, 25 studs/s outward, 75 percent tangent retention.
+- Fresh manual exit delay: 0.08 seconds after the consumed entry Jump timestamp.
+- Slash cancel: 0.16 seconds after recovery begins; earned return dash remains available for 0.42 seconds and uses the existing air-dash curve.
+- Same-wall return: at least 0.13 seconds, 0.8 studs of outward separation, 0.5 studs of contact-point movement, 6 studs/s back into the wall, a new spherecast hit, and a new buffered Jump.
+
+All values are provisional and live in `TechniqueConfig.Wall`. Normal dash distances, phase curve, camera-relative direction capture, and Sprint 016 live airborne Y preservation are unchanged.
 
 ## Authoring Metadata
 
-Level builders can mark a Studio `BasePart` using CollectionService tags and boolean attributes:
+Level builders can mark a `BasePart` with the `BLIKK_WallSurface` CollectionService tag and `BLIKK_WallJumpSurface = true`. Setting that attribute to `false` always disables the surface. Untagged, collidable, queryable, sufficiently large vertical geometry remains enabled by the prototype fallback.
 
-- Wall-jump valid: add `BLIKK_WallSurface` and set `BLIKK_WallJumpSurface = true`.
-- Wall-jump invalid: set `BLIKK_WallJumpSurface = false`; this overrides fallback detection.
-- Ledge: add `BLIKK_Ledge` and optionally set `BLIKK_RoofEdge = true`.
-- Butterfly channel: set `BLIKK_ButterflyChannel = true` on both opposing walls.
-- Recovery platform: set `BLIKK_SafeLanding = true` and `BLIKK_RecoveryDrop = true` as appropriate.
+District Zero's `Development/WallCalibrationStrip` provides opposing gaps and multiple wall heights for repeatable tuning. It remains outside the normal spawn route.
 
-Valid walls must remain collidable, queryable, sufficiently tall and wide, and close to vertical. Decorative rails and clutter should be non-queryable or explicitly wall-jump invalid.
+## Diagnostics and Limitations
 
-## Calibration Strip
+`TechniqueConfig.Wall.DiagnosticsEnabled` enables concise transition/rejection output and character attributes for movement state, measured rig clearance, classification, signed distance, normal/tangent velocity, adhesion, entry/exit timing, exit reason/impulse, Jump timestamps, separation and direction evidence, and return-dash eligibility. Diagnostics are off by default and do not run a per-frame print loop.
 
-District Zero contains `Development/WallCalibrationStrip`, a development-only chamber below the live district. It has five bays using 9-, 11-, and 13-stud opposing-wall gaps, wall heights of 10, 14, 18, 24, and 32 studs, a safe floor, and a non-colliding spawn marker. It is not part of the normal route or spawn system and can be disabled through District Zero configuration.
-
-## Prototype Limitations
-
-Wall movement is locally simulated and not secure for competitive play. Detection uses raycasts rather than full-body shapecasts, authored wall animations are empty, untagged fallback geometry is permissive, and all launch/cancel values require Roblox Studio feel testing.
+Movement remains locally simulated and is not competitive authority. Roblox Studio playtesting is required for contact reliability, high-speed corners, ceiling exits, camera headings, repeated chains, frame-rate stability, and final feel.
