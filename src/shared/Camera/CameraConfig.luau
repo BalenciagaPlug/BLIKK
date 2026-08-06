@@ -9,6 +9,36 @@ local CameraConfig = {
 	CameraHeightAboveRootStuds = 3.25,
 	CameraRightOffsetStuds = 2.5,
 
+	DeveloperFreeLook = {
+		Enabled = true,
+		PitchMinDegrees = -75,
+		PitchMaxDegrees = 65,
+		MinimumDistanceStuds = 5,
+		MaximumDistanceStuds = 20,
+		FallbackDistanceStuds = 13,
+		TargetVerticalOffsetStuds = 2.5,
+		OrbitSmoothingSpeed = 0,
+		ReturnDurationSeconds = 0,
+	},
+
+	Obstruction = {
+		FadeLocalTransparency = 0.72,
+		FadeInSpeed = 18,
+		FadeOutSpeed = 10,
+		CollisionRadiusStuds = 0.45,
+		CollisionPaddingStuds = 0.25,
+		MinimumCameraDistanceStuds = 2,
+		DistanceRestoreSpeed = 12,
+		TargetOffsetsStuds = {
+			Vector3.new(0, 3.0, 0),
+			Vector3.new(0, 1.8, 0),
+			Vector3.new(0, 0.5, 0),
+			Vector3.new(-0.8, 1.8, 0),
+			Vector3.new(0.8, 1.8, 0),
+		},
+		MaximumFadedParts = 12,
+	},
+
 	SettingsRanges = {
 		FieldOfViewDegrees = {
 			Minimum = 65,

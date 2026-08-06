@@ -34,7 +34,7 @@ local MeleePresentationConfig = {
 		EquippedAttachment = {
 			PartName = "RightHand",
 			Offset = CFrame.new(0, -0.12, 0.02)
-				* CFrame.Angles(math.rad(-25), math.rad(12), math.rad(175)),
+				* CFrame.Angles(math.rad(-54), 0, math.rad(190)),
 			GripPivot = CFrame.new(0, 0.18, 0),
 		},
 		HolsteredAttachment = {
@@ -52,9 +52,9 @@ local MeleePresentationConfig = {
 		AirReadyHipDegrees = 13,
 		EquippedIdle = {
 			Waist = Vector3.new(-1, -4, 1),
-			RightShoulder = Vector3.new(10, -6, 8),
-			RightElbow = Vector3.new(-18, 0, 2),
-			RightWrist = Vector3.new(8, -6, 12),
+			RightShoulder = Vector3.new(-15, -5, 8),
+			RightElbow = Vector3.new(-30, 0, 0),
+			RightWrist = Vector3.new(4, -4, 6),
 		},
 	},
 }
