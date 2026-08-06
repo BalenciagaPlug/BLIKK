@@ -3,6 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local CharacterCreationController = require(script.Parent.CharacterCreationController)
 local CharacterProfilesController = require(script.Parent.CharacterProfilesController)
+local ClanController = require(script.Parent.ClanController)
 local MultiplayerBrowserController = require(script.Parent.MultiplayerBrowserController)
 local NavigationController = require(script.Parent.NavigationController)
 local OperationsHubController = require(script.Parent.OperationsHubController)
@@ -79,11 +80,13 @@ function FrontendController:Init(inputManager, gameplayCamera, fighterController
 	NavigationController:Register("Creation", CharacterCreationController:CreatePage(frontendGui, NavigationController))
 	NavigationController:Register("Profiles", CharacterProfilesController:CreatePage(frontendGui, NavigationController, fighterController))
 	NavigationController:Register("Multiplayer", MultiplayerBrowserController:CreatePage(frontendGui, NavigationController))
+	NavigationController:Register("Clans", ClanController:CreatePage(frontendGui, NavigationController))
 	NavigationController:Register("OperationsHub", OperationsHubController:CreatePage(
 		frontendGui,
 		enterMovementLab,
 		function() settingsController:OpenFromFrontend() end,
 		function() NavigationController:GoTo("Multiplayer") end,
+		function() NavigationController:GoTo("Clans") end,
 		inputManager
 	))
 	settingsController:SetReturnToMenuCallback(function() self:ReturnToOperationsHub() end)

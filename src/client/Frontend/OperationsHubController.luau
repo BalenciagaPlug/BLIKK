@@ -69,7 +69,7 @@ local function makeButton(parent, text, order)
 	return button
 end
 
-function OperationsHubController:CreatePage(parent, enterMovementLab, openSettings, openMultiplayer, inputManager)
+function OperationsHubController:CreatePage(parent, enterMovementLab, openSettings, openMultiplayer, openClans, inputManager)
 	local page = Instance.new("Frame")
 	page.Name = "OperationsHub"
 	page.BackgroundColor3 = COLORS.Background
@@ -195,14 +195,15 @@ function OperationsHubController:CreatePage(parent, enterMovementLab, openSettin
 	local function register(name, description, action)
 		sections[name] = { Description = description, Action = action }
 	end
-	register("MULTIPLAYER", "BROWSE LOCAL PROTOTYPE LOBBIES. CROSS-SERVER DISCOVERY IS NOT ACTIVE.", openMultiplayer)
+	register("MULTIPLAYER", "BROWSE PUBLIC ROOMS OR CREATE A RESERVED MATCH SERVER.", openMultiplayer)
 	register("MOVEMENT LAB", "TRAIN CAMERA-RELATIVE MOVEMENT AND DASH TIMING.", enterMovementLab)
 	register("SHOP", "SHOP SYSTEMS ARE NOT IMPLEMENTED.")
 	register("INVENTORY", "INVENTORY MANAGEMENT IS NOT IMPLEMENTED. STARTER LOADOUT IS ACTIVE.")
 	register("CHARACTER", "CHARACTER APPEARANCE EDITING AFTER CREATION IS PLANNED.")
+	register("CLANS", "CREATE AND MANAGE YOUR BLIKK CLAN.", openClans)
 	register("SETTINGS", "OPEN THE SHARED BLIKK SESSION SETTINGS.", openSettings)
 
-	for index, name in { "MULTIPLAYER", "MOVEMENT LAB", "SHOP", "INVENTORY", "CHARACTER", "SETTINGS", "EXIT" } do
+	for index, name in { "MULTIPLAYER", "MOVEMENT LAB", "CLANS", "SHOP", "INVENTORY", "CHARACTER", "SETTINGS", "EXIT" } do
 		local button = makeButton(menu, name, index)
 		button.Activated:Connect(function()
 			if name == "EXIT" then openExitInstructions(); return end

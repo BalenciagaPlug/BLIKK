@@ -620,7 +620,7 @@ local function createExtrasPage(parent)
 	content.BackgroundTransparency = 1
 	content.BorderSizePixel = 0
 	content.Size = UDim2.fromScale(1, 1)
-	content.CanvasSize = UDim2.fromOffset(0, 835)
+	content.CanvasSize = UDim2.fromOffset(0, 1310)
 	content.ScrollBarThickness = 5
 	content.ScrollBarImageColor3 = colors.AccentDim
 	content.Parent = parent
@@ -643,7 +643,35 @@ local function createExtrasPage(parent)
 		PlayerPreferencesController:SetPreference("EffectsQuality", nextValue)
 		quality.Text = "EFFECTS QUALITY // " .. SessionSettings:Get("EffectsQuality")
 	end)
-	createLabel(content, "ResolutionNote", "ROBLOX CONTROLS RESOLUTION, PRIVACY AND TEXT FILTERING. BLIKK SCALES ONLY ITS OWN UI.", UDim2.fromOffset(16, 752), UDim2.new(1, -32, 0, 34), 9, colors.TextMuted).TextWrapped = true
+	local preset = createButton(content, "RenderPreset", "RENDER PRESET // " .. SessionSettings:Get("RenderPreset"), UDim2.fromOffset(16, 752), UDim2.new(1, -32, 0, 38))
+	preset.Activated:Connect(function()
+		local current = SessionSettings:Get("RenderPreset")
+		local nextValue = if current == "COMPETITIVE" then "BALANCED" elseif current == "BALANCED" then "CINEMATIC" elseif current == "CINEMATIC" then "CUSTOM" else "COMPETITIVE"
+		PlayerPreferencesController:SetPreference("RenderPreset", nextValue)
+		preset.Text = "RENDER PRESET // " .. SessionSettings:Get("RenderPreset")
+	end)
+	createToggle(content, "ShowFPS", "SHOW FPS", 1, SessionSettings, 803)
+	createToggle(content, "ShowPing", "SHOW PING", 1, SessionSettings, 854)
+	createToggle(content, "LocalLightShadows", "CUSTOM // LOCAL LIGHT SHADOWS", 1, SessionSettings, 905)
+	createToggle(content, "BloomEnabled", "CUSTOM // BLOOM", 1, SessionSettings, 956)
+	createToggle(content, "ColorCorrectionEnabled", "CUSTOM // COLOR CORRECTION", 1, SessionSettings, 1007)
+	createToggle(content, "AtmosphereEnabled", "CUSTOM // ATMOSPHERE", 1, SessionSettings, 1058)
+	createToggle(content, "WeaponTrailsEnabled", "CUSTOM // WEAPON TRAILS", 1, SessionSettings, 1109)
+	local particleDensity = createButton(content, "ParticleDensity", "CUSTOM // PARTICLE DENSITY // " .. SessionSettings:Get("ParticleDensity"), UDim2.fromOffset(16, 1160), UDim2.new(1, -32, 0, 38))
+	particleDensity.Activated:Connect(function()
+		local current = SessionSettings:Get("ParticleDensity")
+		local nextValue = if current < 0.35 then 0.35 elseif current < 0.7 then 0.7 elseif current < 1 then 1 else 0
+		PlayerPreferencesController:SetPreference("ParticleDensity", nextValue)
+		particleDensity.Text = "CUSTOM // PARTICLE DENSITY // " .. SessionSettings:Get("ParticleDensity")
+	end)
+	local shake = createButton(content, "ScreenShakeScale", "CUSTOM // SCREEN IMPULSE // " .. SessionSettings:Get("ScreenShakeScale"), UDim2.fromOffset(16, 1211), UDim2.new(1, -32, 0, 38))
+	shake.Activated:Connect(function()
+		local current = SessionSettings:Get("ScreenShakeScale")
+		local nextValue = if current < 0.35 then 0.35 elseif current < 0.7 then 0.7 elseif current < 1 then 1 else 0
+		PlayerPreferencesController:SetPreference("ScreenShakeScale", nextValue)
+		shake.Text = "CUSTOM // SCREEN IMPULSE // " .. SessionSettings:Get("ScreenShakeScale")
+	end)
+	createLabel(content, "ResolutionNote", "ROBLOX CONTROLS RESOLUTION, ENGINE AA, TEXTURE QUALITY AND NATIVE AO. BLIKK PRESETS CONTROL ONLY BLIKK-OWNED EFFECTS.", UDim2.fromOffset(16, 1262), UDim2.new(1, -32, 0, 34), 9, colors.TextMuted).TextWrapped = true
 end
 
 local function selectTab(tabName)

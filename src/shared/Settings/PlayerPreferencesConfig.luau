@@ -26,6 +26,16 @@ PlayerPreferencesConfig.Definitions = {
 	ChatVisible = { Owner = "Session", Type = "boolean", Default = SettingsConfig.ExtrasDefaults.ChatVisible },
 	ChatTimestamps = { Owner = "Session", Type = "boolean", Default = SettingsConfig.ExtrasDefaults.ChatTimestamps },
 	EffectsQuality = { Owner = "Session", Type = "string", Default = SettingsConfig.ExtrasDefaults.EffectsQuality, Allowed = { "HIGH", "MEDIUM", "LOW" } },
+	RenderPreset = { Owner = "Session", Type = "string", Default = SettingsConfig.ExtrasDefaults.RenderPreset, Allowed = { "COMPETITIVE", "BALANCED", "CINEMATIC", "CUSTOM" } },
+	LocalLightShadows = { Owner = "Session", Type = "boolean", Default = SettingsConfig.ExtrasDefaults.LocalLightShadows },
+	BloomEnabled = { Owner = "Session", Type = "boolean", Default = SettingsConfig.ExtrasDefaults.BloomEnabled },
+	ColorCorrectionEnabled = { Owner = "Session", Type = "boolean", Default = SettingsConfig.ExtrasDefaults.ColorCorrectionEnabled },
+	AtmosphereEnabled = { Owner = "Session", Type = "boolean", Default = SettingsConfig.ExtrasDefaults.AtmosphereEnabled },
+	ParticleDensity = { Owner = "Session", Type = "number", Default = SettingsConfig.ExtrasDefaults.ParticleDensity, Range = SettingsConfig.ExtrasRanges.ParticleDensity },
+	WeaponTrailsEnabled = { Owner = "Session", Type = "boolean", Default = SettingsConfig.ExtrasDefaults.WeaponTrailsEnabled },
+	ScreenShakeScale = { Owner = "Session", Type = "number", Default = SettingsConfig.ExtrasDefaults.ScreenShakeScale, Range = SettingsConfig.ExtrasRanges.ScreenShakeScale },
+	ShowFPS = { Owner = "Session", Type = "boolean", Default = SettingsConfig.ExtrasDefaults.ShowFPS },
+	ShowPing = { Owner = "Session", Type = "boolean", Default = SettingsConfig.ExtrasDefaults.ShowPing },
 }
 
 PlayerPreferencesConfig.Groups = {

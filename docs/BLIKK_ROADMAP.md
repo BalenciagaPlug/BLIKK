@@ -90,13 +90,15 @@ Starter Combat
 
 # Phase 4 — Multiplayer
 
-- Matchmaking
-- Team Deathmatch
+- Open-beta room and reserved-server foundation
+- Server-owned Training, Deathmatch, Team Deathmatch Extreme, and Elimination rules
+- Cross-server public room directory and secure join nonces
+- Live server-confirmed scoreboard
 - Duel
-- Elimination
+- Future authoritative Combat Truth integration
 - Clan Wars
-- Spectator
-- Replay
+- Spectator and bounded Replay V1 foundations
+- In-game report evidence foundation
 
 ---
 
@@ -121,6 +123,7 @@ Starter Combat
 - Replays
 - Tournaments
 - Clans
+- Persistent clan identity, roles, invitations, and presence foundation
 
 ---
 

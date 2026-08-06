@@ -23,6 +23,16 @@ function RemoteRegistry:Init()
 	self.RequestMovementLabSpawn = getOrCreate("RemoteEvent", "RequestMovementLabSpawn")
 	self.CharacterProfilesRequest = getOrCreate("RemoteFunction", "CharacterProfilesRequest")
 	self.CharacterProfilesUpdated = getOrCreate("RemoteEvent", "CharacterProfilesUpdated")
+	self.RoomRequest = getOrCreate("RemoteFunction", "RoomRequest")
+	self.RoomUpdated = getOrCreate("RemoteEvent", "RoomUpdated")
+	self.RoomActivity = getOrCreate("RemoteEvent", "RoomActivity")
+	self.DirectoryRequest = getOrCreate("RemoteFunction", "DirectoryRequest")
+	self.MatchUpdated = getOrCreate("RemoteEvent", "MatchUpdated")
+	self.SpectatorRequest = getOrCreate("RemoteFunction", "SpectatorRequest")
+	self.ReplayRequest = getOrCreate("RemoteFunction", "ReplayRequest")
+	self.ReportRequest = getOrCreate("RemoteFunction", "ReportRequest")
+	self.ClanRequest = getOrCreate("RemoteFunction", "ClanRequest")
+	self.ClanUpdated = getOrCreate("RemoteEvent", "ClanUpdated")
 	return self
 end
 

@@ -201,7 +201,8 @@ end
 local function updateTrail(enabled)
 	if not trail then return end
 	local quality = SessionSettings:Get("EffectsQuality")
-	local visible = SessionSettings:Get("BladeTrailVisible") and not SessionSettings:Get("ReducedEffects") and quality ~= "LOW"
+	local visible = SessionSettings:Get("BladeTrailVisible") and SessionSettings:Get("WeaponTrailsEnabled")
+		and not SessionSettings:Get("ReducedEffects") and quality ~= "LOW"
 	trail.Enabled = enabled and visible
 	trail.Lifetime = if quality == "HIGH" then Config.Trail.HighLifetimeSeconds else Config.Trail.MediumLifetimeSeconds
 	local opacity = math.clamp(SessionSettings:Get("BladeTrailOpacity") or Config.Trail.DefaultOpacity, 0, 1)
@@ -444,7 +445,8 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 		if wallPresentationActive then resetPose() end
 	end)
 	SessionSettings.Changed.Event:Connect(function(key)
-		if key == "EffectsQuality" or key == "ReducedEffects" or key == "BladeTrailVisible" or key == "BladeTrailOpacity" then updateWeaponQuality() end
+		if key == "EffectsQuality" or key == "ReducedEffects" or key == "BladeTrailVisible"
+			or key == "BladeTrailOpacity" or key == "WeaponTrailsEnabled" then updateWeaponQuality() end
 	end)
 	player.CharacterAdded:Connect(bindCharacter)
 	player.CharacterRemoving:Connect(function(removingCharacter)

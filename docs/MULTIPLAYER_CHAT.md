@@ -2,9 +2,9 @@
 
 ## Lobby Browser
 
-The Multiplayer Browser is a local frontend shell, not cross-server discovery. It presents pinned, popular, and recent prototype entries using a data-driven lobby catalogue. Join, refresh, and create actions clearly disclose their local status. Future production work may add MemoryStoreService listings, MessagingService updates, reserved servers, teleport routing, matchmaking, and filters.
+The Multiplayer Browser queries the server-owned room directory. Published servers use expiring MemoryStore listings and reserved room servers; Studio uses a local-room fallback for multi-client lifecycle testing. Clients select only public RoomIds or server-generated join codes and never receive reserved access codes.
 
-The Create Lobby panel validates lobby name, map, mode, capacity, and password requirements. District Zero Training is the only playable selection. Duel, Team Deathmatch, Free For All, team balance, spectators, friendly fire, time limits, and score limits are labelled as future where unavailable.
+The Create Room panel exposes only the implemented District Zero whitelist and Training, Deathmatch, Team Deathmatch Extreme, and Elimination registries. Room names are filtered server-side. Configuration, capacity, ready state, teams, leadership, and teleport authorization remain server-owned. Ranked matchmaking, Duel queue, and Clan War are not implemented.
 
 ## Chat Safety
 

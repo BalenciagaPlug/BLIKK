@@ -172,7 +172,8 @@ function Schema.NormalizeAccount(source)
 	if source.SchemaVersion > PersistenceConfig.SchemaVersion then
 		return nil, nil, "UNSUPPORTED_FUTURE_SCHEMA"
 	end
-	if source.SchemaVersion ~= 1 and source.SchemaVersion ~= PersistenceConfig.SchemaVersion then
+	if source.SchemaVersion ~= 1 and source.SchemaVersion ~= 2
+		and source.SchemaVersion ~= PersistenceConfig.SchemaVersion then
 		return nil, nil, "UNSUPPORTED_ACCOUNT_SCHEMA"
 	end
 	if type(source.Characters) ~= "table" or type(source.Metadata) ~= "table" then

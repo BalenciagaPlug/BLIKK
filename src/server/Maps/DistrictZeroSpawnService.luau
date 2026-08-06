@@ -9,6 +9,7 @@ local recentUse = {}
 local rotationIndex = 0
 local requestEvent = nil
 local lastRequestAt = {}
+local spawnProtectionGeneration = {}
 
 local function getSpawnFolder()
 	local root = Workspace:FindFirstChild(Config.Identity.WorkspaceRootName)
@@ -43,8 +44,11 @@ local function chooseSpawn(player)
 	local folder = getSpawnFolder()
 	if not folder then return nil end
 	local candidates = {}
+	local teamId = player:GetAttribute("BLIKK_TeamId")
+	local allowedIds = if teamId == "ALPHA" then Config.SpawnGroups.TeamA elseif teamId == "OMEGA" then Config.SpawnGroups.TeamB else nil
 	for _, child in folder:GetChildren() do
-		if child:IsA("SpawnLocation") and child:GetAttribute("BLIKK_SpawnGroup") == "Training" then table.insert(candidates, child) end
+		if child:IsA("SpawnLocation") and child:GetAttribute("BLIKK_SpawnGroup") == "Training"
+			and (not allowedIds or table.find(allowedIds, child:GetAttribute("BLIKK_SpawnId"))) then table.insert(candidates, child) end
 	end
 	table.sort(candidates, function(a, b) return (a:GetAttribute("BLIKK_SpawnIndex") or 0) < (b:GetAttribute("BLIKK_SpawnIndex") or 0) end)
 	if #candidates == 0 then return nil end
@@ -99,8 +103,31 @@ function SpawnService:Init(remoteRegistry)
 		placeCharacter(player, player.Character)
 	end)
 	Players.PlayerAdded:Connect(bindPlayer)
-	Players.PlayerRemoving:Connect(function(player) lastRequestAt[player] = nil end)
+	Players.PlayerRemoving:Connect(function(player)
+		lastRequestAt[player] = nil
+		spawnProtectionGeneration[player] = nil
+	end)
 	for _, player in Players:GetPlayers() do bindPlayer(player) end
+end
+
+function SpawnService:PlaceCharacter(player, character)
+	return placeCharacter(player, character or player.Character)
+end
+
+function SpawnService:SetSpawnProtection(player, durationSeconds)
+	spawnProtectionGeneration[player] = (spawnProtectionGeneration[player] or 0) + 1
+	local generation = spawnProtectionGeneration[player]
+	player:SetAttribute("BLIKK_SpawnProtected", true)
+	task.delay(durationSeconds, function()
+		if spawnProtectionGeneration[player] == generation and player.Parent == Players then
+			player:SetAttribute("BLIKK_SpawnProtected", false)
+		end
+	end)
+end
+
+function SpawnService:ClearSpawnProtection(player)
+	spawnProtectionGeneration[player] = (spawnProtectionGeneration[player] or 0) + 1
+	player:SetAttribute("BLIKK_SpawnProtected", false)
 end
 
 return SpawnService

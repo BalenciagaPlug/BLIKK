@@ -8,6 +8,7 @@ local Workspace = game:GetService("Workspace")
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MovementConfig = require(Shared.Movement.MovementConfig)
+local RenderQualityConfig = require(Shared.Settings.RenderQualityConfig)
 
 local Controller = {}
 local config = MovementConfig.Dash.Presentation
@@ -22,6 +23,11 @@ local activeGrounded = false
 local previousRootPosition = nil
 local activeStreaks = {}
 local ownedStreakParts = {}
+
+local function renderValue(key)
+	local preset = RenderQualityConfig.Presets[SessionSettings:Get("RenderPreset")]
+	return if preset then preset[key] else SessionSettings:Get(key)
+end
 
 local directionPose = {
 	Forward = { Pitch = -1, Roll = 0, Twist = 1 },
@@ -135,6 +141,7 @@ local function emitStreaks(rootPart, direction, grounded)
 	if SessionSettings:Get("ReducedEffects") then return end
 	local quality = SessionSettings:Get("EffectsQuality")
 	local count = if quality == "LOW" then config.LowStreakCount else config.StreakCount
+	count = math.max(1, math.floor(count * renderValue("ParticleDensity") + 0.5))
 	local lifetimeMultiplier = if quality == "HIGH" then 1 elseif quality == "MEDIUM" then config.MediumLifetimeMultiplier else config.LowLifetimeMultiplier
 	local widthMultiplier = if quality == "MEDIUM" then config.MediumWidthMultiplier else 1
 	local firstIndex = if count == 1 then 2 else 1
@@ -204,7 +211,7 @@ function Controller:Init(movementEngine, cameraController)
 			local tangent = streakDirection(rootPart, direction, grounded, Vector3.zero)
 			emitStreaks(rootPart, tangent, grounded)
 		end
-		if not SessionSettings:Get("ReducedEffects") then cameraController:SetDashFovOffset(config.CameraFovImpulseDegrees) end
+		if not SessionSettings:Get("ReducedEffects") then cameraController:SetDashFovOffset(config.CameraFovImpulseDegrees * renderValue("ScreenShakeScale")) end
 		if config.SoundId ~= "" and rootPart then
 			local sound = Instance.new("Sound")
 			sound.SoundId, sound.SoundGroup, sound.Parent = config.SoundId, SoundService:FindFirstChild("BLIKK_Dash"), rootPart
@@ -224,7 +231,7 @@ function Controller:Init(movementEngine, cameraController)
 			positionStreaks(activeRootPart, tangent)
 		end
 		if activeAction and not SessionSettings:Get("ReducedEffects") then
-			cameraController:SetDashFovOffset(config.CameraFovImpulseDegrees * (1 - progress) ^ 2)
+			cameraController:SetDashFovOffset(config.CameraFovImpulseDegrees * renderValue("ScreenShakeScale") * (1 - progress) ^ 2)
 		end
 	end)
 	movementEngine.DashEnded.Event:Connect(function(_, _, grounded)

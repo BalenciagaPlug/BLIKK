@@ -1,7 +1,7 @@
 local CharacterPersistenceConfig = {
 	DataStoreName = "BLIKKCharacterProfilesV1",
 	KeyPrefix = "Player_",
-	SchemaVersion = 2,
+	SchemaVersion = 3,
 	AutosaveIntervalSeconds = 60,
 	MutationSaveDebounceSeconds = 3,
 	LoadRetryCount = 3,

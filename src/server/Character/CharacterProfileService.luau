@@ -17,6 +17,11 @@ local isShuttingDown = false
 local requestRemote = nil
 local updateRemote = nil
 
+function CharacterProfileService:IsReady(player)
+	local session = sessions[player]
+	return session ~= nil and session.Status == "Ready" and session.Account ~= nil
+end
+
 local function cloneCharacter(character)
 	local copy = table.clone(character)
 	copy.Appearance = table.clone(character.Appearance)
