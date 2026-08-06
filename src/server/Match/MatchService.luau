@@ -40,6 +40,7 @@ local function snapshot(match)
 		ModeId = match.ModeId, MapId = match.MapId, EndsAtUnix = match.EndsAtUnix,
 		Round = match.Round, RoundEndsAtUnix = match.RoundEndsAtUnix,
 		TeamScores = table.clone(match.TeamScores), Stats = stats,
+		CompetitiveResolutionActive = match.CompetitiveResolutionActive,
 	}
 end
 
@@ -55,11 +56,31 @@ local function findStats(match, userId)
 	return nil
 end
 
+local function hasCompetitiveDistribution(match, mode)
+	if not mode.Competitive then return true end
+	local participants = 0
+	local teams = { ALPHA = 0, OMEGA = 0 }
+	for player in match.Players do
+		local stats = findStats(match, player.UserId)
+		if stats then
+			participants += 1
+			if stats.TeamId then teams[stats.TeamId] += 1 end
+		end
+	end
+	if participants < mode.CompetitiveMinimumPlayers then return false end
+	return not mode.TeamMode or (teams.ALPHA > 0 and teams.OMEGA > 0)
+end
+
+local function refreshCompetitiveState(match, mode)
+	match.CompetitiveResolutionActive = hasCompetitiveDistribution(match, mode)
+end
+
 local bindDeath
 
 local function finishMatch(match, winner)
 	if match.State == "PostMatch" then return end
 	match.State = "PostMatch"; match.Winner = winner
+	roomService:SetMatchPhase(match.RoomId, "PostMatch")
 	if replayService then replayService:RecordEvent(match.MatchId, "MatchEnd", { Winner = winner }) end
 	publish(match)
 	task.delay(Config.PostMatchSeconds, function()
@@ -72,10 +93,15 @@ local function finishMatch(match, winner)
 end
 
 local function startNextEliminationRound(match, mode)
-	match.State = "Intermission"; publish(match)
+	match.State = "Intermission"
+	match.CompetitiveResolutionActive = false
+	roomService:SetMatchPhase(match.RoomId, "RoundIntermission")
+	publish(match)
 	task.delay(mode.RoundIntermissionSeconds, function()
 		if match.State ~= "Intermission" then return end
 		match.Round += 1; match.State = "Active"
+		refreshCompetitiveState(match, mode)
+		roomService:SetMatchPhase(match.RoomId, "InProgress")
 		match.RoundEndsAtUnix = os.time() + mode.RoundTimeSeconds
 		for _, stats in match.Stats do stats.IsAlive = true; stats.IsSpectating = false; stats.RoundKills = 0; stats.RoundDeaths = 0 end
 		for player in match.Players do player:LoadCharacterAsync(); task.defer(function() bindDeath(player, match); spawnService:SetSpawnProtection(player, mode.SpawnProtectionSeconds) end) end
@@ -85,6 +111,7 @@ local function startNextEliminationRound(match, mode)
 end
 
 local function evaluateDeath(match, mode)
+	if not match.CompetitiveResolutionActive then return end
 	if mode.Id == "Deathmatch" then
 		for _, stats in match.Stats do if stats.Score >= mode.ScoreLimit then finishMatch(match, stats.UserId); return end end
 	elseif mode.Id == "TeamDeathmatchExtreme" then
@@ -127,7 +154,23 @@ bindDeath = function(player, match)
 				if playerMatch[player] ~= match or match.State ~= "Active" then return end
 				player:LoadCharacterAsync()
 				victim.IsAlive = true; victim.IsSpectating = false
-				spawnService:SetSpawnProtection(player, mode.SpawnProtectionSeconds)
+				task.defer(function()
+					bindDeath(player, match)
+					spawnService:SetSpawnProtection(player, mode.SpawnProtectionSeconds)
+				end)
+				publish(match)
+			end)
+		elseif mode.Id == "Elimination" and not match.CompetitiveResolutionActive
+			and match.State == "Active" then
+			task.delay(Config.SoloEliminationRespawnDelaySeconds, function()
+				if playerMatch[player] ~= match or match.State ~= "Active"
+					or match.CompetitiveResolutionActive then return end
+				player:LoadCharacterAsync()
+				victim.IsAlive = true; victim.IsSpectating = false
+				task.defer(function()
+					bindDeath(player, match)
+					spawnService:SetSpawnProtection(player, mode.SpawnProtectionSeconds)
+				end)
 				publish(match)
 			end)
 		end
@@ -142,6 +185,7 @@ function MatchService:StartRoom(room)
 		ModeId = mode.Id, MapId = room.Config.MapId, State = "Countdown",
 		EndsAtUnix = mode.TimeLimitSeconds > 0 and os.time() + Config.CountdownSeconds + mode.TimeLimitSeconds or 0,
 		Round = 1, TeamScores = { ALPHA = 0, OMEGA = 0 }, Stats = {}, Players = {},
+		CompetitiveResolutionActive = false,
 		RoundEndsAtUnix = mode.RoundBased and os.time() + Config.CountdownSeconds + mode.RoundTimeSeconds or 0,
 	}
 	matches[room.RoomId] = match
@@ -152,10 +196,12 @@ function MatchService:StartRoom(room)
 			table.insert(match.Stats, newStats(player, member))
 		end
 	end
+	refreshCompetitiveState(match, mode)
 	publish(match)
 	task.delay(Config.CountdownSeconds, function()
 		if matches[room.RoomId] ~= match then return end
 		match.State = "Active"
+		roomService:SetMatchPhase(match.RoomId, "InProgress")
 		for player in match.Players do
 			player:LoadCharacterAsync()
 			task.defer(function() bindDeath(player, match); spawnService:SetSpawnProtection(player, mode.SpawnProtectionSeconds) end)
@@ -163,6 +209,46 @@ function MatchService:StartRoom(room)
 		if replayService then replayService:StartMatch(match.MatchId, match) end
 		publish(match)
 	end)
+	return true
+end
+
+function MatchService:AddLatePlayer(room, player, member)
+	local match = matches[room.RoomId]
+	local mode = GameModeRegistry.Get(room.Config.ModeId)
+	if not match or not mode or match.State == "PostMatch" or match.Players[player] then return false end
+
+	player:SetAttribute("BLIKK_TeamId", member.TeamId)
+	match.Players[player] = true
+	playerMatch[player] = match
+	local stats = newStats(player, member)
+	table.insert(match.Stats, stats)
+
+	if match.State == "Countdown" then
+		member.State = "Loading"
+		refreshCompetitiveState(match, mode)
+	elseif mode.Id == "Elimination" then
+		stats.IsAlive = false
+		stats.IsSpectating = true
+		member.State = "Spectating"
+		local wasCompetitive = match.CompetitiveResolutionActive
+		refreshCompetitiveState(match, mode)
+		if not wasCompetitive and match.CompetitiveResolutionActive and match.State == "Active" then
+			startNextEliminationRound(match, mode)
+		end
+	else
+		member.State = "Alive"
+		refreshCompetitiveState(match, mode)
+		player:LoadCharacterAsync()
+		task.defer(function()
+			bindDeath(player, match)
+			spawnService:SetSpawnProtection(player, mode.SpawnProtectionSeconds)
+		end)
+	end
+
+	if replayService and match.State ~= "Countdown" then
+		replayService:AddPlayer(match.MatchId, player)
+	end
+	publish(match)
 	return true
 end
 
@@ -190,14 +276,29 @@ end
 
 function MatchService:GetMatch(player) return playerMatch[player] end
 
+function MatchService:RemovePlayer(player)
+	local match = playerMatch[player]
+	if not match then return end
+	match.Players[player] = nil
+	playerMatch[player] = nil
+	for index, stats in match.Stats do
+		if stats.UserId == player.UserId then
+			table.remove(match.Stats, index)
+			break
+		end
+	end
+	refreshCompetitiveState(match, GameModeRegistry.Get(match.ModeId))
+	if replayService then replayService:RemovePlayer(player) end
+	if deathConnections[player] then deathConnections[player]:Disconnect(); deathConnections[player] = nil end
+	damageSources[player] = nil
+	publish(match)
+end
+
 function MatchService:Init(remoteRegistry, rooms, spawns, replays)
 	isRunning = true
 	remote = remoteRegistry.MatchUpdated; roomService = rooms; spawnService = spawns; replayService = replays
 	Players.PlayerRemoving:Connect(function(player)
-		local match = playerMatch[player]
-		if match then match.Players[player] = nil; playerMatch[player] = nil; publish(match) end
-		if deathConnections[player] then deathConnections[player]:Disconnect(); deathConnections[player] = nil end
-		damageSources[player] = nil
+		self:RemovePlayer(player)
 	end)
 	task.spawn(function()
 		while isRunning do
@@ -207,7 +308,8 @@ function MatchService:Init(remoteRegistry, rooms, spawns, replays)
 					local stats = findStats(match, player.UserId)
 					if stats then stats.PingMilliseconds = math.floor(player:GetNetworkPing() * 2000 + 0.5) end
 				end
-				if match.State == "Active" and match.EndsAtUnix > 0 and os.time() >= match.EndsAtUnix then
+				if match.State == "Active" and match.CompetitiveResolutionActive
+					and match.EndsAtUnix > 0 and os.time() >= match.EndsAtUnix then
 					local winner = nil
 					if match.ModeId == "TeamDeathmatchExtreme" and match.TeamScores.ALPHA ~= match.TeamScores.OMEGA then winner = match.TeamScores.ALPHA > match.TeamScores.OMEGA and "ALPHA" or "OMEGA"
 					elseif match.ModeId == "Deathmatch" then
@@ -216,7 +318,8 @@ function MatchService:Init(remoteRegistry, rooms, spawns, replays)
 					end
 					finishMatch(match, winner)
 				end
-				if match.State == "Active" and match.ModeId == "Elimination"
+				if match.State == "Active" and match.CompetitiveResolutionActive
+					and match.ModeId == "Elimination"
 					and os.time() >= match.RoundEndsAtUnix then
 					local mode = GameModeRegistry.Get(match.ModeId)
 					local alive, health = { ALPHA = 0, OMEGA = 0 }, { ALPHA = 0, OMEGA = 0 }

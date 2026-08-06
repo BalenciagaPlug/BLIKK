@@ -30,6 +30,17 @@ function ReplayService:RecordEvent(matchId, eventType, payload)
 	table.insert(recording.Events, { Sequence = recording.Sequence, ServerTimestamp = os.time(), MatchTime = os.clock() - recording.StartedAt, Type = eventType, Payload = payload or {} })
 end
 
+function ReplayService:AddPlayer(matchId, player)
+	local recording = recordings[matchId]
+	if not recording or not recording.Active then return false end
+	self:RecordEvent(matchId, "PlayerJoined", { UserId = player.UserId })
+	return true
+end
+
+function ReplayService:RemovePlayer(player)
+	playerMatchIds[player] = nil
+end
+
 function ReplayService:RecordDeath(matchId, victimUserId, killerUserId)
 	self:RecordEvent(matchId, "Death", { VictimUserId = victimUserId, KillerUserId = killerUserId })
 	local recording = recordings[matchId]

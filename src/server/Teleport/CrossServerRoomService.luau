@@ -6,6 +6,7 @@ local RunService = game:GetService("RunService")
 local TeleportService = game:GetService("TeleportService")
 
 local Config = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
+local Modes = require(ReplicatedStorage.Shared.Multiplayer.GameModeRegistry)
 local RateLimiter = require(script.Parent.Parent.Networking.RateLimiter)
 
 local Directory = {}
@@ -39,7 +40,11 @@ end
 local function publicRecord(room)
 	local count = 0; for _ in room.Members do count += 1 end
 	local leader = Players:GetPlayerByUserId(room.RoomLeaderUserId)
-	return { DirectoryVersion = 1, RoomId = room.RoomId, Name = room.Name, LeaderUserId = room.RoomLeaderUserId, LeaderDisplayName = leader and leader.DisplayName or "", LeaderClanTag = leader and leader:GetAttribute("BLIKK_ClanTag") or nil, ModeId = room.Config.ModeId, MapId = room.Config.MapId, Mutators = table.clone(room.Config.Mutators), CurrentPlayers = count, MaximumPlayers = room.Config.MaximumPlayers, State = room.State, IsPublic = room.Config.IsPublic, JoinInProgress = room.Config.JoinInProgress, UpdatedAtUnix = os.time() }
+	local mode = Modes.Get(room.Config.ModeId)
+	local joinable = room.State == "Lobby" or room.State == "Countdown"
+		or (room.Config.JoinInProgressEnabled
+			and (room.State == "InProgress" or room.State == "RoundIntermission"))
+	return { DirectoryVersion = 1, RoomId = room.RoomId, Name = room.Name, LeaderUserId = room.RoomLeaderUserId, LeaderDisplayName = leader and leader.DisplayName or "", LeaderClanTag = leader and leader:GetAttribute("BLIKK_ClanTag") or nil, ModeId = room.Config.ModeId, MapId = room.Config.MapId, Mutators = table.clone(room.Config.Mutators), CurrentPlayers = count, MaximumPlayers = room.Config.MaximumPlayers, State = room.State, IsPublic = room.Config.IsPublic, JoinInProgressEnabled = room.Config.JoinInProgressEnabled, Joinable = joinable, LateJoinBehavior = mode and mode.LateJoinBehavior or nil, UpdatedAtUnix = os.time() }
 end
 
 function Directory:UpdateRoom(room)
@@ -90,6 +95,10 @@ local function reserveRoom(player, payload)
 end
 
 local function teleportToRoom(player, roomId, requestedRole)
+	local listingOk, listing = retry(function() return listingMap:GetAsync(roomId) end)
+	if not listingOk or type(listing) ~= "table" or listing.Joinable ~= true then
+		return false, "ROOM_NOT_JOINABLE"
+	end
 	local ok, secret = retry(function() return secretMap:GetAsync(roomId) end)
 	if not ok or type(secret) ~= "table" or type(secret.AccessCode) ~= "string" then return false, "ROOM_UNAVAILABLE" end
 	local nonce = game:GetService("HttpService"):GenerateGUID(false)

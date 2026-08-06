@@ -14,5 +14,9 @@ Room servers heartbeat every 25 seconds; listings older than 60 seconds are igno
 
 Clients supply only public RoomIds. Reserved access codes are applied server-side and never enter TeleportData or client snapshots. Destinations revalidate protocol, nonce, UserId, RoomId, expiry, PrivateServerId, capacity, and state, then consume the nonce. Teleports attempt at most three times.
 
-Studio uses local-room fallback. MemoryStore and reserved servers require published-client testing.
+Directory records expose both current phase and a derived joinable flag. Lobby and countdown
+rooms are joinable; active and round-intermission rooms follow the mode's join-in-progress
+policy; post-match and closing rooms are not advertised as joinable. Source servers reject a
+stale non-joinable listing, and the destination remains authoritative for final admission.
 
+Studio uses local-room fallback. MemoryStore and reserved servers require published-client testing.

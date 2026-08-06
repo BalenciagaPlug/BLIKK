@@ -40,12 +40,21 @@ function Controller:CreatePage(parent, navigation)
 	list.Position = UDim2.fromOffset(20, 120); list.Size = UDim2.new(0.62, -25, 1, -195); list.ScrollBarThickness = 5; list.Parent = canvas
 	local listLayout = Instance.new("UIListLayout"); listLayout.Padding = UDim.new(0, 6); listLayout.Parent = list
 	local selectedRoomId = nil
+	local selectedRoomJoinable = false
 	local function renderRooms(rooms)
+		selectedRoomId = nil
+		selectedRoomJoinable = false
 		for _, child in list:GetChildren() do if child:IsA("GuiObject") then child:Destroy() end end
 		for index, room in rooms or {} do
-			local row = button(list, string.format("%s  //  %s  //  %s  //  %d/%d  //  %s", room.Name, room.ModeId, room.MapId, room.CurrentPlayers, room.MaximumPlayers, room.State), UDim2.new(), UDim2.new(1, -8, 0, 42))
+			local availability = room.Joinable and "JOINABLE" or "CLOSED"
+			local row = button(list, string.format("%s  //  %s  //  %s  //  %d/%d  //  %s  //  %s", room.Name, room.ModeId, room.MapId, room.CurrentPlayers, room.MaximumPlayers, room.State, availability), UDim2.new(), UDim2.new(1, -8, 0, 42))
 			row.LayoutOrder = index; row.TextXAlignment = Enum.TextXAlignment.Left
-			row.Activated:Connect(function() selectedRoomId = room.RoomId; status.Text = "SELECTED // " .. room.Name; status.TextColor3 = COLORS.Purple end)
+			row.Activated:Connect(function()
+				selectedRoomId = room.RoomId
+				selectedRoomJoinable = room.Joinable == true
+				status.Text = "SELECTED // " .. room.Name .. " // " .. availability
+				status.TextColor3 = selectedRoomJoinable and COLORS.Purple or COLORS.Warning
+			end)
 		end
 		list.CanvasSize = UDim2.fromOffset(0, #(rooms or {}) * 48)
 	end
@@ -60,7 +69,7 @@ function Controller:CreatePage(parent, navigation)
 	accessButton.Activated:Connect(function() public = not public; accessButton.Text = "ACCESS // " .. (public and "PUBLIC" or "PRIVATE") end)
 	local createButton = button(createPanel, "CREATE RESERVED ROOM", UDim2.fromOffset(16, 211), UDim2.new(1, -32, 0, 42)); createButton.TextColor3 = COLORS.Acid
 	createButton.Activated:Connect(function()
-		status.Text = "CREATING ROOM..."; local result = invoke(directoryRequest, "Create", { Name = nameBox.Text, IsPublic = public, MapId = "DistrictZero", ModeId = modeIds[modeIndex], MaximumPlayers = 16, SpectatorSlots = 4, JoinInProgress = true, Mutators = {} })
+		status.Text = "CREATING ROOM..."; local result = invoke(directoryRequest, "Create", { Name = nameBox.Text, IsPublic = public, MapId = "DistrictZero", ModeId = modeIds[modeIndex], MaximumPlayers = 16, SpectatorSlots = 4, JoinInProgressEnabled = true, Mutators = {} })
 		status.Text = result.Success and "TELEPORTING TO RESERVED ROOM..." or ("CREATE FAILED // " .. tostring(result.Code)); status.TextColor3 = result.Success and COLORS.Acid or COLORS.Warning
 	end)
 
@@ -95,7 +104,7 @@ function Controller:CreatePage(parent, navigation)
 	local joinCode = Instance.new("TextBox"); joinCode.BackgroundColor3 = COLORS.Raised; joinCode.PlaceholderText = "JOIN CODE"; joinCode.Text = ""; joinCode.Font = Enum.Font.Code; joinCode.TextColor3 = COLORS.Text; joinCode.Position = UDim2.new(0, 20, 1, -62); joinCode.Size = UDim2.fromOffset(150, 36); joinCode.Parent = canvas
 	local joinCodeButton = button(canvas, "JOIN CODE", UDim2.new(0, 180, 1, -62), UDim2.fromOffset(110, 36))
 	refresh.Activated:Connect(function() local result = invoke(directoryRequest, "List"); if result.Success then renderRooms(result.Rooms); status.Text = "ROOM DIRECTORY UPDATED"; status.TextColor3 = COLORS.Acid else status.Text = result.Code; status.TextColor3 = COLORS.Warning end end)
-	join.Activated:Connect(function() if not selectedRoomId then status.Text = "SELECT A ROOM"; return end; local result = invoke(directoryRequest, "Join", { RoomId = selectedRoomId, RequestedRole = "Player" }); status.Text = result.Success and "TELEPORTING..." or result.Code end)
+	join.Activated:Connect(function() if not selectedRoomId then status.Text = "SELECT A ROOM"; return end; if not selectedRoomJoinable then status.Text = "ROOM NOT JOINABLE"; status.TextColor3 = COLORS.Warning; return end; local result = invoke(directoryRequest, "Join", { RoomId = selectedRoomId, RequestedRole = "Player" }); status.Text = result.Success and "TELEPORTING..." or result.Code end)
 	joinCodeButton.Activated:Connect(function() local result = invoke(directoryRequest, "JoinCode", joinCode.Text); status.Text = result.Success and "TELEPORTING..." or result.Code end)
 	back.Activated:Connect(function() navigation:GoTo("OperationsHub") end)
 	local object = {}

@@ -6,6 +6,11 @@ RoomService owns membership, RoomLeader, configuration, ready state, teams, and 
 
 Only DistrictZero is whitelisted. Training, Deathmatch, Team Deathmatch Extreme, and Elimination are defined by GameModeRegistry. MeleeOnly is the only recognized mutator foundation.
 
+Room creation and match start both require one player in every mode. Competitive winner
+resolution is separate: Deathmatch requires two participants, while team modes require at
+least one Alpha and one Omega player. A solo room therefore remains playable without
+awarding a competitive result.
+
 ## Validation and lifecycle
 
 Room names are filtered by TextService and limited to 40 characters. Room IDs and private join codes are server-generated. Maps, modes, capacity, readiness, team balance, membership, leadership, and state eligibility are validated server-side. Room Leader migration prefers active lobby players, then lowest measured server ping, earliest join sequence, and lowest UserId.
@@ -14,3 +19,7 @@ AFK warning, leader migration, normal kick, and spectator kick occur at 180, 240
 
 Remotes are RoomRequest, RoomUpdated, RoomActivity, DirectoryRequest, and MatchUpdated. The combat layer is not yet competitively authoritative.
 
+Training, Deathmatch, and Team Deathmatch Extreme admit players during countdown and active
+play. Elimination admits them during an active round as spectators and includes them at the
+next round boundary. Late team players are assigned to the currently smaller team, with
+Alpha winning a tied assignment deterministically.

@@ -106,6 +106,7 @@ local function removePlayer(player)
 	local room = playerRoom[player]
 	if not room then return end
 	local member = room.Members[player]
+	if matchService then matchService:RemovePlayer(player) end
 	room.Members[player] = nil; playerRoom[player] = nil
 	if not next(room.Members) then
 		room.State = "Closing"; rooms[room.RoomId] = nil
@@ -124,17 +125,58 @@ local function validateConfiguration(payload)
 	if not map or not map.IsMultiplayerEnabled or not mode or not Maps.SupportsMode(map.Id, mode.Id) then return nil end
 	local maximumPlayers = payload.MaximumPlayers
 	if type(maximumPlayers) ~= "number" or maximumPlayers % 1 ~= 0 then return nil end
-	maximumPlayers = math.clamp(maximumPlayers, mode.MinimumPlayers, math.min(mode.MaximumPlayers, map.MaximumPlayers, Config.MaximumPlayers))
+	maximumPlayers = math.clamp(maximumPlayers, Config.RoomCreationMinimumPlayers,
+		math.min(mode.MaximumPlayers, map.MaximumPlayers, Config.MaximumPlayers))
 	local mutators = {}
 	if type(payload.Mutators) == "table" and payload.Mutators.MeleeOnly == true then mutators.MeleeOnly = true end
 	return {
 		MapId = map.Id, ModeId = mode.Id, MaximumPlayers = maximumPlayers,
 		IsPublic = payload.IsPublic ~= false, Mutators = mutators,
 		TeamAssignmentMode = mode.TeamMode and "PLAYER_CHOICE_BALANCED" or "NONE",
-		JoinInProgress = mode.JoinInProgress and payload.JoinInProgress ~= false,
+		JoinInProgressEnabled = mode.JoinInProgressEnabled
+			and payload.JoinInProgressEnabled ~= false and payload.JoinInProgress ~= false,
 		SpectatorSlots = math.clamp(tonumber(payload.SpectatorSlots) or 0, 0, Config.MaximumSpectatorSlots),
 		ReadyRequired = mode.Competitive,
 	}
+end
+
+local function isJoinable(room, isSpectator)
+	if room.State == "Lobby" or room.State == "Countdown" then return true end
+	if room.State == "InProgress" or room.State == "RoundIntermission" then
+		return isSpectator or room.Config.JoinInProgressEnabled
+	end
+	return false
+end
+
+local function assignBalancedTeam(room, member)
+	local mode = Modes.Get(room.Config.ModeId)
+	if not mode.TeamMode or member.IsSpectator then return end
+	local counts = { ALPHA = 0, OMEGA = 0 }
+	for _, candidate in room.Members do
+		if not candidate.IsSpectator and candidate.TeamId then counts[candidate.TeamId] += 1 end
+	end
+	member.TeamId = if counts.ALPHA <= counts.OMEGA then "ALPHA" else "OMEGA"
+end
+
+local function addMember(room, player, isSpectator)
+	joinSequence += 1
+	local member = {
+		Player = player, State = isSpectator and "Spectating" or "InLobby",
+		IsReady = false, IsSpectator = isSpectator, TeamId = nil, IsRoomLeader = false,
+		JoinSequence = joinSequence, LastActivityAt = os.clock(), WasWarned = false,
+		ClanId = player:GetAttribute("BLIKK_ClanId"), ClanTag = player:GetAttribute("BLIKK_ClanTag"),
+	}
+	room.Members[player] = member
+	if room.State ~= "Lobby" then assignBalancedTeam(room, member) end
+	playerRoom[player] = room
+	if room.State ~= "Lobby" and not isSpectator and matchService then
+		if not matchService:AddLatePlayer(room, player, member) then
+			room.Members[player] = nil
+			playerRoom[player] = nil
+			return nil
+		end
+	end
+	return member
 end
 
 local function createRoom(player, payload)
@@ -162,13 +204,20 @@ end
 local function joinLocal(player, payload)
 	if playerRoom[player] or type(payload) ~= "table" or type(payload.RoomId) ~= "string" then return nil, "INVALID_JOIN" end
 	local room = rooms[payload.RoomId]
-	if not room or room.State ~= "Lobby" then return nil, "ROOM_UNAVAILABLE" end
-	local count = 0; for _ in room.Members do count += 1 end
-	if count >= room.Config.MaximumPlayers then return nil, "ROOM_FULL" end
+	if not room then return nil, "ROOM_UNAVAILABLE" end
+	local isSpectator = payload.RequestedRole == "Spectator"
+	if not isJoinable(room, isSpectator) then return nil, "ROOM_NOT_JOINABLE" end
+	local memberCount, spectatorCount = 0, 0
+	for _, member in room.Members do
+		if member.IsSpectator then spectatorCount += 1 else memberCount += 1 end
+	end
+	if (isSpectator and spectatorCount >= room.Config.SpectatorSlots)
+		or (not isSpectator and memberCount >= room.Config.MaximumPlayers) then
+		return nil, "ROOM_FULL"
+	end
 	if not room.Config.IsPublic and payload.JoinCode ~= room.JoinCode then return nil, "PRIVATE_ROOM" end
-	joinSequence += 1
-	room.Members[player] = { Player = player, State = "InLobby", IsReady = false, IsSpectator = false, TeamId = nil, IsRoomLeader = false, JoinSequence = joinSequence, LastActivityAt = os.clock(), WasWarned = false, ClanId = player:GetAttribute("BLIKK_ClanId"), ClanTag = player:GetAttribute("BLIKK_ClanTag") }
-	playerRoom[player] = room; publish(room)
+	if not addMember(room, player, isSpectator) then return nil, "MATCH_UNAVAILABLE" end
+	publish(room)
 	return snapshot(room, false)
 end
 
@@ -206,10 +255,10 @@ local function startMatch(player)
 			end
 		end
 	end
-	if eligible < mode.MinimumPlayers then return nil, "NOT_ENOUGH_PLAYERS" end
+	if eligible < mode.StartMinimumPlayers then return nil, "NOT_ENOUGH_PLAYERS" end
 	room.State = "Starting"; publish(room)
 	if not matchService:StartRoom(room) then room.State = "Lobby"; publish(room); return nil, "MATCH_START_FAILED" end
-	room.State = "InProgress"; publish(room)
+	room.State = "Countdown"; publish(room)
 	return snapshot(room, false)
 end
 
@@ -249,7 +298,8 @@ function RoomService:GetLocalListings()
 	for _, room in rooms do
 		if room.Config.IsPublic and room.State ~= "Closing" then
 			local count = 0; for _ in room.Members do count += 1 end
-			table.insert(result, { RoomId = room.RoomId, Name = room.Name, LeaderUserId = room.RoomLeaderUserId, ModeId = room.Config.ModeId, MapId = room.Config.MapId, CurrentPlayers = count, MaximumPlayers = room.Config.MaximumPlayers, State = room.State, IsPublic = true, JoinInProgress = room.Config.JoinInProgress, UpdatedAtUnix = os.time() })
+			local mode = Modes.Get(room.Config.ModeId)
+			table.insert(result, { RoomId = room.RoomId, Name = room.Name, LeaderUserId = room.RoomLeaderUserId, ModeId = room.Config.ModeId, MapId = room.Config.MapId, CurrentPlayers = count, MaximumPlayers = room.Config.MaximumPlayers, State = room.State, IsPublic = true, JoinInProgressEnabled = room.Config.JoinInProgressEnabled, Joinable = isJoinable(room, false), LateJoinBehavior = mode.LateJoinBehavior, UpdatedAtUnix = os.time() })
 		end
 	end
 	return result
@@ -267,15 +317,16 @@ function RoomService:AcceptTeleportedPlayer(player, record, requestedRole)
 		room = { RoomId = record.RoomId, Name = record.Name, State = "Lobby", RoomLeaderUserId = record.RoomLeaderUserId, JoinCode = record.JoinCode, Config = configuration, Members = {}, Revision = 0, CreatedAtUnix = record.CreatedAtUnix or os.time() }
 		rooms[room.RoomId] = room
 	end
-	if room.State ~= "Lobby" and not room.Config.JoinInProgress then return false end
-	local memberCount, spectatorCount = 0, 0; for _, member in room.Members do if member.IsSpectator then spectatorCount += 1 else memberCount += 1 end end
 	local isSpectator = requestedRole == "Spectator"
+	if not isJoinable(room, isSpectator) then return false end
+	local memberCount, spectatorCount = 0, 0; for _, member in room.Members do if member.IsSpectator then spectatorCount += 1 else memberCount += 1 end end
 	if (isSpectator and spectatorCount >= room.Config.SpectatorSlots) or (not isSpectator and memberCount >= room.Config.MaximumPlayers) then return false end
-	joinSequence += 1
 	local isLeader = player.UserId == room.RoomLeaderUserId or not next(room.Members)
-	room.Members[player] = { Player = player, State = isSpectator and "Spectating" or "InLobby", IsReady = false, IsSpectator = isSpectator, TeamId = nil, IsRoomLeader = isLeader, JoinSequence = joinSequence, LastActivityAt = os.clock(), WasWarned = false, ClanId = player:GetAttribute("BLIKK_ClanId"), ClanTag = player:GetAttribute("BLIKK_ClanTag") }
+	local member = addMember(room, player, isSpectator)
+	if not member then return false end
+	member.IsRoomLeader = isLeader
 	if isLeader then room.RoomLeaderUserId = player.UserId end
-	playerRoom[player] = room; publish(room)
+	publish(room)
 	return true
 end
 
@@ -320,6 +371,13 @@ function RoomService:Init(remoteRegistry, profileService)
 end
 
 function RoomService:SetMatchService(service) matchService = service end
+
+function RoomService:SetMatchPhase(roomId, state)
+	local room = rooms[roomId]
+	if not room then return end
+	room.State = state
+	publish(room)
+end
 
 function RoomService:ReturnToLobby(roomId)
 	local room = rooms[roomId]
