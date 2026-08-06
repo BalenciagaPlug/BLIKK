@@ -47,6 +47,10 @@ The crosshair remains mathematically centred. Locomotion and dash use the flat c
 
 Movement presentation may provide authored animation hooks, procedural fallbacks, directional poses, VFX, camera feedback, and audio. Gameplay never waits for assets. Do not fabricate asset IDs or use copyrighted assets. Presentation must clean up on cancellation, death, respawn, and replacement, and must scale through effects quality and Reduced Effects.
 
+Dash streaks are white world-space Beam effects. Their endpoints follow recent root-part displacement,
+then live velocity, so airborne streaks match the rising or falling travel tangent; grounded streaks
+discard vertical jitter. This visual sampling never writes velocity or controls the dash trajectory.
+
 ## 10. K-Style Technique Framework
 
 Butterfly candidate detection is currently implemented as lightweight local telemetry. An airborne slash cancelled into block inside the configured timing creates a candidate; additional valid cancels in the same airborne sequence create chain candidates. Landing, invalid state, input suppression, character replacement, or weapon switching breaks the sequence. Wall jumps continue the airborne sequence and expose provisional Wall Butterfly hooks. No candidate awards score, progression, damage, or tutorial completion.

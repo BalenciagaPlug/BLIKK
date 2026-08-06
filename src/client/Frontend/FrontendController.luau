@@ -7,7 +7,6 @@ local MultiplayerBrowserController = require(script.Parent.MultiplayerBrowserCon
 local NavigationController = require(script.Parent.NavigationController)
 local OperationsHubController = require(script.Parent.OperationsHubController)
 local SplashScreenController = require(script.Parent.SplashScreenController)
-local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 
 local FrontendController = {}
 
@@ -27,8 +26,6 @@ local function setFrontendActive(isActive)
 	gameplayCameraReference:SetGameplayActive(not isActive)
 	gameplayCameraReference:SetInterfaceOpen(isActive)
 	settingsControllerReference:SetFrontendActive(isActive)
-	SessionSettings:Set("HudVisible", not isActive)
-	SessionSettings:Set("InputOverlayVisible", not isActive)
 end
 
 function FrontendController:ReturnToOperationsHub()
@@ -49,8 +46,6 @@ function FrontendController:Init(inputManager, gameplayCamera, fighterController
 	chatControllerReference = chatController
 	inputManager:SetGameplayEnabled(false)
 	gameplayCamera:SetInterfaceOpen(true)
-	SessionSettings:Set("HudVisible", false)
-	SessionSettings:Set("InputOverlayVisible", false)
 
 	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 	local existing = playerGui:FindFirstChild("BLIKKFrontend")

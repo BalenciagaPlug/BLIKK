@@ -90,13 +90,8 @@ local function bindPlayer(player)
 	if player.Character then task.defer(placeCharacter, player, player.Character) end
 end
 
-function SpawnService:Init()
-	local remotes = ReplicatedStorage:FindFirstChild("BLIKKRemotes") or Instance.new("Folder")
-	remotes.Name = "BLIKKRemotes"
-	remotes.Parent = ReplicatedStorage
-	requestEvent = remotes:FindFirstChild("RequestMovementLabSpawn") or Instance.new("RemoteEvent")
-	requestEvent.Name = "RequestMovementLabSpawn"
-	requestEvent.Parent = remotes
+function SpawnService:Init(remoteRegistry)
+	requestEvent = remoteRegistry.RequestMovementLabSpawn
 	requestEvent.OnServerEvent:Connect(function(player)
 		local now = os.clock()
 		if now - (lastRequestAt[player] or -math.huge) < Config.SpawnSafety.RequestCooldownSeconds then return end

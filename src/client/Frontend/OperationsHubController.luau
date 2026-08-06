@@ -232,7 +232,7 @@ function OperationsHubController:CreatePage(parent, enterMovementLab, openSettin
 			else
 				contentText.Text = "NO FIGHTER SELECTED"
 			end
-			previewCaption.Text = currentProfile and (currentProfile.Name:upper() .. " // LOCAL PROFILE") or "ACTIVE FIGHTER"
+			previewCaption.Text = currentProfile and (currentProfile.Name:upper() .. " // PROFILE") or "ACTIVE FIGHTER"
 			CharacterPreviewController:Render(preview, currentProfile, true)
 		else
 			closeExitInstructions()

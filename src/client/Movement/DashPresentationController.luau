@@ -16,6 +16,12 @@ local poseJoints = {}
 local gameplayCamera = nil
 local airReady = false
 local humanoidStateConnection = nil
+local activeRootPart = nil
+local activeDirection = nil
+local activeGrounded = false
+local previousRootPosition = nil
+local activeStreaks = {}
+local ownedStreakParts = {}
 
 local directionPose = {
 	Forward = { Pitch = -1, Roll = 0, Twist = 1 },
@@ -49,6 +55,14 @@ end
 function Controller:Interrupt()
 	activeAction = nil
 	airReady = false
+	activeRootPart = nil
+	activeDirection = nil
+	previousRootPosition = nil
+	table.clear(activeStreaks)
+	for part in ownedStreakParts do
+		if part.Parent then part:Destroy() end
+	end
+	table.clear(ownedStreakParts)
 	resetJoints()
 	if gameplayCamera then gameplayCamera:SetDashFovOffset(0) end
 end
@@ -66,7 +80,7 @@ local function createBeamStreak(startPosition, endPosition, width, lifetime)
 	endAttachment.Parent = endPart
 	local beam = Instance.new("Beam")
 	beam.Attachment0, beam.Attachment1 = startAttachment, endAttachment
-	beam.Color = ColorSequence.new(Color3.fromRGB(183, 242, 105), Color3.fromRGB(73, 91, 61))
+	beam.Color = ColorSequence.new(config.StreakColor)
 	beam.LightEmission = 0.35
 	beam.Transparency = NumberSequence.new(config.StreakTransparency, 1)
 	beam.Width0, beam.Width1 = width, width * 0.35
@@ -74,6 +88,13 @@ local function createBeamStreak(startPosition, endPosition, width, lifetime)
 	beam.Parent = startPart
 	Debris:AddItem(startPart, lifetime)
 	Debris:AddItem(endPart, lifetime)
+	ownedStreakParts[startPart] = true
+	ownedStreakParts[endPart] = true
+	task.delay(lifetime, function()
+		ownedStreakParts[startPart] = nil
+		ownedStreakParts[endPart] = nil
+	end)
+	return { StartPart = startPart, EndPart = endPart }
 end
 
 local function emitGroundAccent(rootPart, direction)
@@ -89,6 +110,27 @@ local function emitGroundAccent(rootPart, direction)
 	Debris:AddItem(accent, config.GroundAccentLifetimeSeconds)
 end
 
+local function streakDirection(rootPart, fallbackDirection, grounded, displacement)
+	local tangent = displacement
+	if grounded then tangent = Vector3.new(tangent.X, 0, tangent.Z) end
+	if tangent.Magnitude < config.StreakMinimumDisplacementStuds then
+		tangent = rootPart.AssemblyLinearVelocity
+		if grounded then tangent = Vector3.new(tangent.X, 0, tangent.Z) end
+	end
+	if tangent.Magnitude < config.StreakMinimumDisplacementStuds then tangent = fallbackDirection end
+	return tangent.Unit
+end
+
+local function positionStreaks(rootPart, direction)
+	for _, streak in activeStreaks do
+		if streak.StartPart.Parent and streak.EndPart.Parent then
+			local start = rootPart.Position + Vector3.new(0, streak.Height, 0)
+			streak.StartPart.Position = start
+			streak.EndPart.Position = start - direction * config.StreakLengthStuds
+		end
+	end
+end
+
 local function emitStreaks(rootPart, direction, grounded)
 	if SessionSettings:Get("ReducedEffects") then return end
 	local quality = SessionSettings:Get("EffectsQuality")
@@ -99,7 +141,9 @@ local function emitStreaks(rootPart, direction, grounded)
 	for offset = 0, count - 1 do
 		local index = firstIndex + offset
 		local start = rootPart.Position + Vector3.new(0, config.StreakHeightsStuds[index], 0)
-		createBeamStreak(start, start - direction * config.StreakLengthStuds, config.StreakWidthsStuds[index] * widthMultiplier, config.StreakLifetimeSeconds * lifetimeMultiplier)
+		local streak = createBeamStreak(start, start - direction * config.StreakLengthStuds, config.StreakWidthsStuds[index] * widthMultiplier, config.StreakLifetimeSeconds * lifetimeMultiplier)
+		streak.Height = config.StreakHeightsStuds[index]
+		table.insert(activeStreaks, streak)
 	end
 	if grounded then emitGroundAccent(rootPart, direction) end
 end
@@ -151,7 +195,15 @@ function Controller:Init(movementEngine, cameraController)
 		activeAction = action
 		airReady = false
 		local rootPart = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-		if rootPart and config.Enabled then emitStreaks(rootPart, direction, grounded) end
+		activeRootPart = rootPart
+		activeDirection = direction
+		activeGrounded = grounded
+		previousRootPosition = rootPart and rootPart.Position or nil
+		table.clear(activeStreaks)
+		if rootPart and config.Enabled then
+			local tangent = streakDirection(rootPart, direction, grounded, Vector3.zero)
+			emitStreaks(rootPart, tangent, grounded)
+		end
 		if not SessionSettings:Get("ReducedEffects") then cameraController:SetDashFovOffset(config.CameraFovImpulseDegrees) end
 		if config.SoundId ~= "" and rootPart then
 			local sound = Instance.new("Sound")
@@ -160,12 +212,27 @@ function Controller:Init(movementEngine, cameraController)
 		end
 	end)
 	movementEngine.DashUpdated.Event:Connect(function(_, _, progress)
+		if activeAction and activeRootPart and activeRootPart.Parent and previousRootPosition then
+			local currentPosition = activeRootPart.Position
+			local tangent = streakDirection(
+				activeRootPart,
+				activeDirection,
+				activeGrounded,
+				currentPosition - previousRootPosition
+			)
+			previousRootPosition = currentPosition
+			positionStreaks(activeRootPart, tangent)
+		end
 		if activeAction and not SessionSettings:Get("ReducedEffects") then
 			cameraController:SetDashFovOffset(config.CameraFovImpulseDegrees * (1 - progress) ^ 2)
 		end
 	end)
 	movementEngine.DashEnded.Event:Connect(function(_, _, grounded)
 		activeAction = nil
+		activeRootPart = nil
+		activeDirection = nil
+		previousRootPosition = nil
+		table.clear(activeStreaks)
 		airReady = not grounded
 		cameraController:SetDashFovOffset(0)
 		if not airReady then resetJoints() end

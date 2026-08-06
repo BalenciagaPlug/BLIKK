@@ -6,6 +6,7 @@ local Workspace = game:GetService("Workspace")
 local CameraSettings = require(script.Parent.Parent.Camera.CameraSettings)
 local BindingState = require(script.Parent.Parent.Input.BindingState)
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
+local PlayerPreferencesController = require(script.Parent.Parent.Settings.PlayerPreferencesController)
 local UIStyle = require(script.Parent.UIStyle)
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -38,6 +39,7 @@ local conflictFrame = nil
 local conflictLabel = nil
 local pendingConflict = nil
 local gearHotkeyLabel = nil
+local effectsQualityButton = nil
 local viewportLabel = nil
 local aspectLabel = nil
 local confirmationFrame = nil
@@ -350,6 +352,7 @@ local function createSlider(parent, definition, rowIndex, source, ranges)
 			end
 
 			updateSliderVisual(control)
+			PlayerPreferencesController:SetPreference(control.Key, control.Source:Get(control.Key))
 		end)
 	end
 
@@ -400,7 +403,7 @@ local function createToggle(parent, key, labelText, rowIndex, source, positionYO
 	updateToggleVisual(control)
 
 	button.Activated:Connect(function()
-		source:Set(key, not source:Get(key))
+		PlayerPreferencesController:SetPreference(key, not source:Get(key))
 		updateToggleVisual(control)
 	end)
 end
@@ -423,7 +426,7 @@ local function createCameraPage(parent)
 	)
 	resetButton.TextColor3 = colors.Accent
 	resetButton.Activated:Connect(function()
-		CameraSettings:ResetToDefaults()
+		PlayerPreferencesController:ResetPreferenceGroup("Camera")
 
 		for _, control in sliderControls do
 			if control.Source == CameraSettings then
@@ -537,7 +540,7 @@ local function createControlsPage(parent)
 		)
 		reset.TextSize = 9
 		reset.Activated:Connect(function()
-			BindingState:ResetAction(definition.Id)
+			PlayerPreferencesController:ResetBinding(definition.Id)
 		end)
 	end
 
@@ -550,7 +553,7 @@ local function createControlsPage(parent)
 	)
 	resetAll.TextColor3 = colors.Accent
 	resetAll.Activated:Connect(function()
-		BindingState:ResetAll()
+		PlayerPreferencesController:ResetAllBindings()
 	end)
 
 	conflictFrame = Instance.new("Frame")
@@ -591,12 +594,10 @@ local function createControlsPage(parent)
 	cancelButton.ZIndex = 11
 	replaceButton.Activated:Connect(function()
 		if pendingConflict then
-			local replaced = BindingState:Replace(
+			local replaced = PlayerPreferencesController:SetBinding(
 				pendingConflict.Action,
 				pendingConflict.Slot,
-				pendingConflict.Token,
-				pendingConflict.OldAction,
-				pendingConflict.OldSlot
+				pendingConflict.Token
 			)
 
 			if not replaced then
@@ -635,11 +636,12 @@ local function createExtrasPage(parent)
 	createToggle(content, "ChatVisible", "BLIKK CHAT", 1, SessionSettings, 597)
 	createToggle(content, "ChatTimestamps", "CHAT TIMESTAMPS", 1, SessionSettings, 648)
 	local quality = createButton(content, "EffectsQuality", "EFFECTS QUALITY // " .. SessionSettings:Get("EffectsQuality"), UDim2.fromOffset(16, 700), UDim2.new(1, -32, 0, 38))
+	effectsQualityButton = quality
 	quality.Activated:Connect(function()
 		local current = SessionSettings:Get("EffectsQuality")
 		local nextValue = if current == "HIGH" then "MEDIUM" elseif current == "MEDIUM" then "LOW" else "HIGH"
-		SessionSettings:Set("EffectsQuality", nextValue)
-		quality.Text = "EFFECTS QUALITY // " .. nextValue
+		PlayerPreferencesController:SetPreference("EffectsQuality", nextValue)
+		quality.Text = "EFFECTS QUALITY // " .. SessionSettings:Get("EffectsQuality")
 	end)
 	createLabel(content, "ResolutionNote", "ROBLOX CONTROLS RESOLUTION, PRIVACY AND TEXT FILTERING. BLIKK SCALES ONLY ITS OWN UI.", UDim2.fromOffset(16, 752), UDim2.new(1, -32, 0, 34), 9, colors.TextMuted).TextWrapped = true
 end
@@ -800,7 +802,7 @@ local function acceptCapturedToken(token)
 		)
 		conflictFrame.Visible = true
 	else
-		BindingState:Set(action, slot, token)
+		PlayerPreferencesController:SetBinding(action, slot, token)
 	end
 
 	refreshBindingButtons()
@@ -1013,6 +1015,13 @@ local function createInterface()
 			updateResponsiveScale()
 			gearScale.Scale = SessionSettings:Get("UIScale")
 		end
+		for _, control in sliderControls do
+			if control.Source == SessionSettings then updateSliderVisual(control) end
+		end
+		if toggleControls[key] then updateToggleVisual(toggleControls[key]) end
+		if key == "EffectsQuality" and effectsQualityButton then
+			effectsQualityButton.Text = "EFFECTS QUALITY // " .. SessionSettings:Get("EffectsQuality")
+		end
 	end)
 end
 
@@ -1058,11 +1067,23 @@ function SettingsController:Init(gameplayInputManager, cameraController)
 
 	UserInputService.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			if activeSlider then
+				PlayerPreferencesController:SetPreference(
+					activeSlider.Key,
+					activeSlider.Source:Get(activeSlider.Key)
+				)
+			end
 			activeSlider = nil
 		end
 	end)
 
 	BindingState.Changed.Event:Connect(refreshBindingButtons)
+	CameraSettings.Changed.Event:Connect(function()
+		for _, control in sliderControls do
+			if control.Source == CameraSettings then updateSliderVisual(control) end
+		end
+		if toggleControls.InvertY then updateToggleVisual(toggleControls.InvertY) end
+	end)
 	inputManager.ActionBegan.Event:Connect(function(action)
 		if (action == "Settings" or action == "Cancel") and confirmationFrame and confirmationFrame.Visible then
 			confirmationFrame.Visible = false

@@ -96,4 +96,18 @@ function BindingState:ResetAll()
 	self.Changed:Fire(nil, "ResetAll", nil)
 end
 
+function BindingState:ApplyConfirmed(confirmedBindings)
+	if type(confirmedBindings) ~= "table" then return end
+	for _, action in ActionCatalogue.Ordered do
+		local confirmed = confirmedBindings[action.Id]
+		if type(confirmed) == "table" then
+			bindings[action.Id] = {
+				Primary = confirmed.Primary,
+				Secondary = confirmed.Secondary,
+			}
+		end
+	end
+	self.Changed:Fire(nil, "Confirmed", nil)
+end
+
 return BindingState

@@ -4,6 +4,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local CameraConfig = require(Shared.Camera.CameraConfig)
 
 local CameraSettings = {}
+CameraSettings.Changed = Instance.new("BindableEvent")
 
 local values = {}
 
@@ -33,11 +34,15 @@ function CameraSettings:Set(key, value)
 		return
 	end
 
-	values[key] = value
+	if values[key] ~= value then
+		values[key] = value
+		self.Changed:Fire(key, value)
+	end
 end
 
 function CameraSettings:ResetToDefaults()
 	copyDefaults()
+	self.Changed:Fire(nil, nil)
 end
 
 return CameraSettings

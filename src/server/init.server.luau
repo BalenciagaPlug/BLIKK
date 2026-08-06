@@ -1,7 +1,11 @@
+local CharacterProfileService = require(script.Character.CharacterProfileService)
 local DistrictZeroBuilder = require(script.Maps.DistrictZeroBuilder)
 local DistrictZeroSpawnService = require(script.Maps.DistrictZeroSpawnService)
+local RemoteRegistry = require(script.Networking.RemoteRegistry)
 
-DistrictZeroSpawnService:Init()
+RemoteRegistry:Init()
+CharacterProfileService:Init(RemoteRegistry)
+DistrictZeroSpawnService:Init(RemoteRegistry)
 
 local didBuild, buildError = xpcall(function()
 	DistrictZeroBuilder:Build()

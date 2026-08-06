@@ -10,7 +10,7 @@ local ActionCatalogue = require(Shared.Input.ActionCatalogue)
 
 local InputManager = {}
 
-local PLAYER_MODULE_LOOKUP_TIMEOUT_SECONDS = 5
+local PLAYER_MODULE_OBSERVATION_SECONDS = 5
 
 InputManager.ActionBegan = Instance.new("BindableEvent")
 InputManager.ActionEnded = Instance.new("BindableEvent")
@@ -25,6 +25,8 @@ local isBindingCaptureActive = false
 local isTextInputActive = false
 local tokenToAction = {}
 local hasWarnedControlsUnavailable = false
+local playerModuleConnections = {}
+local playerModuleObservationGeneration = 0
 
 local function warnControlsUnavailable(reason)
 	if hasWarnedControlsUnavailable then
@@ -77,30 +79,61 @@ local function endToken(token)
 	end
 end
 
-local function disableRobloxControls()
-	local player = Players.LocalPlayer
-	local playerScripts = player:WaitForChild("PlayerScripts", PLAYER_MODULE_LOOKUP_TIMEOUT_SECONDS)
-	if not playerScripts then
-		warnControlsUnavailable("PlayerScripts was not available within the lookup timeout")
+local function disconnectPlayerModuleObservers()
+	for _, connection in playerModuleConnections do connection:Disconnect() end
+	table.clear(playerModuleConnections)
+end
+
+local function disableDiscoveredPlayerModule(playerModuleScript)
+	playerModuleObservationGeneration += 1
+	disconnectPlayerModuleObservers()
+	if not playerModuleScript:IsA("ModuleScript") then
+		warnControlsUnavailable("discovered PlayerModule was not a ModuleScript")
 		return
 	end
-
-	local playerModuleScript = playerScripts:WaitForChild(
-		"PlayerModule",
-		PLAYER_MODULE_LOOKUP_TIMEOUT_SECONDS
-	)
-	if not playerModuleScript then
-		warnControlsUnavailable("PlayerModule was not available within the lookup timeout")
-		return
-	end
-
 	local didDisable, disableError = pcall(function()
 		local playerModule = require(playerModuleScript)
-		playerModule:GetControls():Disable()
+		local controls = playerModule:GetControls()
+		controls:Disable()
 	end)
-	if not didDisable then
-		warnControlsUnavailable(tostring(disableError))
+	if not didDisable then warnControlsUnavailable(tostring(disableError)) end
+
+end
+
+local function observePlayerModule()
+	playerModuleObservationGeneration += 1
+	local generation = playerModuleObservationGeneration
+	local player = Players.LocalPlayer
+	local isComplete = false
+
+	local function complete(playerModuleScript)
+		if isComplete or generation ~= playerModuleObservationGeneration then return end
+		isComplete = true
+		task.spawn(disableDiscoveredPlayerModule, playerModuleScript)
 	end
+
+	local function observePlayerScripts(playerScripts)
+		local existing = playerScripts:FindFirstChild("PlayerModule")
+		if existing then complete(existing); return end
+		table.insert(playerModuleConnections, playerScripts.ChildAdded:Connect(function(child)
+			if child.Name == "PlayerModule" then complete(child) end
+		end))
+	end
+
+	local playerScripts = player:FindFirstChild("PlayerScripts")
+	if playerScripts then
+		observePlayerScripts(playerScripts)
+	else
+		table.insert(playerModuleConnections, player.ChildAdded:Connect(function(child)
+			if child.Name == "PlayerScripts" then observePlayerScripts(child) end
+		end))
+	end
+
+	task.delay(PLAYER_MODULE_OBSERVATION_SECONDS, function()
+		if generation ~= playerModuleObservationGeneration or isComplete then return end
+		playerModuleObservationGeneration += 1
+		disconnectPlayerModuleObservers()
+	end)
 end
 
 function InputManager:Init()
@@ -110,7 +143,11 @@ function InputManager:Init()
 
 	isInitialised = true
 	rebuildLookup()
-	task.spawn(disableRobloxControls)
+	observePlayerModule()
+	table.insert(playerModuleConnections, script.Destroying:Connect(function()
+		playerModuleObservationGeneration += 1
+		disconnectPlayerModuleObservers()
+	end))
 
 	BindingState.Changed.Event:Connect(rebuildLookup)
 
