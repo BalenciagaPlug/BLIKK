@@ -117,6 +117,7 @@ local function createEmblem(parent)
 	inner.AnchorPoint = Vector2.new(0.5, 0.5)
 	inner.BackgroundColor3 = colors.Panel
 	inner.BackgroundTransparency = 0.12
+	inner.ClipsDescendants = true
 	inner.Position = UDim2.fromScale(0.5, 0.5)
 	inner.Size = UDim2.fromOffset(70, 70)
 	inner.ZIndex = 5
@@ -127,9 +128,9 @@ local function createEmblem(parent)
 		Name = "Brand",
 		Color = colors.Text,
 		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.57),
 		Rotation = -45,
-		Size = Branding.Sizes.Hud,
+		Size = UDim2.fromScale(3.0375, 3.0375),
 		ZIndex = 6,
 	})
 

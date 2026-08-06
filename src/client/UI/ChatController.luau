@@ -18,6 +18,7 @@ local collapsed = true
 local messageCount = 0
 local MAX_VISIBLE_MESSAGES = 80
 local collapseButton = nil
+local setCollapsed
 
 local function addStroke(instance, color)
 	local stroke = Instance.new("UIStroke")
@@ -73,7 +74,16 @@ local function sendCurrentMessage()
 	end
 end
 
-local function setCollapsed(isCollapsed, focusInput)
+local function hasMessageText()
+	return inputBox.Text:match("%S") ~= nil
+end
+
+local function closeChat()
+	inputBox.Text = ""
+	setCollapsed(true, false)
+end
+
+setCollapsed = function(isCollapsed, focusInput)
 	collapsed = isCollapsed
 	if collapsed and inputBox:IsFocused() then inputBox:ReleaseFocus(false) end
 	messageList.Visible = not collapsed
@@ -162,8 +172,8 @@ local function createInterface()
 	inputBox.FocusLost:Connect(function(enterPressed)
 		inputManager:SetTextInputActive(false)
 		if enterPressed then
-			sendCurrentMessage()
-			setCollapsed(true, false)
+			if hasMessageText() then sendCurrentMessage() end
+			closeChat()
 		end
 	end)
 	collapseButton.Activated:Connect(function()
@@ -183,8 +193,20 @@ function ChatController:Init(gameplayInputManager)
 		appendMessage(message.Text, source and source.Name or "SYSTEM", source == nil)
 	end)
 	UserInputService.InputBegan:Connect(function(input)
-		if input.KeyCode == Enum.KeyCode.Return and gui.Enabled then
-			if collapsed then setCollapsed(false, true) elseif not inputBox:IsFocused() then inputBox:CaptureFocus() end
+		if not gui.Enabled then return end
+		if input.KeyCode == Enum.KeyCode.Return then
+			if collapsed then
+				setCollapsed(false, true)
+			elseif inputBox:IsFocused() then
+				inputBox:ReleaseFocus(true)
+			else
+				inputBox:CaptureFocus()
+			end
+		elseif input.KeyCode == Enum.KeyCode.Backspace
+			and inputBox:IsFocused()
+			and inputBox.Text == ""
+		then
+			closeChat()
 		end
 	end)
 	SessionSettings.Changed.Event:Connect(function(key)
