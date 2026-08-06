@@ -17,15 +17,32 @@ local MeleePresentationConfig = {
 		FutureMeshId = "",
 		FutureSoundHooks = { Equip = "", Unequip = "", Slash = "", Block = "" },
 		Dimensions = {
-			Handle = Vector3.new(0.52, 3.4, 0.52),
-			Blade = Vector3.new(0.32, 5.8, 0.72),
-			BladeEdge = Vector3.new(0.09, 5.65, 0.76),
-			Guard = Vector3.new(2.25, 0.25, 0.55),
-			Pommel = Vector3.new(0.7, 0.55, 0.7),
+			Handle = Vector3.new(0.30, 1.00, 0.30),
+			Grip = Vector3.new(0.36, 0.82, 0.36),
+			Blade = Vector3.new(0.16, 3.50, 0.42),
+			BladeEdge = Vector3.new(0.045, 3.36, 0.44),
+			Guard = Vector3.new(0.90, 0.12, 0.44),
+			Pommel = Vector3.new(0.36, 0.15, 0.36),
 		},
-		EquippedAttachment = { PartName = "RightHand", Offset = CFrame.new(0, -1.25, -0.15) * CFrame.Angles(0, 0, math.rad(8)) },
-		HolsteredAttachment = { PartName = "UpperTorso", Offset = CFrame.new(-0.75, -0.2, 0.65) * CFrame.Angles(math.rad(8), 0, math.rad(142)) },
-		BladeTrail = { StartY = 1.7, EndY = 7.25 },
+		Geometry = {
+			GripCenterYStuds = -0.02,
+			BladeGuardGapStuds = 0.03,
+			EdgeOffsetXStuds = -0.105,
+			TrailRootBladeFraction = 0.08,
+			TrailTipInsetBladeFraction = 0.04,
+		},
+		EquippedAttachment = {
+			PartName = "RightHand",
+			Offset = CFrame.new(0, -0.12, 0.02)
+				* CFrame.Angles(math.rad(-25), math.rad(12), math.rad(175)),
+			GripPivot = CFrame.new(0, 0.18, 0),
+		},
+		HolsteredAttachment = {
+			PartName = "UpperTorso",
+			Offset = CFrame.new(0.65, 0.45, 0.55)
+				* CFrame.Angles(math.rad(10), math.rad(-8), math.rad(135)),
+			GripPivot = CFrame.identity,
+		},
 	},
 
 	Pose = {
@@ -33,6 +50,12 @@ local MeleePresentationConfig = {
 		ActionBlendSpeed = 28,
 		AirReadyTorsoDegrees = -7,
 		AirReadyHipDegrees = 13,
+		EquippedIdle = {
+			Waist = Vector3.new(-1, -4, 1),
+			RightShoulder = Vector3.new(10, -6, 8),
+			RightElbow = Vector3.new(-18, 0, 2),
+			RightWrist = Vector3.new(8, -6, 12),
+		},
 	},
 }
 

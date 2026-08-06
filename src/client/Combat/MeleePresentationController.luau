@@ -30,6 +30,7 @@ local heldBlockActions = {}
 local bufferedBlockAt
 local cancelWindowReported = false
 local dashActive = false
+local wallPresentationActive = false
 local isInitialised = false
 local authoredTrack
 local playHook
@@ -39,6 +40,7 @@ local jointNames = {
 	RootJoint = "Root", Waist = "Waist", Neck = "Neck",
 	RightShoulder = "RightShoulder", LeftShoulder = "LeftShoulder",
 	RightElbow = "RightElbow", LeftElbow = "LeftElbow",
+	RightWrist = "RightWrist", LeftWrist = "LeftWrist",
 	RightHip = "RightHip", LeftHip = "LeftHip",
 }
 
@@ -52,8 +54,9 @@ local function disconnectCharacterConnections()
 end
 
 local function resetPose()
-	for _, joint in poseJoints do
-		if joint.Parent then joint.Transform = CFrame.identity end
+	for alias in ownedPoseJoints do
+		local joint = poseJoints[alias]
+		if joint and joint.Parent then joint.Transform = CFrame.identity end
 	end
 	table.clear(ownedPoseJoints)
 end
@@ -92,24 +95,33 @@ end
 
 local function buildTrainingKatana()
 	local dimensions = Config.TrainingKatana.Dimensions
+	local geometry = Config.TrainingKatana.Geometry
+	local handleHalfLength = dimensions.Handle.Y * 0.5
+	local guardCenterY = handleHalfLength + dimensions.Guard.Y * 0.5
+	local bladeStartY = handleHalfLength + dimensions.Guard.Y + geometry.BladeGuardGapStuds
+	local bladeCenterY = bladeStartY + dimensions.Blade.Y * 0.5
+	local bladeEndY = bladeStartY + dimensions.Blade.Y
+	local pommelCenterY = -handleHalfLength - dimensions.Pommel.Y * 0.5
+	local trailRootY = bladeStartY + dimensions.Blade.Y * geometry.TrailRootBladeFraction
+	local trailTipY = bladeEndY - dimensions.Blade.Y * geometry.TrailTipInsetBladeFraction
 	local model = Instance.new("Model")
 	model.Name = "TrainingKatana"
 	model:SetAttribute("BLIKK_WeaponDefinition", "TrainingKatana")
 	model:SetAttribute("BLIKK_PresentationOnly", true)
 	local handle = makePart(model, "Handle", dimensions.Handle, Color3.fromRGB(25, 25, 29), Enum.Material.Metal)
-	local grip = makePart(model, "Grip", dimensions.Handle + Vector3.new(0.08, -0.35, 0.08), Color3.fromRGB(53, 42, 61), Enum.Material.Fabric, CFrame.new(0, 0, 0))
-	local guard = makePart(model, "Guard", dimensions.Guard, Color3.fromRGB(92, 66, 115), Enum.Material.Metal, CFrame.new(0, 1.8, 0))
-	local blade = makePart(model, "Blade", dimensions.Blade, Color3.fromRGB(92, 98, 108), Enum.Material.Metal, CFrame.new(0, 4.7, 0))
-	local edge = makePart(model, "BladeEdge", dimensions.BladeEdge, Color3.fromRGB(229, 226, 213), Enum.Material.SmoothPlastic, CFrame.new(-0.2, 4.7, 0))
-	local pommel = makePart(model, "Pommel", dimensions.Pommel, Color3.fromRGB(106, 71, 135), Enum.Material.Metal, CFrame.new(0, -1.95, 0))
+	local grip = makePart(model, "Grip", dimensions.Grip, Color3.fromRGB(53, 42, 61), Enum.Material.Fabric, CFrame.new(0, geometry.GripCenterYStuds, 0))
+	local guard = makePart(model, "Guard", dimensions.Guard, Color3.fromRGB(92, 66, 115), Enum.Material.Metal, CFrame.new(0, guardCenterY, 0))
+	local blade = makePart(model, "Blade", dimensions.Blade, Color3.fromRGB(92, 98, 108), Enum.Material.Metal, CFrame.new(0, bladeCenterY, 0))
+	local edge = makePart(model, "BladeEdge", dimensions.BladeEdge, Color3.fromRGB(229, 226, 213), Enum.Material.SmoothPlastic, CFrame.new(geometry.EdgeOffsetXStuds, bladeCenterY, 0))
+	local pommel = makePart(model, "Pommel", dimensions.Pommel, Color3.fromRGB(106, 71, 135), Enum.Material.Metal, CFrame.new(0, pommelCenterY, 0))
 	for _, part in { grip, guard, blade, edge, pommel } do weld(handle, part) end
 	local trailStart = Instance.new("Attachment")
 	trailStart.Name = "TrailAttachmentStart"
-	trailStart.Position = Vector3.new(0, Config.TrainingKatana.BladeTrail.StartY, 0)
+	trailStart.Position = Vector3.new(0, trailRootY, 0)
 	trailStart.Parent = handle
 	local trailEnd = Instance.new("Attachment")
 	trailEnd.Name = "TrailAttachmentEnd"
-	trailEnd.Position = Vector3.new(0, Config.TrainingKatana.BladeTrail.EndY, 0)
+	trailEnd.Position = Vector3.new(0, trailTipY, 0)
 	trailEnd.Parent = handle
 	local bladeTrail = Instance.new("Trail")
 	bladeTrail.Name = "BladeTrail"
@@ -137,7 +149,7 @@ local function attachWeapon(mode)
 	end
 	gripJoint.Part0 = bodyPart
 	gripJoint.C0 = attachment.Offset
-	gripJoint.C1 = CFrame.identity
+	gripJoint.C1 = attachment.GripPivot
 	return true
 end
 
@@ -289,7 +301,8 @@ local function poseForState(now)
 			if blockHeld and bufferedBlockAt then enterBlock(false) else setState("MeleeIdle") end
 		end
 	end
-	if state == "Holstered" or state == "Interrupted" or (dashActive and state ~= "Slashing" and state ~= "Blocking") then return nil end
+	if state == "Holstered" or state == "Interrupted" or state == "Equipping" or state == "Unequipping" then return nil end
+	if (dashActive or wallPresentationActive) and state ~= "Slashing" and state ~= "Blocking" then return nil end
 	local poses = {}
 	if state == "Slashing" then
 		local elapsed = now - stateStarted
@@ -305,9 +318,9 @@ local function poseForState(now)
 		poses.LeftShoulder = CFrame.Angles(math.rad(-58), math.rad(15), math.rad(-38))
 		poses.RightElbow = CFrame.Angles(math.rad(-35), 0, 0)
 	else
-		poses.Waist = CFrame.Angles(math.rad(-3), math.rad(-10), math.rad(2))
-		poses.RightShoulder = CFrame.Angles(math.rad(-48), math.rad(-10), math.rad(42))
-		poses.LeftShoulder = CFrame.Angles(math.rad(-20), 0, math.rad(-18))
+		for alias, degrees in Config.Pose.EquippedIdle do
+			poses[alias] = CFrame.Angles(math.rad(degrees.X), math.rad(degrees.Y), math.rad(degrees.Z))
+		end
 	end
 	if airborne then
 		poses.Root = poses.Root or CFrame.Angles(math.rad(Config.Pose.AirReadyTorsoDegrees), 0, 0)
@@ -317,7 +330,7 @@ local function poseForState(now)
 	return poses
 end
 
-local function applyPose()
+local function applyPose(deltaTime)
 	if not character or not humanoid or humanoid.Health <= 0 then return end
 	local now = os.clock()
 	local poses = poseForState(now)
@@ -327,8 +340,10 @@ local function applyPose()
 	end
 	table.clear(ownedPoseJoints)
 	local blockBlend = if state == "Blocking" then math.clamp((now - stateStarted) / Config.Slash.PostCancelBlockEnterBlendSeconds, 0, 1) else 1
+	local idleBlend = 1 - math.exp(-Config.Pose.IdleBlendSpeed * deltaTime)
+	local blend = if state == "MeleeIdle" then idleBlend else blockBlend
 	for alias, joint in poseJoints do
-		if poses[alias] then joint.Transform = joint.Transform:Lerp(poses[alias], blockBlend); ownedPoseJoints[alias] = true end
+		if poses[alias] then joint.Transform = joint.Transform:Lerp(poses[alias], blend); ownedPoseJoints[alias] = true end
 	end
 end
 
@@ -353,7 +368,7 @@ end
 
 function Controller:GetState() return state end
 
-function Controller:Init(inputManagerValue, fighterControllerValue, movementEngineValue)
+function Controller:Init(inputManagerValue, fighterControllerValue, movementEngineValue, wallInteractionController)
 	if isInitialised then return end
 	isInitialised = true
 	inputManager, fighterController, movementEngine = inputManagerValue, fighterControllerValue, movementEngineValue
@@ -390,8 +405,17 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 			if isMeleeActive() then attachWeapon("Equipped"); setState("Equipping") else interrupt("Unequipping"); attachWeapon("Holstered") end
 		end
 	end)
-	movementEngine.DashStarted.Event:Connect(function() dashActive = true end)
+	movementEngine.DashStarted.Event:Connect(function()
+		dashActive = true
+		resetPose()
+	end)
 	movementEngine.DashEnded.Event:Connect(function() dashActive = false end)
+	wallInteractionController.StateChanged.Event:Connect(function(nextState)
+		wallPresentationActive = nextState == "WallContact"
+			or nextState == "WallJumping"
+			or nextState == "WallRecovery"
+		if wallPresentationActive then resetPose() end
+	end)
 	SessionSettings.Changed.Event:Connect(function(key)
 		if key == "EffectsQuality" or key == "ReducedEffects" or key == "BladeTrailVisible" or key == "BladeTrailOpacity" then updateWeaponQuality() end
 	end)
