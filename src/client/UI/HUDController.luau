@@ -5,6 +5,7 @@ local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 local UIStyle = require(script.Parent.UIStyle)
 local Branding = require(ReplicatedStorage.Shared.Branding.Branding)
 local MeleeConfig = require(ReplicatedStorage.Shared.Combat.MeleePresentationConfig)
+local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
 
 local HUDController = {}
 
@@ -16,6 +17,8 @@ local screenGui = nil
 local healthFill = nil
 local healthValue = nil
 local healthConnection = nil
+local characterGeneration = 0
+local healthCharacter = nil
 local statusRoot = nil
 local weaponRoot = nil
 local weaponSlotLabel = nil
@@ -380,7 +383,7 @@ local function clearSilhouette()
 	for _, child in weaponSilhouette:GetChildren() do child:Destroy() end
 end
 
-local function updateWeapon(fighterController)
+local function updateWeapon(fighterController, firearmController)
 	local fighter = fighterController:GetFighter()
 	local slotId = fighter.ActiveWeaponSlot
 	local definition = fighterController:GetWeaponDefinition(slotId)
@@ -396,11 +399,21 @@ local function updateWeapon(fighterController)
 		dataStateLabel.Text = "PRESENTATION ONLY // NO HITBOX"
 		createKatanaSilhouette(weaponSilhouette)
 	else
-		weaponStatsLabel.Text = "DAMAGE --  |  DELAY --"
+		local status = firearmController and firearmController:GetActiveStatus() or nil
+		weaponStatsLabel.Text = "12 × 9 DAMAGE  |  1.00 S FIRE"
 		ammoTrack.Visible = true
 		ammoLabel.Visible = true
-		ammoLabel.Text = "-- / --"
-		dataStateLabel.Text = "WEAPON DATA // PLACEHOLDER READY"
+		if status then
+			ammoLabel.Text = string.format("%d / %d", status.Chambered, status.Reserve)
+			ammoTrack.Size = UDim2.fromOffset(218 * status.Chambered / 5, 13)
+			ammoTrack.BackgroundColor3 = if status.Chambered == 0 then colors.Blood else colors.Text
+			dataStateLabel.Text = if status.Chambered == 0 and status.State == "Ready"
+				then "EMPTY // RELOAD"
+				else "STATE // " .. string.upper(status.State)
+		else
+			ammoLabel.Text = "-- / --"
+			dataStateLabel.Text = "WEAPON DATA // INITIALIZING"
+		end
 		createWeaponSilhouette(weaponSilhouette)
 	end
 end
@@ -413,25 +426,38 @@ local function updateHealth(humanoid)
 end
 
 local function bindCharacter(character)
+	characterGeneration += 1
+	local bindGeneration = characterGeneration
 	if healthConnection then
 		healthConnection:Disconnect()
 		healthConnection = nil
 	end
+	healthCharacter = nil
 
-	local humanoid = character:WaitForChild("Humanoid")
+	local humanoid = character:WaitForChild("Humanoid", MultiplayerConfig.CharacterDependencyTimeoutSeconds)
+	if bindGeneration ~= characterGeneration or character ~= player.Character
+		or not humanoid or not humanoid:IsA("Humanoid") then
+		if bindGeneration == characterGeneration and character == player.Character then
+			warn("[BLIKK HUD] Character bind timed out waiting for Humanoid.")
+		end
+		return
+	end
 	updateHealth(humanoid)
 	healthConnection = humanoid.HealthChanged:Connect(function()
-		updateHealth(humanoid)
+		if bindGeneration == characterGeneration then updateHealth(humanoid) end
 	end)
+	healthCharacter = character
+	character:SetAttribute("BLIKK_ClientHudReady", true)
 end
 
-function HUDController:Init(fighterController)
+function HUDController:Init(fighterController, firearmController)
 	if isInitialised then
 		return
 	end
 
+	local playerGui = player:WaitForChild("PlayerGui", MultiplayerConfig.CharacterDependencyTimeoutSeconds)
+	if not playerGui then error("PlayerGui was unavailable during HUD initialization") end
 	isInitialised = true
-	local playerGui = player:WaitForChild("PlayerGui")
 	local existing = playerGui:FindFirstChild("BLIKKHud")
 
 	if existing then
@@ -446,7 +472,7 @@ function HUDController:Init(fighterController)
 	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	createStatusBlock(screenGui)
 	createWeaponBlock(screenGui)
-	updateWeapon(fighterController)
+	updateWeapon(fighterController, firearmController)
 	applyHudScale()
 	screenGui.Enabled = SessionSettings:Get("HudVisible")
 	screenGui.Parent = playerGui
@@ -460,9 +486,22 @@ function HUDController:Init(fighterController)
 	end)
 
 	player.CharacterAdded:Connect(bindCharacter)
-	fighterController.LoadoutChanged.Event:Connect(function(changeType)
-		if changeType == "ActiveWeaponSlot" or changeType == "Weapon" then updateWeapon(fighterController) end
+	player.CharacterRemoving:Connect(function(removingCharacter)
+		if removingCharacter ~= healthCharacter then return end
+		characterGeneration += 1
+		if healthConnection then healthConnection:Disconnect(); healthConnection = nil end
+		healthCharacter = nil
 	end)
+	fighterController.LoadoutChanged.Event:Connect(function(changeType)
+		if changeType == "ActiveWeaponSlot" or changeType == "Weapon" then
+			updateWeapon(fighterController, firearmController)
+		end
+	end)
+	if firearmController then
+		firearmController.StateChanged.Event:Connect(function()
+			updateWeapon(fighterController, firearmController)
+		end)
+	end
 
 	if player.Character then
 		bindCharacter(player.Character)

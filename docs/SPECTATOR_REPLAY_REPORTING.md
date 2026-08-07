@@ -2,7 +2,12 @@
 
 ## Spectator
 
-Eligibility derives from server match statistics. Team modes return living teammates; Deathmatch may return any living opponent. The client cycles only the allowlist, disables gameplay input, follows a Humanoid with an occluded camera, and restores BLIKK camera/input on respawn. There is no free-fly camera.
+Eligibility derives from server match statistics. Team modes return living teammates; Deathmatch
+may return any living opponent. The client cycles only the allowlist, acquires named spectator input
+and camera blockers, and follows a Humanoid with an occluded camera. `CharacterAdded` alone does not
+exit spectating: only a newer authoritative match snapshot showing a valid released state restores
+BLIKK camera/input. `Dead`, `WaitingForRound`, `TimedOut`, and `Failed` remain explicit spectator
+states. There is no free-fly camera.
 
 ## Replay V1
 
@@ -13,4 +18,3 @@ The current client is a developer clip-list/timeline inspector, not a complete V
 ## Reporting
 
 BLIKKReportsV1 schema 1 stores reason, filtered optional note (160 characters), match identity, and bounded server-confirmed statistics. Limits are three reports per match, five per 30 minutes, and one reporter/target/match report. Records exclude chat, raw text, profiles, reserved codes, and automatic punishment.
-

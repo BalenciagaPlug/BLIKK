@@ -6,15 +6,16 @@ local SoundService = game:GetService("SoundService")
 local Workspace = game:GetService("Workspace")
 
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
-local Shared = ReplicatedStorage:WaitForChild("Shared")
+local PoseCoordinator = require(script.Parent.Parent.Character.PoseCoordinator)
+local Shared = ReplicatedStorage:FindFirstChild("Shared")
+assert(Shared, "Shared must be acquired by the client composition root before dash presentation")
 local MovementConfig = require(Shared.Movement.MovementConfig)
+local MultiplayerConfig = require(Shared.Multiplayer.MultiplayerConfig)
 local RenderQualityConfig = require(Shared.Settings.RenderQualityConfig)
 
 local Controller = {}
 local config = MovementConfig.Dash.Presentation
 local activeAction = nil
-local poseJoints = {}
-local gameplayCamera = nil
 local airReady = false
 local humanoidStateConnection = nil
 local activeRootPart = nil
@@ -23,6 +24,10 @@ local activeGrounded = false
 local previousRootPosition = nil
 local activeStreaks = {}
 local ownedStreakParts = {}
+local isInitialised = false
+local characterGeneration = 0
+local boundCharacter = nil
+local dashSound = nil
 
 local function renderValue(key)
 	local preset = RenderQualityConfig.Presets[SessionSettings:Get("RenderPreset")]
@@ -36,26 +41,8 @@ local directionPose = {
 	Right = { Pitch = 0, Roll = 1, Twist = -1 },
 }
 
-local jointAliases = {
-	Root = "Root", RootJoint = "Root", Waist = "Waist",
-	LeftShoulder = "LeftShoulder", RightShoulder = "RightShoulder",
-	LeftHip = "LeftHip", RightHip = "RightHip",
-}
-
-local function bindPoseJoints(character)
-	table.clear(poseJoints)
-	for _, descendant in character:GetDescendants() do
-		if descendant:IsA("Motor6D") then
-			local alias = jointAliases[descendant.Name:gsub(" ", "")]
-			if alias then poseJoints[alias] = descendant end
-		end
-	end
-end
-
 local function resetJoints()
-	for _, joint in poseJoints do
-		if joint.Parent then joint.Transform = CFrame.identity end
-	end
+	PoseCoordinator:Release("Dash")
 end
 
 function Controller:Interrupt()
@@ -70,7 +57,25 @@ function Controller:Interrupt()
 	end
 	table.clear(ownedStreakParts)
 	resetJoints()
-	if gameplayCamera then gameplayCamera:SetDashFovOffset(0) end
+	if dashSound then dashSound:Stop() end
+end
+
+local function destroyDashSound()
+	if not dashSound then return end
+	dashSound:Destroy()
+	dashSound = nil
+end
+
+local function bindDashSound(rootPart)
+	destroyDashSound()
+	if config.SoundId == "" or not rootPart then return end
+	local sound = Instance.new("Sound")
+	sound.Name = "BLIKKDashWhoosh"
+	sound.SoundId = config.SoundId
+	sound.Volume = config.SoundVolume
+	sound.SoundGroup = SoundService:FindFirstChild("BLIKK_Dash")
+	sound.Parent = rootPart
+	dashSound = sound
 end
 
 local function createBeamStreak(startPosition, endPosition, width, lifetime)
@@ -156,14 +161,19 @@ local function emitStreaks(rootPart, direction, grounded)
 end
 
 local function applyPose()
-	if (not activeAction and not airReady) or not config.Enabled then return end
+	if (not activeAction and not airReady) or not config.Enabled then
+		PoseCoordinator:Release("Dash")
+		return
+	end
+	local poses = {}
 	if airReady and not activeAction then
-		if poseJoints.Root then poseJoints.Root.Transform = CFrame.Angles(math.rad(-7), 0, 0) end
-		if poseJoints.Waist then poseJoints.Waist.Transform = CFrame.Angles(math.rad(4), 0, 0) end
-		if poseJoints.LeftShoulder then poseJoints.LeftShoulder.Transform = CFrame.Angles(math.rad(-18), 0, math.rad(-12)) end
-		if poseJoints.RightShoulder then poseJoints.RightShoulder.Transform = CFrame.Angles(math.rad(-18), 0, math.rad(12)) end
-		if poseJoints.LeftHip then poseJoints.LeftHip.Transform = CFrame.Angles(math.rad(15), 0, math.rad(-7)) end
-		if poseJoints.RightHip then poseJoints.RightHip.Transform = CFrame.Angles(math.rad(-9), 0, math.rad(7)) end
+		poses.Root = CFrame.Angles(math.rad(-7), 0, 0)
+		poses.Waist = CFrame.Angles(math.rad(4), 0, 0)
+		poses.LeftShoulder = CFrame.Angles(math.rad(-18), 0, math.rad(-12))
+		poses.RightShoulder = CFrame.Angles(math.rad(-18), 0, math.rad(12))
+		poses.LeftHip = CFrame.Angles(math.rad(15), 0, math.rad(-7))
+		poses.RightHip = CFrame.Angles(math.rad(-9), 0, math.rad(7))
+		PoseCoordinator:Submit("Dash", 30, poses)
 		return
 	end
 	local pose = directionPose[activeAction]
@@ -172,23 +182,33 @@ local function applyPose()
 	local twist = math.rad(config.CounterTwistDegrees * pose.Twist)
 	local brace = math.rad(config.ArmBraceDegrees)
 	local tuck = math.rad(config.HipTuckDegrees)
-	if poseJoints.Root then poseJoints.Root.Transform = CFrame.Angles(pose.Pitch * lean, twist, pose.Roll * lean) end
-	if poseJoints.Waist then poseJoints.Waist.Transform = CFrame.Angles(pose.Pitch * lean * 0.45, -twist, pose.Roll * lean * 0.6) end
-	if poseJoints.LeftShoulder then poseJoints.LeftShoulder.Transform = CFrame.Angles(-brace, 0, -pose.Roll * brace * 0.8) end
-	if poseJoints.RightShoulder then poseJoints.RightShoulder.Transform = CFrame.Angles(-brace, 0, pose.Roll * brace * 0.35) end
-	if poseJoints.LeftHip then poseJoints.LeftHip.Transform = CFrame.Angles(tuck + pose.Pitch * tuck, 0, -pose.Roll * tuck * 1.2) end
-	if poseJoints.RightHip then poseJoints.RightHip.Transform = CFrame.Angles(-tuck + pose.Pitch * tuck, 0, pose.Roll * tuck * 0.45) end
+	poses.Root = CFrame.Angles(pose.Pitch * lean, twist, pose.Roll * lean)
+	poses.Waist = CFrame.Angles(pose.Pitch * lean * 0.45, -twist, pose.Roll * lean * 0.6)
+	poses.LeftShoulder = CFrame.Angles(-brace, 0, -pose.Roll * brace * 0.8)
+	poses.RightShoulder = CFrame.Angles(-brace, 0, pose.Roll * brace * 0.35)
+	poses.LeftHip = CFrame.Angles(tuck + pose.Pitch * tuck, 0, -pose.Roll * tuck * 1.2)
+	poses.RightHip = CFrame.Angles(-tuck + pose.Pitch * tuck, 0, pose.Roll * tuck * 0.45)
+	PoseCoordinator:Submit("Dash", 30, poses)
 end
 
-function Controller:Init(movementEngine, cameraController)
-	gameplayCamera = cameraController
+function Controller:Init(movementEngine, _cameraController)
+	if isInitialised then return end
+	isInitialised = true
 	local player = Players.LocalPlayer
 	local function bindCharacter(character)
+		characterGeneration += 1
+		local bindGeneration = characterGeneration
 		self:Interrupt()
-		bindPoseJoints(character)
 		if humanoidStateConnection then humanoidStateConnection:Disconnect() end
-		local humanoid = character:WaitForChild("Humanoid")
+		humanoidStateConnection = nil
+		boundCharacter = nil
+		local humanoid = character:WaitForChild("Humanoid", MultiplayerConfig.CharacterDependencyTimeoutSeconds)
+		if bindGeneration ~= characterGeneration or player.Character ~= character
+			or not humanoid or not humanoid:IsA("Humanoid") then return end
+		boundCharacter = character
+		bindDashSound(character:FindFirstChild("HumanoidRootPart"))
 		humanoidStateConnection = humanoid.StateChanged:Connect(function(_, nextState)
+			if bindGeneration ~= characterGeneration or boundCharacter ~= character then return end
 			if nextState == Enum.HumanoidStateType.Landed or nextState == Enum.HumanoidStateType.Running then
 				airReady = false
 				if not activeAction then resetJoints() end
@@ -196,6 +216,15 @@ function Controller:Init(movementEngine, cameraController)
 		end)
 	end
 	player.CharacterAdded:Connect(bindCharacter)
+	player.CharacterRemoving:Connect(function(character)
+		if character ~= boundCharacter then return end
+		characterGeneration += 1
+		boundCharacter = nil
+		self:Interrupt()
+		destroyDashSound()
+		if humanoidStateConnection then humanoidStateConnection:Disconnect(); humanoidStateConnection = nil end
+		resetJoints()
+	end)
 	if player.Character then bindCharacter(player.Character) end
 	movementEngine.DashStarted.Event:Connect(function(action, direction, grounded)
 		if not config.Enabled then return end
@@ -211,11 +240,12 @@ function Controller:Init(movementEngine, cameraController)
 			local tangent = streakDirection(rootPart, direction, grounded, Vector3.zero)
 			emitStreaks(rootPart, tangent, grounded)
 		end
-		if not SessionSettings:Get("ReducedEffects") then cameraController:SetDashFovOffset(config.CameraFovImpulseDegrees * renderValue("ScreenShakeScale")) end
-		if config.SoundId ~= "" and rootPart then
-			local sound = Instance.new("Sound")
-			sound.SoundId, sound.SoundGroup, sound.Parent = config.SoundId, SoundService:FindFirstChild("BLIKK_Dash"), rootPart
-			sound:Play(); Debris:AddItem(sound, 3)
+		if dashSound and dashSound.Parent == rootPart then
+			local dashGroup = SoundService:FindFirstChild("BLIKK_Dash")
+			if dashGroup and dashGroup:IsA("SoundGroup") then dashSound.SoundGroup = dashGroup end
+			dashSound:Stop()
+			dashSound.TimePosition = 0
+			dashSound:Play()
 		end
 	end)
 	movementEngine.DashUpdated.Event:Connect(function(_, _, progress)
@@ -230,18 +260,15 @@ function Controller:Init(movementEngine, cameraController)
 			previousRootPosition = currentPosition
 			positionStreaks(activeRootPart, tangent)
 		end
-		if activeAction and not SessionSettings:Get("ReducedEffects") then
-			cameraController:SetDashFovOffset(config.CameraFovImpulseDegrees * renderValue("ScreenShakeScale") * (1 - progress) ^ 2)
-		end
 	end)
-	movementEngine.DashEnded.Event:Connect(function(_, _, grounded)
+	movementEngine.DashEnded.Event:Connect(function(action, _, grounded)
+		if not activeAction or action ~= activeAction then return end
 		activeAction = nil
 		activeRootPart = nil
 		activeDirection = nil
 		previousRootPosition = nil
 		table.clear(activeStreaks)
 		airReady = not grounded
-		cameraController:SetDashFovOffset(0)
 		if not airReady then resetJoints() end
 	end)
 	RunService:BindToRenderStep("BLIKKDashPose", Enum.RenderPriority.Character.Value + 1, applyPose)

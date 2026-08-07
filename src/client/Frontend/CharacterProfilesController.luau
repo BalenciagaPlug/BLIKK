@@ -4,6 +4,7 @@ local Branding = require(ReplicatedStorage.Shared.Branding.Branding)
 local CharacterPreviewController = require(script.Parent.CharacterPreviewController)
 local FrontendLayout = require(script.Parent.FrontendLayout)
 local ProfileConfig = require(ReplicatedStorage.Shared.Character.ProfileConfig)
+local UINavigationController = require(script.Parent.Parent.UI.UINavigationController)
 
 local Controller = {}
 Controller.ProfileSelected = Instance.new("BindableEvent")
@@ -33,6 +34,7 @@ local colors = {
 	Muted = Color3.fromRGB(133, 140, 132),
 	Accent = Color3.fromRGB(157, 216, 83),
 	Panel = Color3.fromRGB(17, 19, 19),
+	Selected = Color3.fromRGB(44, 65, 34),
 	Error = Color3.fromRGB(194, 68, 72),
 }
 
@@ -270,6 +272,25 @@ function Controller:Init()
 end
 
 function Controller:CreatePage(parent, navigation, fighterController)
+	local profileScope = nil
+	local activationCallbacks = {}
+	local activationOptions = {}
+	local profileRows = {}
+	local profileRowsByIdentity = {}
+	local profileRowEntries = {}
+	local profilesByRowIdentity = {}
+	local selectedProfileRowIdentity = nil
+	local function bindActivation(control, callback, options)
+		control.Activated:Connect(callback)
+		if profileScope then
+			options = options or {}
+			options.Activate = callback
+			profileScope:Register(control, options)
+		else
+			activationCallbacks[control] = callback
+			activationOptions[control] = options
+		end
+	end
 	local page = Instance.new("Frame")
 	page.Name = "CharacterProfiles"
 	page.BackgroundColor3 = Color3.fromRGB(7, 8, 8)
@@ -327,6 +348,58 @@ function Controller:CreatePage(parent, navigation, fighterController)
 			appearance.Face, appearance.Hair, appearance.TopArmour, appearance.Pants, appearance.Boots
 		) or ""
 	end
+	local play = nil
+	local create = nil
+	local delete = nil
+
+	local function profileRowIdentity(index, profile)
+		return profile and profile.Id or "EMPTY_PROFILE_SLOT:" .. index
+	end
+
+	local function selectedRowProfile()
+		return profilesByRowIdentity[selectedProfileRowIdentity]
+	end
+
+	local function updateActionAvailability(profile)
+		if not play then return end
+		local canUseProfile = profile ~= nil and isRequestReady()
+		local canCreate = isRequestReady() and #profiles < ProfileConfig.MaximumProfiles
+		play.Active = canUseProfile
+		play.TextColor3 = canUseProfile and colors.Text or colors.Muted
+		delete.Active = canUseProfile
+		delete.TextColor3 = canUseProfile and colors.Error or colors.Muted
+		create.Active = canCreate
+		create.TextColor3 = canCreate and colors.Text or colors.Muted
+	end
+
+	local function updateProfileRowVisuals()
+		for _, entry in profileRowEntries do
+			entry.Row.BackgroundColor3 = if entry.Identity == selectedProfileRowIdentity
+				then colors.Selected else colors.Panel
+		end
+	end
+
+	local function updateSelectedProfilePresentation()
+		local profile = selectedRowProfile()
+		updateProfileRowVisuals()
+		updateActionAvailability(profile)
+		updateAppearanceLabel(profile)
+		CharacterPreviewController:Render(preview, profile, false)
+	end
+
+	local function chooseProfileRow(identity, profile)
+		selectedProfileRowIdentity = identity
+		updateSelectedProfilePresentation()
+		if not profile or profile.Id == selectedId then return end
+
+		local confirmed, message = self:SelectProfile(profile.Id)
+		if confirmed then
+			selectedProfileRowIdentity = confirmed.Id
+		else
+			status.Text = message
+		end
+		updateSelectedProfilePresentation()
+	end
 
 	local refresh
 	refresh = function()
@@ -337,53 +410,70 @@ function Controller:CreatePage(parent, navigation, fighterController)
 		for _, child in list:GetChildren() do
 			if child ~= listLayout then child:Destroy() end
 		end
+		table.clear(profileRows)
+		table.clear(profileRowsByIdentity)
+		table.clear(profileRowEntries)
+		table.clear(profilesByRowIdentity)
 		for index = 1, ProfileConfig.MaximumProfiles do
 			local profile = profiles[index]
+			local identity = profileRowIdentity(index, profile)
 			local text = profile
 				and string.format("%02d  %s\n%s // LV %d // %s", index, profile.Name:upper(), profile.BodyType:upper(), profile.Level, profile.LastPlayedUnix == 0 and "NEW" or os.date("%Y-%m-%d", profile.LastPlayedUnix))
 				or string.format("%02d  EMPTY PROFILE", index)
 			local row = button(list, text, UDim2.new(1, 0, 0, 70))
+			table.insert(profileRows, row)
+			profileRowsByIdentity[identity] = row
+			profilesByRowIdentity[identity] = profile
+			table.insert(profileRowEntries, { Row = row, Identity = identity })
 			row.TextXAlignment = Enum.TextXAlignment.Left
 			row.TextWrapped = true
-			if profile and profile.Id == selectedId then row.BackgroundColor3 = Color3.fromRGB(44, 65, 34) end
-			row.Activated:Connect(function()
-				if profile then
-					local confirmed, message = self:SelectProfile(profile.Id)
-					refresh()
-					if confirmed then
-						updateAppearanceLabel(confirmed)
-						CharacterPreviewController:Render(preview, confirmed, false)
-					else
-						status.Text = message
-					end
-				elseif isRequestReady() then
+			bindActivation(row, function()
+				if not profile and isRequestReady() then
 					navigation:GoTo("Creation")
 				end
-			end)
+			end, {
+				SelectionMode = "ChooseOnFocus",
+				SelectionIdentity = identity,
+				OnFocused = function()
+					chooseProfileRow(identity, profile)
+				end,
+			})
+		end
+		if not profileRowsByIdentity[selectedProfileRowIdentity] then
+			selectedProfileRowIdentity = if selectedId and profileRowsByIdentity[selectedId]
+				then selectedId else profileRowEntries[1] and profileRowEntries[1].Identity
+		end
+		updateSelectedProfilePresentation()
+		if profileScope and profileScope:IsActive() then
+			profileScope:Refresh(profileRowsByIdentity[selectedProfileRowIdentity] or profileRows[1])
 		end
 	end
 
-	local play = button(actions, "PLAY", UDim2.new(0.32, 0, 1, 0))
-	local create = button(actions, "NEW FIGHTER", UDim2.new(0.32, 0, 1, 0))
-	local delete = button(actions, "DELETE", UDim2.new(0.32, 0, 1, 0))
+	play = button(actions, "PLAY", UDim2.new(0.32, 0, 1, 0))
+	create = button(actions, "NEW FIGHTER", UDim2.new(0.32, 0, 1, 0))
+	delete = button(actions, "DELETE", UDim2.new(0.32, 0, 1, 0))
 	delete.TextColor3 = colors.Error
-	create.Activated:Connect(function()
+	bindActivation(create, function()
 		if isRequestReady() then navigation:GoTo("Creation") end
 	end)
-	delete.Activated:Connect(function()
+	bindActivation(delete, function()
+		local selected = selectedRowProfile()
+		if not selected then return end
+		if selected.Id ~= selectedId then
+			local confirmed, selectMessage = self:SelectProfile(selected.Id)
+			if not confirmed then status.Text = selectMessage; return end
+		end
 		local deleted, message = self:DeleteSelected()
 		if not deleted then status.Text = message; return end
-		refresh()
-		local profile = selectedProfile()
+		local profile = selectedRowProfile()
 		if profile then
-			updateAppearanceLabel(profile)
-			CharacterPreviewController:Render(preview, profile, false)
+			updateSelectedProfilePresentation()
 		else
 			navigation:GoTo("Creation")
 		end
 	end)
-	play.Activated:Connect(function()
-		local profile = selectedProfile()
+	bindActivation(play, function()
+		local profile = selectedRowProfile()
 		if not profile then return end
 		local confirmed, message = self:SelectProfile(profile.Id)
 		if not confirmed then status.Text = message; return end
@@ -391,6 +481,17 @@ function Controller:CreatePage(parent, navigation, fighterController)
 		self.ProfileSelected:Fire(confirmed)
 		navigation:GoTo("OperationsHub", confirmed)
 	end)
+
+	profileScope = UINavigationController:CreateScope("CharacterProfiles", {
+		Root = page,
+		Default = function() return profileRows[1] or create end,
+		Back = function() end,
+	})
+	for control, callback in activationCallbacks do
+		local options = activationOptions[control] or {}
+		options.Activate = callback
+		profileScope:Register(control, options)
+	end
 
 	local object = {}
 	function object:SetVisible(visible)
@@ -406,10 +507,11 @@ function Controller:CreatePage(parent, navigation, fighterController)
 				end)
 			end
 			refresh()
-			local profile = selectedProfile()
-			updateAppearanceLabel(profile)
-			CharacterPreviewController:Render(preview, profile, false)
+			profileScope:SetActive(true)
+			profileScope:Refresh(profileRowsByIdentity[selectedProfileRowIdentity] or profileRows[1] or create)
+			updateSelectedProfilePresentation()
 		else
+			profileScope:SetActive(false)
 			CharacterPreviewController:Stop()
 		end
 	end
@@ -420,9 +522,7 @@ function Controller:CreatePage(parent, navigation, fighterController)
 			return
 		end
 		refresh()
-		local profile = selectedProfile()
-		updateAppearanceLabel(profile)
-		CharacterPreviewController:Render(preview, profile, false)
+		updateSelectedProfilePresentation()
 	end)
 	return object
 end

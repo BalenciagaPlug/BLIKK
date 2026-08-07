@@ -5,7 +5,8 @@ local BindingState = require(script.Parent.Parent.Input.BindingState)
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 local UIStyle = require(script.Parent.UIStyle)
 
-local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Shared = ReplicatedStorage:FindFirstChild("Shared")
+assert(Shared, "Shared must be acquired by the client composition root before the input overlay")
 local ActionCatalogue = require(Shared.Input.ActionCatalogue)
 
 local InputOverlayController = {}
@@ -320,7 +321,8 @@ function InputOverlayController:Init(inputManager)
 	end
 
 	isInitialised = true
-	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+	local playerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
+	if not playerGui then error("[BLIKK INPUT OVERLAY] PlayerGui was unavailable after bootstrap", 0) end
 	screenGui = Instance.new("ScreenGui")
 	screenGui.Name = "BLIKKInputOverlay"
 	screenGui.DisplayOrder = UIStyle.DisplayOrders.Hud + 1

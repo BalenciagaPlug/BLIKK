@@ -18,9 +18,9 @@ Minimum wall clearance is the greater horizontal half-size of the active `Humano
 
 - Vertical run: 0.55 seconds maximum, upward velocity easing from 28 to 6 studs/s, 2.0 character-height cap.
 - Horizontal run: 0.82 seconds maximum, 92 percent tangent retention with a 10 studs/s floor, upward velocity easing from 12 to 0 studs/s, 1.0 character-height cap.
-- Standard/manual exit: 50 studs/s upward, 32 studs/s outward, 65 percent tangent retention.
-- Automatic vertical exit: 38 studs/s upward, 28 studs/s outward, 60 percent tangent retention.
-- Automatic horizontal exit: 33 studs/s upward, 25 studs/s outward, 75 percent tangent retention.
+- Standard/manual exit: 50 studs/s upward, 48 studs/s outward, 65 percent tangent retention.
+- Automatic vertical exit: 38 studs/s upward, 42 studs/s outward, 60 percent tangent retention.
+- Automatic horizontal exit: 33 studs/s upward, 37.5 studs/s outward, 75 percent tangent retention.
 - Fresh manual exit delay: 0.08 seconds after the consumed entry Jump timestamp.
 - Slash cancel: 0.16 seconds after recovery begins; earned return dash remains available for 0.42 seconds and uses the existing air-dash curve.
 - Same-wall return: at least 0.13 seconds, 0.8 studs of outward separation, 0.5 studs of contact-point movement, 6 studs/s back into the wall, a new spherecast hit, and a new buffered Jump.

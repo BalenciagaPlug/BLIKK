@@ -39,7 +39,7 @@ local WeaponDefinitions = {
 	},
 	TrainingShotgun = {
 		Id = "TrainingShotgun",
-		DisplayName = "TRAINING SHOTGUN",
+		DisplayName = "BLIKK B-8 BREAKSHOT",
 		Category = "Weapon",
 		WeaponType = "Shotgun",
 		WeaponSlot = "Primary",
@@ -58,7 +58,7 @@ local WeaponDefinitions = {
 		EffectSet = {},
 		Behaviour = {
 			ModuleId = "",
-			CombatEnabled = false,
+			CombatEnabled = true,
 		},
 	},
 }

@@ -5,6 +5,7 @@ local CharacterPreviewController = require(script.Parent.CharacterPreviewControl
 local CharacterProfilesController = require(script.Parent.CharacterProfilesController)
 local FrontendLayout = require(script.Parent.FrontendLayout)
 local ProfileConfig = require(ReplicatedStorage.Shared.Character.ProfileConfig)
+local UINavigationController = require(script.Parent.Parent.UI.UINavigationController)
 
 local Controller = {}
 
@@ -33,6 +34,13 @@ local function createButton(parent, text, height)
 end
 
 function Controller:CreatePage(parent, navigation)
+	local creationScope = nil
+	local activationCallbacks = {}
+	local optionAdjusters = {}
+	local function bindActivation(control, callback)
+		activationCallbacks[control] = callback
+		control.Activated:Connect(callback)
+	end
 	local page = Instance.new("Frame")
 	page.Name = "CharacterCreation"
 	page.BackgroundColor3 = Color3.fromRGB(7, 8, 8)
@@ -146,12 +154,18 @@ function Controller:CreatePage(parent, navigation)
 		control.LayoutOrder = 3 + index
 		control.SelectionOrder = 1 + index
 		control.NextSelectionUp = if index == 1 then nameBox else nil
-		control.Activated:Connect(function()
+		local function cycleOption(offset)
 			local optionIndex = table.find(definition[2], draft[definition[1]]) or 0
-			draft[definition[1]] = definition[2][optionIndex % #definition[2] + 1]
+			draft[definition[1]] = definition[2][(optionIndex - 1 + offset) % #definition[2] + 1]
 			control.Text = definition[1]:upper() .. " // " .. draft[definition[1]]
 			schedulePreviewRefresh()
-		end)
+		end
+		bindActivation(control, function() cycleOption(1) end)
+		optionAdjusters[control] = function(direction)
+			if direction == "Left" then cycleOption(-1); return true end
+			if direction == "Right" then cycleOption(1); return true end
+			return false
+		end
 	end
 
 	local errorLabel = Instance.new("TextLabel")
@@ -182,7 +196,7 @@ function Controller:CreatePage(parent, navigation)
 	cancel.SelectionOrder = 9
 
 	local isSubmitting = false
-	confirm.Activated:Connect(function()
+	bindActivation(confirm, function()
 		if isSubmitting then return end
 		isSubmitting = true
 		draft.Name = nameBox.Text
@@ -197,9 +211,24 @@ function Controller:CreatePage(parent, navigation)
 		navigation:GoTo("Profiles")
 		isSubmitting = false
 	end)
-	cancel.Activated:Connect(function()
+	local function returnToProfiles()
 		if #CharacterProfilesController:GetProfiles() > 0 then navigation:GoTo("Profiles") end
-	end)
+	end
+	bindActivation(cancel, returnToProfiles)
+
+	creationScope = UINavigationController:CreateScope("CharacterCreation", {
+		Root = page,
+		Default = nameBox,
+		Back = returnToProfiles,
+	})
+	creationScope:Register(nameBox)
+	for control, callback in activationCallbacks do
+		creationScope:Register(control, {
+			Activate = callback,
+			Adjust = optionAdjusters[control],
+			IsEnabled = if control == cancel then function() return cancel.Visible end else nil,
+		})
+	end
 
 	local object = {}
 	function object:SetVisible(visible)
@@ -207,9 +236,13 @@ function Controller:CreatePage(parent, navigation)
 		if visible then
 			cancel.Visible = #CharacterProfilesController:GetProfiles() > 0
 			errorLabel.Text = ""
+			creationScope:SetActive(true)
+			creationScope:Refresh(nameBox)
 			schedulePreviewRefresh()
 			task.defer(function() if page.Visible then nameBox:CaptureFocus() end end)
 		else
+			creationScope:SetActive(false)
+			if nameBox:IsFocused() then nameBox:ReleaseFocus(false) end
 			cancelPendingPreviewRequest()
 			CharacterPreviewController:Stop()
 		end

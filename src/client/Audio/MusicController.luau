@@ -1,4 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 
@@ -7,129 +8,140 @@ local MusicConfig = require(ReplicatedStorage.Shared.Audio.MusicConfig)
 local MusicController = {}
 
 local isInitialised = false
-local currentContext = nil
-local currentSound = nil
-local fadingSound = nil
-local endedConnection = nil
+local isFrontendActive = false
+local state = "Stopped"
+local soundtrack = nil
+local fadeTween = nil
+local fadeConnection = nil
+local navigationConnection = nil
+local destroyingConnection = nil
 local transitionGeneration = 0
-local playlistIndices = {}
-local lastTrackByContext = {}
+local warnedAssetUnavailable = false
 
 local function diagnose(message)
-	if MusicConfig.DiagnosticsEnabled then print("BLIKK MUSIC // " .. message) end
+	if MusicConfig.DiagnosticsEnabled then print("[BLIKK AUDIO] " .. message) end
 end
 
-local function disconnectEnded()
-	if endedConnection then endedConnection:Disconnect(); endedConnection = nil end
+local function cancelFade()
+	transitionGeneration += 1
+	if fadeConnection then fadeConnection:Disconnect(); fadeConnection = nil end
+	if fadeTween then fadeTween:Cancel(); fadeTween = nil end
 end
 
-local function destroySound(sound)
-	if sound then sound:Stop(); sound:Destroy() end
-end
-
-local function validTracks(contextName)
-	local context = MusicConfig.Contexts[contextName]
-	local tracks = {}
-	if not context then return tracks end
-	for _, trackId in context.Playlist do
-		local definition = MusicConfig.Tracks[trackId]
-		if definition and definition.SoundId ~= "" then table.insert(tracks, trackId) end
-	end
-	return tracks
-end
-
-local function chooseTrack(contextName)
-	local context = MusicConfig.Contexts[contextName]
-	local tracks = validTracks(contextName)
-	if not context or #tracks == 0 then return nil end
-
-	local selectedIndex
-	if context.PlaybackOrder == "Shuffle" and #tracks > 1 then
-		repeat selectedIndex = math.random(1, #tracks)
-		until tracks[selectedIndex] ~= lastTrackByContext[contextName]
-	else
-		selectedIndex = (playlistIndices[contextName] or 0) % #tracks + 1
-		playlistIndices[contextName] = selectedIndex
-	end
-	local trackId = tracks[selectedIndex]
-	lastTrackByContext[contextName] = trackId
-	return trackId
-end
-
-local playContext
-
-local function startTrack(contextName, generation)
-	if generation ~= transitionGeneration or currentContext ~= contextName then return end
-	local trackId = chooseTrack(contextName)
-	if not trackId then
-		diagnose("no configured track for " .. contextName)
+local function beginFade(targetVolume, durationSeconds, completed)
+	cancelFade()
+	local generation = transitionGeneration
+	if durationSeconds <= 0 then
+		soundtrack.Volume = targetVolume
+		completed()
 		return
 	end
-	local musicGroup = SoundService:FindFirstChild("BLIKK_Music")
-	if not musicGroup or not musicGroup:IsA("SoundGroup") then return end
-
-	local sound = Instance.new("Sound")
-	sound.Name = "BLIKKMusic_" .. trackId
-	sound.SoundGroup = musicGroup
-	sound.SoundId = MusicConfig.Tracks[trackId].SoundId
-	sound.Volume = 0
-	sound.Parent = SoundService
-	currentSound = sound
-	endedConnection = sound.Ended:Connect(function()
-		if sound ~= currentSound or contextName ~= currentContext then return end
-		disconnectEnded()
-		currentSound = nil
-		destroySound(sound)
-		playContext(contextName, transitionGeneration)
+	fadeTween = TweenService:Create(
+		soundtrack,
+		TweenInfo.new(durationSeconds, Enum.EasingStyle.Linear),
+		{ Volume = targetVolume }
+	)
+	fadeConnection = fadeTween.Completed:Connect(function(playbackState)
+		if generation ~= transitionGeneration or playbackState ~= Enum.PlaybackState.Completed then return end
+		fadeConnection:Disconnect()
+		fadeConnection = nil
+		fadeTween = nil
+		completed()
 	end)
-	sound:Play()
-	TweenService:Create(
-		sound,
-		TweenInfo.new(MusicConfig.CrossfadeDurationSeconds * 0.5, Enum.EasingStyle.Linear),
-		{ Volume = 1 }
-	):Play()
-	diagnose("playing " .. trackId)
+	fadeTween:Play()
 end
 
-playContext = function(contextName, generation)
-	startTrack(contextName, generation)
+local function ensureSoundtrack()
+	if soundtrack and soundtrack.Parent then return soundtrack end
+	local config = MusicConfig.FrontendSoundtrack
+	local existing = SoundService:FindFirstChild(config.Name)
+	if existing and existing:IsA("Sound") then
+		soundtrack = existing
+	else
+		if existing then
+			warn("[BLIKK AUDIO] Reserved soundtrack name is occupied; creating the owned Sound safely.")
+		end
+		soundtrack = Instance.new("Sound")
+		soundtrack.Name = config.Name
+		soundtrack.SoundId = config.SoundId
+		soundtrack.Looped = config.Looped
+		soundtrack.PlaybackSpeed = config.PlaybackSpeed
+		soundtrack.Volume = 0
+		soundtrack.Parent = SoundService
+	end
+	local musicGroup = SoundService:FindFirstChild(config.SoundGroupName)
+	if musicGroup and musicGroup:IsA("SoundGroup") then
+		soundtrack.SoundGroup = musicGroup
+	else
+		warn("[BLIKK AUDIO] Music SoundGroup is unavailable; frontend soundtrack will remain silent.")
+	end
+	return soundtrack
+end
+
+local function observeAssetReadiness()
+	local observedSound = soundtrack
+	task.delay(MusicConfig.FrontendSoundtrack.AssetObservationSeconds, function()
+		if warnedAssetUnavailable or observedSound ~= soundtrack or not observedSound.Parent then return end
+		if RunService:IsStudio() and not observedSound.IsLoaded then
+			warnedAssetUnavailable = true
+			warn("[BLIKK AUDIO] Frontend soundtrack has not loaded; frontend remains available.")
+		end
+	end)
+end
+
+function MusicController:SetFrontendActive(active)
+	active = active == true
+	if isFrontendActive == active
+		and (active and (state == "Playing" or state == "FadingIn")
+			or not active and (state == "PausedForGameplay" or state == "FadingOut")) then
+		return
+	end
+	isFrontendActive = active
+	ensureSoundtrack()
+	local config = MusicConfig.FrontendSoundtrack
+	if active then
+		local wasPaused = state == "PausedForGameplay"
+		cancelFade()
+		if wasPaused and config.ResumeOnFrontendReturn then
+			soundtrack:Resume()
+		elseif not soundtrack.IsPlaying then
+			soundtrack:Play()
+		end
+		state = "FadingIn"
+		beginFade(config.VolumeMultiplier, config.FadeInSeconds, function()
+			state = "Playing"
+			diagnose("frontend soundtrack active")
+		end)
+	elseif state ~= "Stopped" and state ~= "PausedForGameplay" then
+		state = "FadingOut"
+		beginFade(0, config.FadeOutSeconds, function()
+			soundtrack:Pause()
+			state = "PausedForGameplay"
+			diagnose("frontend soundtrack paused for gameplay")
+		end)
+	end
 end
 
 function MusicController:SetContext(contextName)
-	if currentContext == contextName then return end
-	if not MusicConfig.Contexts[contextName] then return end
-	currentContext = contextName
-	transitionGeneration += 1
-	local generation = transitionGeneration
-	disconnectEnded()
-	if fadingSound then destroySound(fadingSound); fadingSound = nil end
+	self:SetFrontendActive(contextName == "CharacterSelection" or contextName == "OperationsHub")
+end
 
-	local outgoing = currentSound
-	currentSound = nil
-	if not outgoing then
-		playContext(contextName, generation)
-		return
-	end
-	fadingSound = outgoing
-	local tween = TweenService:Create(
-		outgoing,
-		TweenInfo.new(MusicConfig.CrossfadeDurationSeconds * 0.5, Enum.EasingStyle.Linear),
-		{ Volume = 0 }
-	)
-	tween.Completed:Connect(function()
-		destroySound(outgoing)
-		if fadingSound == outgoing then fadingSound = nil end
-		if generation == transitionGeneration then playContext(contextName, generation) end
-	end)
-	tween:Play()
+function MusicController:GetState()
+	return state
 end
 
 function MusicController:Init(navigationController)
 	if isInitialised then return end
 	isInitialised = true
-	navigationController.Changed.Event:Connect(function(route)
-		local contextName = MusicConfig.RouteContexts[route]
-		if contextName then self:SetContext(contextName) end
+	ensureSoundtrack()
+	observeAssetReadiness()
+	navigationConnection = navigationController.Changed.Event:Connect(function(route)
+		if MusicConfig.FrontendRoutes[route] then self:SetFrontendActive(true) end
+	end)
+	destroyingConnection = script.Destroying:Connect(function()
+		cancelFade()
+		if navigationConnection then navigationConnection:Disconnect(); navigationConnection = nil end
+		if destroyingConnection then destroyingConnection:Disconnect(); destroyingConnection = nil end
 	end)
 end
 

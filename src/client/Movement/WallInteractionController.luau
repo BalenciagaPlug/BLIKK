@@ -5,6 +5,8 @@ local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage.Shared.Movement.TechniqueConfig).Wall
+local PoseCoordinator = require(script.Parent.Parent.Character.PoseCoordinator)
+local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
 
 local Controller = {}
 Controller.StateChanged = Instance.new("BindableEvent")
@@ -24,31 +26,17 @@ local contactSide = "Forward"
 local queryAccumulator = 0
 local gameplayEnabled = true
 local inputSuppressed = false
-local poseJoints = {}
-local ownedJoints = {}
 local poseTargets = {}
 local characterConnections = {}
 local isInitialised = false
-
-local jointNames = {
-	RootJoint = "Root",
-	Waist = "Waist",
-	LeftShoulder = "LeftShoulder",
-	RightShoulder = "RightShoulder",
-	LeftHip = "LeftHip",
-	RightHip = "RightHip",
-}
+local characterGeneration = 0
 
 local function diagnose(message)
 	if Config.DiagnosticsEnabled then print("[BLIKK WALL SENSOR] " .. message) end
 end
 
 local function resetOwnedPose()
-	for alias in ownedJoints do
-		local joint = poseJoints[alias]
-		if joint and joint.Parent then joint.Transform = CFrame.identity end
-	end
-	table.clear(ownedJoints)
+	PoseCoordinator:Release("Wall")
 end
 
 local function clearContact()
@@ -56,6 +44,16 @@ local function clearContact()
 	contactNormal = Vector3.zero
 	contactSide = "Forward"
 	if movementEngine then movementEngine:ClearWallContact() end
+end
+
+local function clearPresentationState()
+	local changed = state ~= "None"
+	state = "None"
+	clearContact()
+	resetOwnedPose()
+	if changed then
+		Controller.StateChanged:Fire("None", "Forward", Vector3.zero, nil)
+	end
 end
 
 local function isVerticalSurface(result)
@@ -151,16 +149,6 @@ local function updateWallQuery(deltaTime)
 	})
 end
 
-local function bindPoseJoints()
-	table.clear(poseJoints)
-	for _, descendant in character:GetDescendants() do
-		if descendant:IsA("Motor6D") then
-			local alias = jointNames[descendant.Name:gsub(" ", "")]
-			if alias then poseJoints[alias] = descendant end
-		end
-	end
-end
-
 local function applyWallPose()
 	local isRun = state == "VerticalWallRun" or state == "HorizontalWallRun"
 	local isJump = state == "WallJumpRecovery"
@@ -188,26 +176,33 @@ local function applyWallPose()
 		0,
 		math.rad(side * presentation.ContactHipRollDegrees)
 	)
-	resetOwnedPose()
-	for alias, pose in poseTargets do
-		local joint = poseJoints[alias]
-		if joint then joint.Transform = pose; ownedJoints[alias] = true end
-	end
+	PoseCoordinator:Submit("Wall", 30, poseTargets)
 end
 
 local function bindCharacter(nextCharacter)
+	characterGeneration += 1
+	local bindGeneration = characterGeneration
 	for _, connection in characterConnections do connection:Disconnect() end
 	table.clear(characterConnections)
-	clearContact()
-	resetOwnedPose()
-	character = nextCharacter
-	humanoid = character:WaitForChild("Humanoid")
-	rootPart = character:WaitForChild("HumanoidRootPart")
+	clearPresentationState()
+	raycastParams.FilterDescendantsInstances = {}
+	character, humanoid, rootPart = nil, nil, nil
+	local dependencyDeadline = os.clock() + MultiplayerConfig.CharacterDependencyTimeoutSeconds
+	local nextHumanoid = nextCharacter:FindFirstChild("Humanoid")
+		or nextCharacter:WaitForChild("Humanoid", math.max(0, dependencyDeadline - os.clock()))
+	local nextRootPart = nextCharacter:FindFirstChild("HumanoidRootPart")
+		or nextCharacter:WaitForChild("HumanoidRootPart", math.max(0, dependencyDeadline - os.clock()))
+	if bindGeneration ~= characterGeneration or player.Character ~= nextCharacter
+		or not nextHumanoid or not nextHumanoid:IsA("Humanoid")
+		or not nextRootPart or not nextRootPart:IsA("BasePart") then return end
+	character, humanoid, rootPart = nextCharacter, nextHumanoid, nextRootPart
 	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
 	raycastParams.FilterDescendantsInstances = { character }
 	raycastParams.IgnoreWater = true
-	bindPoseJoints()
-	table.insert(characterConnections, humanoid.Died:Connect(function() clearContact(); resetOwnedPose() end))
+	character:SetAttribute("BLIKK_ClientWallReady", true)
+	table.insert(characterConnections, humanoid.Died:Connect(function()
+		if bindGeneration == characterGeneration then clearPresentationState() end
+	end))
 end
 
 function Controller:GetState()
@@ -240,19 +235,20 @@ function Controller:Init(inputManager, movementEngineValue, gameplayCamera)
 	end)
 	inputManager.GameplayEnabledChanged.Event:Connect(function(enabled)
 		gameplayEnabled = enabled
-		if not enabled then clearContact(); resetOwnedPose() end
+		if not enabled then clearPresentationState() end
 	end)
 	inputManager.SuppressionChanged.Event:Connect(function(suppressed)
 		inputSuppressed = suppressed
-		if suppressed then clearContact(); resetOwnedPose() end
+		if suppressed then clearPresentationState() end
 	end)
 	player.CharacterAdded:Connect(bindCharacter)
 	player.CharacterRemoving:Connect(function(removingCharacter)
 		if removingCharacter ~= character then return end
+		characterGeneration += 1
 		for _, connection in characterConnections do connection:Disconnect() end
 		table.clear(characterConnections)
-		clearContact()
-		resetOwnedPose()
+		clearPresentationState()
+		raycastParams.FilterDescendantsInstances = {}
 		character, humanoid, rootPart = nil, nil, nil
 	end)
 	if player.Character then bindCharacter(player.Character) end

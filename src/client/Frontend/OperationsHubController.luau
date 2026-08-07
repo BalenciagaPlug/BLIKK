@@ -4,6 +4,7 @@ local UserInputService = game:GetService("UserInputService")
 local Branding = require(ReplicatedStorage.Shared.Branding.Branding)
 local CharacterPreviewController = require(script.Parent.CharacterPreviewController)
 local FrontendLayout = require(script.Parent.FrontendLayout)
+local UINavigationController = require(script.Parent.Parent.UI.UINavigationController)
 
 local OperationsHubController = {}
 
@@ -70,6 +71,11 @@ local function makeButton(parent, text, order)
 end
 
 function OperationsHubController:CreatePage(parent, enterMovementLab, openSettings, openMultiplayer, openClans, inputManager)
+	local activationCallbacks = {}
+	local function bindActivation(button, callback)
+		activationCallbacks[button] = callback
+		button.Activated:Connect(callback)
+	end
 	local page = Instance.new("Frame")
 	page.Name = "OperationsHub"
 	page.BackgroundColor3 = COLORS.Background
@@ -170,17 +176,21 @@ function OperationsHubController:CreatePage(parent, enterMovementLab, openSettin
 	howButton.TextXAlignment = Enum.TextXAlignment.Center
 	howButton.ZIndex = 42
 
+	local hubScope = nil
+	local exitScope = nil
 	local function closeExitInstructions()
 		exitOverlay.Visible = false
 		exitInstructions.Text = "Roblox controls session exit.\nPress ESC, then choose Leave."
 		exitInstructions.TextColor3 = COLORS.Muted
+		if exitScope then exitScope:SetActive(false) end
 	end
 	local function openExitInstructions()
 		if exitOverlay.Visible then return end
 		exitOverlay.Visible = true
+		if exitScope then exitScope:SetActive(true) end
 	end
-	returnButton.Activated:Connect(closeExitInstructions)
-	howButton.Activated:Connect(function()
+	bindActivation(returnButton, closeExitInstructions)
+	bindActivation(howButton, function()
 		exitInstructions.Text = "ESC  →  LEAVE\nUse Roblox's own menu to exit safely."
 		exitInstructions.TextColor3 = COLORS.Accent
 	end)
@@ -192,6 +202,7 @@ function OperationsHubController:CreatePage(parent, enterMovementLab, openSettin
 	end)
 
 	local sections = {}
+	local mainButtons = {}
 	local function register(name, description, action)
 		sections[name] = { Description = description, Action = action }
 	end
@@ -205,7 +216,8 @@ function OperationsHubController:CreatePage(parent, enterMovementLab, openSettin
 
 	for index, name in { "MULTIPLAYER", "MOVEMENT LAB", "CLANS", "SHOP", "INVENTORY", "CHARACTER", "SETTINGS", "EXIT" } do
 		local button = makeButton(menu, name, index)
-		button.Activated:Connect(function()
+		mainButtons[name] = button
+		bindActivation(button, function()
 			if name == "EXIT" then openExitInstructions(); return end
 			local section = sections[name]
 			contentTitle.Text = name
@@ -216,10 +228,29 @@ function OperationsHubController:CreatePage(parent, enterMovementLab, openSettin
 		end)
 	end
 
+	hubScope = UINavigationController:CreateScope("OperationsHub", {
+		Root = page,
+		Default = mainButtons.MULTIPLAYER,
+		Back = openExitInstructions,
+	})
+	for button, callback in activationCallbacks do
+		if not button:IsDescendantOf(exitOverlay) then
+			hubScope:Register(button, { Activate = callback })
+		end
+	end
+	exitScope = UINavigationController:CreateScope("OperationsHubExit", {
+		Root = exitOverlay,
+		Default = returnButton,
+		Back = closeExitInstructions,
+	})
+	exitScope:Register(returnButton, { Activate = activationCallbacks[returnButton] })
+	exitScope:Register(howButton, { Activate = activationCallbacks[howButton] })
+
 	local currentProfile = nil
 	local object = {}
 	function object:SetVisible(visible, profile)
 		page.Visible = visible
+		hubScope:SetActive(visible)
 		if visible then
 			currentProfile = profile or currentProfile
 			contentTitle.Text = currentProfile and currentProfile.Name:upper() or "OPERATIONS HUB"

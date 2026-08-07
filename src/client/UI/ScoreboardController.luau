@@ -1,11 +1,14 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local StarterGui = game:GetService("StarterGui")
+local Workspace = game:GetService("Workspace")
 
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 
 local UIStyle = require(script.Parent.UIStyle)
 local Branding = require(ReplicatedStorage.Shared.Branding.Branding)
+local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
+local UINavigationController = require(script.Parent.UINavigationController)
 
 local ScoreboardController = {}
 
@@ -24,6 +27,9 @@ local mapLabel = nil
 local scoreLabel = nil
 local scoreboardStatus = nil
 local pendingReportUserId = nil
+local scoreboardScope = nil
+local playerRows = {}
+local reportRemote = nil
 
 local function createLabel(parent, text, position, size, textSize, color, alignment)
 	local label = Instance.new("TextLabel")
@@ -48,12 +54,14 @@ end
 
 local function updateVisible()
 	panel.Visible = isGameplayEnabled and isScoreboardHeld
+	if scoreboardScope then scoreboardScope:SetActive(panel.Visible) end
 end
 
 local function rebuildPlayers()
 	for _, child in playerList:GetChildren() do
 		child:Destroy()
 	end
+	table.clear(playerRows)
 
 	local players = latestMatch and latestMatch.Stats or {}
 	if not latestMatch and latestRoom then
@@ -70,14 +78,20 @@ local function rebuildPlayers()
 		row.Position = UDim2.fromOffset(0, (index - 1) * 36)
 		row.Size = UDim2.new(1, 0, 0, 32)
 		row.Parent = playerList
-		row.Activated:Connect(function()
+		table.insert(playerRows, row)
+		local function activatePlayerReport()
 			if listedPlayer.UserId == Players.LocalPlayer.UserId then return end
 			if pendingReportUserId ~= listedPlayer.UserId then pendingReportUserId = listedPlayer.UserId; scoreboardStatus.Text = "CLICK PLAYER AGAIN TO CONFIRM UNSPORTING-BEHAVIOR REPORT // " .. listedPlayer.DisplayName; return end
 			pendingReportUserId = nil
-			local reportRemote = ReplicatedStorage:WaitForChild("BLIKKRemotes"):WaitForChild("ReportRequest")
+			if not reportRemote then scoreboardStatus.Text = "REPORT FAILED // SERVICE UNAVAILABLE"; return end
 			local ok, result = pcall(reportRemote.InvokeServer, reportRemote, { TargetUserId = listedPlayer.UserId, ReasonCode = "UnsportingBehavior", Note = "" })
 			scoreboardStatus.Text = ok and result.Success and ("REPORT RECEIVED // " .. result.ReportId) or ("REPORT FAILED // " .. tostring(ok and result.Code or "SERVICE"))
-		end)
+		end
+		row.Activated:Connect(activatePlayerReport)
+		if scoreboardScope then scoreboardScope:Register(row, {
+			Activate = activatePlayerReport,
+			IsEnabled = function() return listedPlayer.UserId ~= Players.LocalPlayer.UserId end,
+		}) end
 		local identity = (listedPlayer.RoomLeader and "◆ " or "") .. (listedPlayer.ClanTag and "[" .. listedPlayer.ClanTag .. "] " or "") .. listedPlayer.DisplayName
 		createLabel(row, identity, UDim2.fromOffset(10, 6), UDim2.new(0.30, -10, 0, 20), 12, colors.Text)
 		createLabel(
@@ -93,16 +107,22 @@ local function rebuildPlayers()
 		createLabel(row, tostring(deaths), UDim2.new(0.48, 0, 0, 6), UDim2.new(0.06, 0, 0, 20), 11, colors.TextMuted)
 		createLabel(row, string.format("%.2f", deaths > 0 and kills / deaths or kills), UDim2.new(0.54, 0, 0, 6), UDim2.new(0.08, 0, 0, 20), 11, colors.TextMuted)
 		createLabel(row, tostring(listedPlayer.Score or 0), UDim2.new(0.62, 0, 0, 6), UDim2.new(0.10, 0, 0, 20), 11, colors.TextMuted)
-		local state = listedPlayer.State or (listedPlayer.IsSpectating and "SPECTATING" or listedPlayer.IsAlive == false and "DEAD" or "ALIVE")
+		local state = listedPlayer.State or listedPlayer.PreparationPhase
+			or (listedPlayer.IsSpectating and "SPECTATING" or listedPlayer.IsAlive == false and "DEAD" or "ALIVE")
 		createLabel(row, state, UDim2.new(0.72, 0, 0, 6), UDim2.new(0.16, 0, 0, 20), 9, colors.TextMuted)
 		createLabel(row, tostring(listedPlayer.PingMilliseconds or 0), UDim2.new(0.88, 0, 0, 6), UDim2.new(0.12, -8, 0, 20), 11, colors.TextMuted)
 	end
 
 	playerList.CanvasSize = UDim2.fromOffset(0, #players * 36)
+	if scoreboardScope and scoreboardScope:IsActive() then scoreboardScope:Refresh(playerRows[1]) end
 end
 
 local function createInterface()
-	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+	local playerGui = Players.LocalPlayer:WaitForChild(
+		"PlayerGui",
+		MultiplayerConfig.CharacterDependencyTimeoutSeconds
+	)
+	if not playerGui then error("PlayerGui was unavailable during scoreboard initialization") end
 	local screenGui = Instance.new("ScreenGui")
 	screenGui.Name = "BLIKKScoreboard"
 	screenGui.DisplayOrder = UIStyle.DisplayOrders.Settings - 1
@@ -174,6 +194,19 @@ local function createInterface()
 		colors.TextMuted
 	)
 	screenGui.Parent = playerGui
+	scoreboardScope = UINavigationController:CreateScope("ScoreboardReportTargets", {
+		Root = panel,
+		Default = function() return playerRows[1] end,
+		Back = function()
+			if pendingReportUserId then
+				pendingReportUserId = nil
+				scoreboardStatus.Text = "SERVER-CONFIRMED MATCH STATISTICS"
+			else
+				isScoreboardHeld = false
+				updateVisible()
+			end
+		end,
+	})
 	rebuildPlayers()
 end
 
@@ -188,6 +221,23 @@ function ScoreboardController:Init(inputManager)
 		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
 	end)
 	createInterface()
+	local remotes = ReplicatedStorage:WaitForChild(
+		"BLIKKRemotes",
+		MultiplayerConfig.RemoteLookupTimeoutSeconds
+	)
+	local matchRemote = remotes and remotes:WaitForChild(
+		"MatchUpdated",
+		MultiplayerConfig.RemoteLookupTimeoutSeconds
+	)
+	local roomRemote = remotes and remotes:WaitForChild(
+		"RoomUpdated",
+		MultiplayerConfig.RemoteLookupTimeoutSeconds
+	)
+	reportRemote = remotes and remotes:WaitForChild(
+		"ReportRequest",
+		MultiplayerConfig.RemoteLookupTimeoutSeconds
+	)
+	if reportRemote and not reportRemote:IsA("RemoteFunction") then reportRemote = nil end
 
 	inputManager.ActionBegan.Event:Connect(function(action)
 		if action == "Scoreboard" then
@@ -210,25 +260,39 @@ function ScoreboardController:Init(inputManager)
 	end)
 	Players.PlayerAdded:Connect(rebuildPlayers)
 	Players.PlayerRemoving:Connect(rebuildPlayers)
-	ReplicatedStorage:WaitForChild("BLIKKRemotes"):WaitForChild("MatchUpdated").OnClientEvent:Connect(function(snapshot)
+	if matchRemote and matchRemote:IsA("RemoteEvent") then matchRemote.OnClientEvent:Connect(function(snapshot)
+		if snapshot.Cleared then
+			if latestMatch and snapshot.MatchId and latestMatch.MatchId ~= snapshot.MatchId then return end
+			latestMatch = nil
+			if latestRoom and latestRoom.RoomId == snapshot.RoomId then latestRoom = nil end
+			rebuildPlayers()
+			return
+		end
 		latestMatch = snapshot
 		modeLabel.Text = "MODE // " .. snapshot.ModeId:upper()
 		mapLabel.Text = "MAP // " .. snapshot.MapId:upper()
 		scoreLabel.Text = string.format("ROUND %d // %d-%d", snapshot.Round or 1, snapshot.TeamScores.ALPHA or 0, snapshot.TeamScores.OMEGA or 0)
 		rebuildPlayers()
-	end)
-	ReplicatedStorage.BLIKKRemotes:WaitForChild("RoomUpdated").OnClientEvent:Connect(function(snapshot)
-		if snapshot.Warning or not snapshot.RoomId then return end
+	end) end
+	if roomRemote and roomRemote:IsA("RemoteEvent") then roomRemote.OnClientEvent:Connect(function(snapshot)
+		if snapshot.Warning then
+			if snapshot.Warning == "REMOVED_FROM_ROOM" then latestRoom = nil; latestMatch = nil; rebuildPlayers() end
+			return
+		end
+		if not snapshot.RoomId then return end
 		latestRoom = snapshot
 		if snapshot.State == "Lobby" then latestMatch = nil end
 		modeLabel.Text = "MODE // " .. snapshot.Config.ModeId:upper(); mapLabel.Text = "MAP // " .. snapshot.Config.MapId:upper(); scoreLabel.Text = snapshot.State:upper(); rebuildPlayers()
-	end)
+	end) end
+	if not matchRemote or not roomRemote or not reportRemote then
+		warn("[BLIKK SCOREBOARD] One or more multiplayer remotes were unavailable during bootstrap.")
+	end
 
 	task.spawn(function()
 		while true do
 			local elapsed = math.floor(os.clock() - startedAt)
-			if latestMatch and latestMatch.EndsAtUnix and latestMatch.EndsAtUnix > 0 then
-				local remaining = math.max(0, latestMatch.EndsAtUnix - os.time())
+			if latestMatch and latestMatch.EndsAtServerTime and latestMatch.EndsAtServerTime > 0 then
+				local remaining = math.max(0, math.ceil(latestMatch.EndsAtServerTime - Workspace:GetServerTimeNow()))
 				elapsedLabel.Text = string.format("TIME // %02d:%02d", math.floor(remaining / 60), remaining % 60)
 			else elapsedLabel.Text = string.format("ELAPSED // %02d:%02d", math.floor(elapsed / 60), elapsed % 60) end
 			task.wait(1)

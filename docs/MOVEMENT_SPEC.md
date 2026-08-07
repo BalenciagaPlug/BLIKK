@@ -31,9 +31,9 @@ The client movement owner models `Grounded`, `JumpRising`, `AirborneFree`, groun
 
 Directional double taps activate a camera-relative dash. Direction is captured on the accepted second tap and cannot bend during travel. Ground and air dashes have separate distance and cooldown values. One air dash is currently available before landing. Vertical momentum is preserved at activation.
 
-Current provisional values are 14.5 studs ground distance, 13 studs air distance, a 0.25-second double-tap window, 0.24-second ground cooldown, and 0.30-second air cooldown. Entry, travel, and exit last 0.035, 0.115, and 0.085 seconds. These are playtest values, not permanent balance.
+Current provisional values are 18.125 studs ground distance, 16.25 studs air distance, a 0.25-second double-tap window, 0.24-second ground cooldown, and 0.30-second air cooldown. Entry, travel, and exit remain 0.035, 0.115, and 0.085 seconds. These are playtest values, not permanent balance.
 
-The intended result is immediate, explosive, addictive, repeatable, readable, and suitable for future K-style chaining. Animation, effects, and camera impulses remain independent from dash validity.
+The intended result is immediate, explosive, addictive, repeatable, readable, and suitable for future K-style chaining. Animation, effects, and audio remain independent from dash validity. Dash does not modify the configured camera FOV.
 
 ## 7. Jump and Air Control
 

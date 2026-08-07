@@ -1,4 +1,6 @@
 local TechniqueConfig = {
+	WeaponTechniqueDiagnosticsEnabled = false,
+	SemanticHistoryMaximumEntries = 32,
 	CancelProfiles = {
 		TrainingKatana = {
 			AnticipationSeconds = 0.025,
@@ -11,6 +13,7 @@ local TechniqueConfig = {
 			LandingForgivenessSeconds = 0.070,
 			AirActionForgivenessSeconds = 0.060,
 			RepeatedSequenceLockoutSeconds = 0.045,
+			SequenceResetSeconds = 0.65,
 			LateBlockPolicy = "AfterRecovery",
 		},
 	},
@@ -67,18 +70,18 @@ local TechniqueConfig = {
 			MaximumHeightCharacterScale = 1.0,
 		},
 		UpwardSpeedStudsPerSecond = 50,
-		OutwardSpeedStudsPerSecond = 32,
+		OutwardSpeedStudsPerSecond = 48,
 		DirectionalInfluenceStudsPerSecond = 12,
 		RetainedTangentialVelocityScale = 0.65,
 		MinimumOutwardRetentionScale = 0.50,
 		AutomaticVerticalExit = {
 			UpwardSpeedStudsPerSecond = 38,
-			OutwardSpeedStudsPerSecond = 28,
+			OutwardSpeedStudsPerSecond = 42,
 			TangentialRetentionScale = 0.60,
 		},
 		AutomaticHorizontalExit = {
 			UpwardSpeedStudsPerSecond = 33,
-			OutwardSpeedStudsPerSecond = 25,
+			OutwardSpeedStudsPerSecond = 37.5,
 			TangentialRetentionScale = 0.75,
 		},
 		RecoveryDurationSeconds = 0.18,

@@ -3,6 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local ActionBuffer = require(ReplicatedStorage.Shared.Input.ActionBuffer)
+local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
 local MovementConfig = require(script.Parent.MovementConfig)
 local WallConfig = require(script.Parent.TechniqueConfig).Wall
 
@@ -185,6 +186,28 @@ local function finishDash(interrupted)
 	elseif not isWallState(movementState) then
 		setMovementState("AirborneFree")
 	end
+end
+
+local function cancelOwnedMovement()
+	finishDash(true)
+
+	if wallContact then
+		lastWall = wallContact.Part
+		lastWallNormal = wallContact.Normal
+		lastWallPoint = wallContact.Position
+		lastWallActionAt = os.clock()
+		hasSeparatedFromLastWall = false
+	end
+
+	wallContact = nil
+	wallRun = nil
+	lastWallContactAt = -math.huge
+	returnDashAvailable = false
+	returnDashExpiresAt = -math.huge
+
+	local isGrounded = humanoid and humanoid.Health > 0
+		and humanoid.FloorMaterial ~= Enum.Material.Air
+	setMovementState(if isGrounded then "Grounded" else "AirborneFree")
 end
 
 local function stepDash(deltaTime)
@@ -491,8 +514,14 @@ local function heartbeat(deltaTime)
 	local grounded = humanoid.FloorMaterial ~= Enum.Material.Air
 	if grounded then
 		lastGroundedAt = now
-		if ActionBuffer:Consume("Jump", jumpConfig.InputBufferSeconds, now) then acceptGroundJump(now) end
 	end
+	if not gameplayEnabled or inputSuppressed then
+		if dashState or isWallState(movementState) or movementState == "WallReturnDash" then
+			cancelOwnedMovement()
+		end
+		return
+	end
+	if grounded and ActionBuffer:Consume("Jump", jumpConfig.InputBufferSeconds, now) then acceptGroundJump(now) end
 	stepDash(deltaTime)
 	if not dashState then stepWall(now) end
 end
@@ -590,11 +619,32 @@ end
 
 function MovementEngine:BindCharacter(nextCharacter)
 	generation += 1
+	local bindGeneration = generation
 	finishDash(true)
 	if stateConnection then stateConnection:Disconnect() end
-	character = nextCharacter
-	humanoid = character:WaitForChild("Humanoid")
-	rootPart = character:WaitForChild("HumanoidRootPart")
+	stateConnection = nil
+	wallContact, wallRun, lastWall = nil, nil, nil
+	lastWallNormal, lastWallPoint = Vector3.zero, Vector3.zero
+	lastWallContactAt, lastWallActionAt = -math.huge, -math.huge
+	hasSeparatedFromLastWall = false
+	returnDashAvailable, returnDashExpiresAt = false, -math.huge
+	setMovementState("AirborneFree")
+	character, humanoid, rootPart = nil, nil, nil
+	local dependencyDeadline = os.clock() + MultiplayerConfig.CharacterDependencyTimeoutSeconds
+	local nextHumanoid = nextCharacter:FindFirstChild("Humanoid")
+		or nextCharacter:WaitForChild("Humanoid", math.max(0, dependencyDeadline - os.clock()))
+	local nextRootPart = nextCharacter:FindFirstChild("HumanoidRootPart")
+		or nextCharacter:WaitForChild("HumanoidRootPart", math.max(0, dependencyDeadline - os.clock()))
+	local player = Players.LocalPlayer
+	if bindGeneration ~= generation or player.Character ~= nextCharacter
+		or not nextHumanoid or not nextHumanoid:IsA("Humanoid")
+		or not nextRootPart or not nextRootPart:IsA("BasePart") then
+		if bindGeneration == generation and player.Character == nextCharacter then
+			warn("[BLIKK MOVEMENT] Character bind timed out waiting for required dependencies.")
+		end
+		return
+	end
+	character, humanoid, rootPart = nextCharacter, nextHumanoid, nextRootPart
 	humanoid.WalkSpeed = MovementConfig.Ground.WalkSpeedStudsPerSecond
 	humanoid.UseJumpPower = false
 	humanoid.JumpHeight = jumpConfig.HeightStuds
@@ -605,6 +655,7 @@ function MovementEngine:BindCharacter(nextCharacter)
 	measureCharacter()
 	setMovementState(if humanoid.FloorMaterial == Enum.Material.Air then "AirborneFree" else "Grounded")
 	stateConnection = humanoid.StateChanged:Connect(function(_, newState)
+		if bindGeneration ~= generation or character ~= nextCharacter then return end
 		if newState == Enum.HumanoidStateType.Landed or newState == Enum.HumanoidStateType.Running then
 			local wasAirborne = movementState ~= "Grounded"
 			airDashCount = 0
@@ -617,6 +668,7 @@ function MovementEngine:BindCharacter(nextCharacter)
 			setMovementState("AirborneFree")
 		end
 	end)
+	character:SetAttribute("BLIKK_ClientMovementReady", true)
 end
 
 function MovementEngine:Init(inputManager, gameplayCamera)
@@ -624,16 +676,37 @@ function MovementEngine:Init(inputManager, gameplayCamera)
 	isInitialised, cameraController = true, gameplayCamera
 	local player = Players.LocalPlayer
 	player.CharacterAdded:Connect(function(nextCharacter) self:BindCharacter(nextCharacter) end)
+	player.CharacterRemoving:Connect(function(removingCharacter)
+		if removingCharacter ~= character then return end
+		generation += 1
+		finishDash(true)
+		if stateConnection then stateConnection:Disconnect(); stateConnection = nil end
+		wallContact, wallRun, lastWall = nil, nil, nil
+		lastWallNormal, lastWallPoint = Vector3.zero, Vector3.zero
+		lastWallContactAt, lastWallActionAt = -math.huge, -math.huge
+		hasSeparatedFromLastWall = false
+		returnDashAvailable, returnDashExpiresAt = false, -math.huge
+		setMovementState("AirborneFree")
+		character, humanoid, rootPart = nil, nil, nil
+		heldDirections, lastDirectionPress = {}, {}
+		airDashCount, lastDashTime, lastGroundedAt = 0, -math.huge, -math.huge
+	end)
 	if player.Character then self:BindCharacter(player.Character) end
 	inputManager.ActionBegan.Event:Connect(function(action, timestamp) self:HandleAction(action, timestamp) end)
 	inputManager.ActionEnded.Event:Connect(function(action) self:HandleActionEnded(action) end)
 	inputManager.GameplayEnabledChanged.Event:Connect(function(enabled)
 		gameplayEnabled = enabled
-		if not enabled then heldDirections, lastDirectionPress = {}, {}; finishDash(true) end
+		if not enabled then
+			heldDirections, lastDirectionPress = {}, {}
+			cancelOwnedMovement()
+		end
 	end)
 	inputManager.SuppressionChanged.Event:Connect(function(suppressed)
 		inputSuppressed = suppressed
-		if suppressed then heldDirections, lastDirectionPress = {}, {}; finishDash(true) end
+		if suppressed then
+			heldDirections, lastDirectionPress = {}, {}
+			cancelOwnedMovement()
+		end
 	end)
 	RunService.Heartbeat:Connect(heartbeat)
 	RunService:BindToRenderStep("BLIKKSemanticWalking", Enum.RenderPriority.Input.Value + 1, updateWalking)

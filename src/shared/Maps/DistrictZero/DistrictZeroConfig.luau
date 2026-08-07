@@ -17,8 +17,8 @@ local DistrictZeroConfig = {
 		HighestPlayablePointStuds = 106,
 	},
 	MovementStandards = {
-		GroundDashStuds = 14.5,
-		AirDashStuds = 13,
+		GroundDashStuds = 18.125,
+		AirDashStuds = 16.25,
 		MainStreetWidthStuds = { 40, 48 },
 		StandardStreetWidthStuds = { 32, 38 },
 		MinorStreetWidthStuds = { 26, 30 },
@@ -32,7 +32,7 @@ local DistrictZeroConfig = {
 		ParapetHeightStuds = { 3, 4.5 },
 		InteriorCeilingStuds = { 11, 18 },
 		WallJumpSurfaceStuds = { Small = 14, Standard = 18, Tall = 28, Landmark = 40 },
-		RoofGapsStuds = { Easy = 5, Committed = 7, DashAssisted = 11, AirDash = 13, GroundDashEquivalent = 14.5, Advanced = 21, Future = 28 },
+		RoofGapsStuds = { Easy = 5, Committed = 7, DashAssisted = 11, AirDash = 16.25, GroundDashEquivalent = 18.125, Advanced = 21, Future = 28 },
 		RoofHeightTransitionsStuds = { 2, 4, 6, 10, 13 },
 	},
 	Buildings = {

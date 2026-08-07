@@ -1,6 +1,8 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local LoadingScreenConfig = require(ReplicatedStorage.Shared.UI.LoadingScreenConfig)
+
 local CharacterCreationController = require(script.Parent.CharacterCreationController)
 local CharacterProfilesController = require(script.Parent.CharacterProfilesController)
 local ClanController = require(script.Parent.ClanController)
@@ -11,26 +13,33 @@ local SplashScreenController = require(script.Parent.SplashScreenController)
 
 local FrontendController = {}
 
-local REMOTE_LOOKUP_TIMEOUT_SECONDS = 5
 local isInitialised = false
 local isInGameplay = false
 local hasWarnedMissingSpawnRemote = false
 local frontendGui = nil
-local inputManagerReference = nil
 local gameplayCameraReference = nil
 local settingsControllerReference = nil
 local chatControllerReference = nil
+local multiplayerPageReference = nil
+local matchPreparationControllerReference = nil
+local musicControllerReference = nil
 
 local function setFrontendActive(isActive)
 	frontendGui.Enabled = isActive
-	inputManagerReference:SetGameplayEnabled(not isActive)
 	gameplayCameraReference:SetGameplayActive(not isActive)
-	gameplayCameraReference:SetInterfaceOpen(isActive)
 	settingsControllerReference:SetFrontendActive(isActive)
+	musicControllerReference:SetFrontendActive(isActive)
 end
 
 function FrontendController:ReturnToOperationsHub()
-	if not isInitialised or not isInGameplay then return false end
+	if not isInitialised then return false end
+	if multiplayerPageReference and multiplayerPageReference:HasCurrentRoom() then
+		return multiplayerPageReference:LeaveCurrentRoom()
+	end
+	if not isInGameplay then return false end
+	if matchPreparationControllerReference then
+		matchPreparationControllerReference:ExitMovementLab()
+	end
 	isInGameplay = false
 	setFrontendActive(true)
 	chatControllerReference:SetContext("Hidden")
@@ -38,17 +47,28 @@ function FrontendController:ReturnToOperationsHub()
 	return true
 end
 
-function FrontendController:Init(inputManager, gameplayCamera, fighterController, settingsController, musicController, chatController)
+function FrontendController:Init(
+	inputManager,
+	gameplayCamera,
+	fighterController,
+	settingsController,
+	musicController,
+	chatController,
+	matchPreparationController,
+	spectatorReplayController
+)
 	if isInitialised then return end
 	isInitialised = true
-	inputManagerReference = inputManager
 	gameplayCameraReference = gameplayCamera
 	settingsControllerReference = settingsController
 	chatControllerReference = chatController
+	matchPreparationControllerReference = matchPreparationController
+	musicControllerReference = musicController
 	inputManager:SetGameplayEnabled(false)
 	gameplayCamera:SetInterfaceOpen(true)
 
-	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+	local playerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
+	if not playerGui then error("[BLIKK FRONTEND] PlayerGui was unavailable after bootstrap", 0) end
 	local existing = playerGui:FindFirstChild("BLIKKFrontend")
 	if existing then existing:Destroy() end
 	frontendGui = Instance.new("ScreenGui")
@@ -58,10 +78,7 @@ function FrontendController:Init(inputManager, gameplayCamera, fighterController
 
 	local function enterMovementLab()
 		if isInGameplay then return end
-		local remotes = ReplicatedStorage:WaitForChild("BLIKKRemotes", REMOTE_LOOKUP_TIMEOUT_SECONDS)
-		local requestSpawn = remotes
-			and remotes:WaitForChild("RequestMovementLabSpawn", REMOTE_LOOKUP_TIMEOUT_SECONDS)
-		if not requestSpawn or not requestSpawn:IsA("RemoteEvent") then
+		if not matchPreparationController:BeginMovementLab() then
 			if not hasWarnedMissingSpawnRemote then
 				hasWarnedMissingSpawnRemote = true
 				warn("[BLIKK FRONTEND] Movement Lab is unavailable because its spawn remote did not initialise.")
@@ -72,14 +89,56 @@ function FrontendController:Init(inputManager, gameplayCamera, fighterController
 		NavigationController:Suspend()
 		setFrontendActive(false)
 		chatController:SetContext("Training")
-		requestSpawn:FireServer()
-		musicController:SetContext("MovementLab")
+	end
+
+	local function enterMultiplayerGameplay(matchSnapshot)
+		if isInGameplay then return true end
+		isInGameplay = true
+		NavigationController:Suspend()
+		setFrontendActive(false)
+		chatController:SetContext(if matchSnapshot.ModeId == "Training" then "Training" else "Match")
+		return true
+	end
+
+	local function showMultiplayerRoomLobby()
+		isInGameplay = false
+		setFrontendActive(true)
+		chatController:SetContext("Lobby")
+		NavigationController:GoTo("Multiplayer")
+	end
+
+	local function returnToHubAfterRoomLeave()
+		isInGameplay = false
+		setFrontendActive(true)
+		chatController:SetContext("Hidden")
+		NavigationController:GoTo("OperationsHub", CharacterProfilesController:GetSelectedProfile())
 	end
 
 	NavigationController:Register("Splash", SplashScreenController:Create(frontendGui, NavigationController))
 	NavigationController:Register("Creation", CharacterCreationController:CreatePage(frontendGui, NavigationController))
 	NavigationController:Register("Profiles", CharacterProfilesController:CreatePage(frontendGui, NavigationController, fighterController))
-	NavigationController:Register("Multiplayer", MultiplayerBrowserController:CreatePage(frontendGui, NavigationController))
+	multiplayerPageReference = MultiplayerBrowserController:CreatePage(frontendGui, NavigationController, {
+		EnterGameplay = enterMultiplayerGameplay,
+		MatchUpdated = function(snapshot)
+			spectatorReplayController:AdoptMatchSnapshot(snapshot)
+			matchPreparationController:AdoptMatchSnapshot(snapshot)
+		end,
+		ShowRoomLobby = showMultiplayerRoomLobby,
+		ReturnToHub = returnToHubAfterRoomLeave,
+	})
+	matchPreparationController.TransitionFailed.Event:Connect(function(context)
+		if context ~= "MovementLab" then return end
+		task.delay(
+			LoadingScreenConfig.Timing.FailureDisplaySeconds
+				+ LoadingScreenConfig.Timing.DismissFadeSeconds,
+			function()
+				if isInGameplay and not multiplayerPageReference:HasCurrentRoom() then
+					FrontendController:ReturnToOperationsHub()
+				end
+			end
+		)
+	end)
+	NavigationController:Register("Multiplayer", multiplayerPageReference)
 	NavigationController:Register("Clans", ClanController:CreatePage(frontendGui, NavigationController))
 	NavigationController:Register("OperationsHub", OperationsHubController:CreatePage(
 		frontendGui,

@@ -1,4 +1,6 @@
 local SettingsConfig = {
+	KeyboardSliderCommitDelaySeconds = 0.18,
+
 	AudioDefaults = {
 		MasterVolume = 1,
 		MusicVolume = 0.7,

@@ -11,6 +11,24 @@ local ProfileConfig = {
 	StarterBoots = { "COMBAT BLACK", "COMBAT GREY", "COMBAT OXIDE" },
 	RandomIdleMinimumSeconds = 8,
 	RandomIdleMaximumSeconds = 20,
+	PreviewBounds = {
+		DeveloperPrimitiveFallbackEnabled = false,
+		StabilizationTimeoutSeconds = 0.35,
+		StableSampleCount = 2,
+		PositionToleranceStuds = 0.025,
+		CorePaddingStuds = 1.25,
+		CosmeticMaximumExtentScale = 1.75,
+		CameraPaddingScale = 1.12,
+		MinimumHeightStuds = 3.5,
+		MaximumHeightStuds = 9,
+		MaximumWidthStuds = 8,
+		MaximumDepthStuds = 6,
+		MinimumCameraDistanceStuds = 5,
+		MaximumCameraDistanceStuds = 30,
+		MaximumLimbDistanceFromTorsoScale = 3,
+		MaximumLimbSizeFromTorsoScale = 2.5,
+		DiagnosticsEnabled = false,
+	},
 }
 
 return ProfileConfig

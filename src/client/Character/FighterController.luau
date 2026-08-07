@@ -1,11 +1,13 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Shared = ReplicatedStorage:FindFirstChild("Shared")
+assert(Shared, "Shared must be acquired by the client composition root before FighterController")
 local FighterConfig = require(Shared.Character.FighterConfig)
 local FighterSlots = require(Shared.Character.FighterSlots)
 local StarterLoadout = require(Shared.Equipment.StarterLoadout)
 local WeaponDefinitions = require(Shared.Equipment.WeaponDefinitions)
+local MultiplayerConfig = require(Shared.Multiplayer.MultiplayerConfig)
 
 local FighterController = {}
 FighterController.CharacterBound = Instance.new("BindableEvent")
@@ -61,9 +63,17 @@ end
 local function bindCharacter(character)
 	characterGeneration += 1
 	local generation = characterGeneration
-	local humanoid = character:WaitForChild("Humanoid")
-	local rootPart = character:WaitForChild("HumanoidRootPart")
+	local dependencyDeadline = os.clock() + MultiplayerConfig.CharacterDependencyTimeoutSeconds
+	local humanoid = character:FindFirstChild("Humanoid")
+		or character:WaitForChild("Humanoid", math.max(0, dependencyDeadline - os.clock()))
+	local rootPart = character:FindFirstChild("HumanoidRootPart")
+		or character:WaitForChild("HumanoidRootPart", math.max(0, dependencyDeadline - os.clock()))
 	if generation ~= characterGeneration or character ~= player.Character then
+		return
+	end
+	if not humanoid or not humanoid:IsA("Humanoid")
+		or not rootPart or not rootPart:IsA("BasePart") then
+		warn("[BLIKK CHARACTER] Fighter bind timed out waiting for the accepted character dependencies.")
 		return
 	end
 
@@ -71,6 +81,7 @@ local function bindCharacter(character)
 	fighter.Humanoid = humanoid
 	fighter.RootPart = rootPart
 	publishCharacterState()
+	character:SetAttribute("BLIKK_ClientFighterReady", true)
 	FighterController.CharacterBound:Fire(character, fighter)
 end
 

@@ -88,12 +88,12 @@ Feedback should be subtle.
 
 Examples:
 
-- dash FOV pulse
 - recoil kick
 - landing compression
 - heavy impacts
 
 Camera feedback must never interfere with aiming.
+Dash presentation does not own or offset FOV; the configured player FOV remains unchanged through a dash.
 
 ---
 

@@ -8,7 +8,7 @@ District Zero is built from the approved DZ-001 construction, DZ-002 movement, a
 
 The playable footprint is 500 by 500 studs on a 25-by-25 grid with 20-stud units. Ground level is 0 studs, the canal reaches -24 studs, the station service level reaches -12 studs, and the Clock Tower spire reaches 106 studs. Standard roof heights range from 24 to 50 studs, with Clock Tower play surfaces at 34, 68, and 92 studs.
 
-Street widths follow Movement Standards V1: 40–48 studs for main streets, 32–38 for standard streets, 26–30 for minor streets, 20–24 for service roads, 12–18 for alleys, and 9–11 for opposing-wall channels. Roof gaps range from 5-stud easy jumps through 14.5-stud ground-dash equivalents and 21-stud advanced gaps; 22–28-stud gaps remain future routes.
+Street widths follow Movement Standards V1: 40–48 studs for main streets, 32–38 for standard streets, 26–30 for minor streets, 20–24 for service roads, 12–18 for alleys, and 9–11 for opposing-wall channels. Roof gaps range from 5-stud easy jumps through 18.125-stud ground-dash equivalents and 21-stud advanced gaps; 22–28-stud gaps remain future routes.
 
 ## District Structure
 
@@ -37,7 +37,16 @@ Route metadata marks difficulty, future-only techniques, recovery drops, combat 
 
 ## Safe Spawning
 
-Blueprint spawns A, B, and C are placed at Garage West, Parking Southwest, and Service Southeast. The server ranks them using distance from living players, line-of-sight pressure, recent use, and rotation. Joining, resetting, and every Movement Lab re-entry select a valid spawn and clear linear and angular velocity. Future modes may map these spawn identifiers into team and duel groups.
+Blueprint spawns A, B, and C are placed at Garage West, Parking Southwest, and Service Southeast.
+`DistrictZeroSpawnService` selects the server-owned Training, Duel, free-for-all, or ALPHA/OMEGA
+pool, then ranks candidates using distance from living players, line-of-sight pressure, recent use,
+per-pool rotation, and per-player immediate-repeat history. It exposes the committed ID through
+`BLIKK_LastSpawnId` for Studio inspection and places an already accepted character exactly once. It does not watch
+`CharacterAdded`, set `RespawnLocation`, or request a character. Joining, reset/death respawn, round
+restart, safe join in progress, and Movement Lab re-entry all reach it through the sole server
+`CharacterLifecycleService`, which clears velocity and holds the root until the applicable release.
+OMEGA currently has only `SPAWN_C`; anti-repeat is therefore unavailable for that pool until an
+additional map-authored safe point is approved.
 
 ## Runtime Contract
 

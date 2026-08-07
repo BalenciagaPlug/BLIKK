@@ -13,3 +13,7 @@ BLIKK Chat is a custom presentation layer over Roblox `TextChatService`. It neve
 Movement Lab exposes ALL and SYSTEM presentation contexts. The lobby browser exposes LOBBY and SYSTEM presentation contexts. LOBBY currently uses the filtered general channel because no real lobby transport exists. Future TEAM, CLAN, and WHISPER contexts remain unavailable until supported by real game state.
 
 Chat visibility, opacity, scale, and timestamps are session settings. Gameplay chat defaults to a compact upper-right tab. Enter expands and focuses it; the next Enter sends non-empty text through the Roblox text channel and collapses the panel, while an empty submission simply collapses it. Focusing chat suppresses semantic gameplay input. Chat does not bind Escape, preserving Roblox's menu behavior.
+
+The shared ownership contract is defined in `docs/UI_INPUT_OWNERSHIP.md`.
+Focused text entry owns Return and Backspace first, and an active BLIKK menu
+suppresses Chat so confirmation input cannot open Chat behind a modal.

@@ -5,13 +5,16 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
-local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Shared = ReplicatedStorage:FindFirstChild("Shared")
+assert(Shared, "Shared must be acquired by the client composition root before the gameplay camera")
 local CameraConfig = require(Shared.Camera.CameraConfig)
+local MultiplayerConfig = require(Shared.Multiplayer.MultiplayerConfig)
 local CameraObstruction = require(script.Parent.CameraObstruction)
 local CameraSettings = require(script.Parent.CameraSettings)
 
 local GameplayCamera = {}
 
+local CAMERA_READY_ATTRIBUTE = "BLIKK_ClientCameraReady"
 local player = Players.LocalPlayer
 local isInitialised = false
 local hasWindowFocus = true
@@ -21,14 +24,16 @@ local isCursorReleased = false
 local yawRadians = 0
 local pitchRadians = 0
 local character = nil
+local characterBindingTarget = nil
+local characterBindGeneration = 0
 local humanoid = nil
 local rootPart = nil
 local crosshairGui = nil
 local characterDiedConnection = nil
-local dashFovOffsetDegrees = 0
+local isGameplayRequestedActive = false
 local isGameplayActive = false
+local gameplayBlockers = {}
 local isFreeLookActive = false
-local freeLookHoldCount = 0
 local freeLookYawRadians = 0
 local freeLookPitchRadians = 0
 local freeLookDistanceStuds = CameraConfig.DeveloperFreeLook.FallbackDistanceStuds
@@ -49,7 +54,8 @@ local function createCrosshairLine(name, size, position)
 end
 
 local function createCrosshair()
-	local playerGui = player:WaitForChild("PlayerGui")
+	local playerGui = player:FindFirstChild("PlayerGui")
+	if not playerGui then error("[BLIKK CAMERA] PlayerGui was unavailable after bootstrap", 0) end
 	local existing = playerGui:FindFirstChild("BLIKKCrosshair")
 
 	if existing then
@@ -111,7 +117,6 @@ local function shouldCaptureMouse()
 end
 
 local function cancelFreeLook()
-	freeLookHoldCount = 0
 	if not isFreeLookActive then return end
 	isFreeLookActive = false
 	updateMouseCapture()
@@ -154,6 +159,10 @@ local function getFlatCameraBasis()
 end
 
 local function bindCharacter(newCharacter)
+	characterBindGeneration += 1
+	local bindGeneration = characterBindGeneration
+	characterBindingTarget = newCharacter
+	newCharacter:SetAttribute(CAMERA_READY_ATTRIBUTE, nil)
 	cancelFreeLook()
 	CameraObstruction.Reset()
 	if characterDiedConnection then
@@ -161,9 +170,36 @@ local function bindCharacter(newCharacter)
 		characterDiedConnection = nil
 	end
 
+	character, humanoid, rootPart = nil, nil, nil
+	local dependencyDeadline = os.clock() + MultiplayerConfig.CharacterDependencyTimeoutSeconds
+	local newHumanoid = newCharacter:FindFirstChild("Humanoid")
+		or newCharacter:WaitForChild(
+			"Humanoid",
+			math.max(0, dependencyDeadline - os.clock())
+		)
+	local newRootPart = newCharacter:FindFirstChild("HumanoidRootPart")
+		or newCharacter:WaitForChild(
+			"HumanoidRootPart",
+			math.max(0, dependencyDeadline - os.clock())
+		)
+	if bindGeneration ~= characterBindGeneration
+		or characterBindingTarget ~= newCharacter
+		or player.Character ~= newCharacter
+		or not newCharacter.Parent
+	then
+		return
+	end
+	if not newHumanoid or not newHumanoid:IsA("Humanoid")
+		or not newRootPart or not newRootPart:IsA("BasePart")
+	then
+		characterBindingTarget = nil
+		warn("[BLIKK CAMERA] Character dependencies did not become ready before the bounded timeout")
+		return
+	end
+
 	character = newCharacter
-	humanoid = newCharacter:WaitForChild("Humanoid")
-	rootPart = newCharacter:WaitForChild("HumanoidRootPart")
+	humanoid = newHumanoid
+	rootPart = newRootPart
 	humanoid.AutoRotate = false
 
 	local lookVector = rootPart.CFrame.LookVector
@@ -176,11 +212,11 @@ local function bindCharacter(newCharacter)
 		updateMouseCapture()
 	end)
 
+	newCharacter:SetAttribute(CAMERA_READY_ATTRIBUTE, true)
 	updateMouseCapture()
 end
 
 local function beginFreeLook()
-	freeLookHoldCount += 1
 	if isFreeLookActive then return end
 	if not CameraConfig.DeveloperFreeLook.Enabled
 		or not isGameplayActive
@@ -251,7 +287,7 @@ local function updateCamera(deltaTime)
 	end
 
 	currentCamera.CameraType = Enum.CameraType.Scriptable
-	currentCamera.FieldOfView = CameraSettings:Get("FieldOfViewDegrees") + dashFovOffsetDegrees
+	currentCamera.FieldOfView = CameraSettings:Get("FieldOfViewDegrees")
 
 	local targetPosition
 	local desiredCameraFrame
@@ -300,8 +336,50 @@ local function updateCamera(deltaTime)
 	updateMouseCapture()
 end
 
+local function refreshGameplayActive()
+	local nextGameplayActive = isGameplayRequestedActive and next(gameplayBlockers) == nil
+	if isGameplayActive == nextGameplayActive then
+		return
+	end
+
+	isGameplayActive = nextGameplayActive
+	if not nextGameplayActive then
+		cancelFreeLook()
+		CameraObstruction.Reset()
+		local currentCamera = Workspace.CurrentCamera
+		if currentCamera then currentCamera.CameraType = Enum.CameraType.Custom end
+	end
+	updateMouseCapture()
+end
+
 function GameplayCamera:GetFlatBasis()
 	return getFlatCameraBasis()
+end
+
+function GameplayCamera:GetCrosshairAim(maximumRangeStuds, additionalExclusions)
+	local currentCamera = Workspace.CurrentCamera
+	if not currentCamera then return nil end
+	local viewportSize = currentCamera.ViewportSize
+	local ray = currentCamera:ViewportPointToRay(viewportSize.X * 0.5, viewportSize.Y * 0.5)
+	local exclusions = { character }
+	for _, instance in additionalExclusions or {} do table.insert(exclusions, instance) end
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = exclusions
+	params.IgnoreWater = true
+	local range = math.max(1, maximumRangeStuds)
+	local result = Workspace:Raycast(ray.Origin, ray.Direction.Unit * range, params)
+	local aimPoint = result and result.Position or ray.Origin + ray.Direction.Unit * range
+	return {
+		Origin = ray.Origin,
+		Direction = ray.Direction.Unit,
+		AimPoint = aimPoint,
+		MaximumRangeStuds = range,
+	}
+end
+
+function GameplayCamera:IsGameplayActive()
+	return isGameplayActive and not isFreeLookActive
 end
 
 function GameplayCamera:SetInterfaceOpen(isOpen)
@@ -311,27 +389,42 @@ function GameplayCamera:SetInterfaceOpen(isOpen)
 end
 
 function GameplayCamera:SetGameplayActive(isActive)
-	isGameplayActive = isActive
-	if not isActive then
-		cancelFreeLook()
-		CameraObstruction.Reset()
-		dashFovOffsetDegrees = 0
-		local currentCamera = Workspace.CurrentCamera
-		if currentCamera then currentCamera.CameraType = Enum.CameraType.Custom end
+	local nextRequestedActive = isActive == true
+	if isGameplayRequestedActive == nextRequestedActive then
+		return
 	end
-	updateMouseCapture()
+
+	isGameplayRequestedActive = nextRequestedActive
+	refreshGameplayActive()
+end
+
+function GameplayCamera:SetGameplayBlocked(owner, blocked)
+	assert(type(owner) == "string" and owner ~= "", "Gameplay blocker owner must be a non-empty string")
+	local isBlocked = gameplayBlockers[owner] == true
+	local shouldBlock = blocked == true
+	if isBlocked == shouldBlock then
+		return
+	end
+
+	if shouldBlock then
+		gameplayBlockers[owner] = true
+	else
+		gameplayBlockers[owner] = nil
+	end
+	refreshGameplayActive()
 end
 
 function GameplayCamera:ResetPitchToNeutral()
 	pitchRadians = math.rad(CameraConfig.NeutralPitchDegrees)
 end
 
-function GameplayCamera:SetDashFovOffset(offsetDegrees)
-	dashFovOffsetDegrees = offsetDegrees
-end
-
 function GameplayCamera:Destroy()
+	isGameplayRequestedActive = false
 	isGameplayActive = false
+	table.clear(gameplayBlockers)
+	characterBindGeneration += 1
+	characterBindingTarget = nil
+	if character and character.Parent then character:SetAttribute(CAMERA_READY_ATTRIBUTE, nil) end
 	cancelFreeLook()
 	CameraObstruction.Reset()
 	RunService:UnbindFromRenderStep("BLIKKGameplayCamera")
@@ -402,6 +495,11 @@ function GameplayCamera:Init(inputManager)
 
 	player.CharacterAdded:Connect(bindCharacter)
 	player.CharacterRemoving:Connect(function(removingCharacter)
+		if removingCharacter == characterBindingTarget then
+			characterBindGeneration += 1
+			characterBindingTarget = nil
+			removingCharacter:SetAttribute(CAMERA_READY_ATTRIBUTE, nil)
+		end
 		if removingCharacter == character then
 			cancelFreeLook()
 			CameraObstruction.Reset()
@@ -437,8 +535,7 @@ function GameplayCamera:Init(inputManager)
 			isCursorReleased = false
 			updateMouseCapture()
 		elseif action == "DeveloperFreeLook" then
-			freeLookHoldCount = math.max(0, freeLookHoldCount - 1)
-			if freeLookHoldCount == 0 then cancelFreeLook() end
+			cancelFreeLook()
 		end
 	end)
 	inputManager.SuppressionChanged.Event:Connect(function(suppressed)

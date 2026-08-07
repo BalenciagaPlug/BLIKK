@@ -4,6 +4,7 @@ local UserInputService = game:GetService("UserInputService")
 
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 local UIStyle = require(script.Parent.UIStyle)
+local UINavigationController = require(script.Parent.UINavigationController)
 
 local ChatController = {}
 local player = Players.LocalPlayer
@@ -83,6 +84,12 @@ local function closeChat()
 	setCollapsed(true, false)
 end
 
+local function openChat()
+	if not UINavigationController:CanOpenChat() then return false end
+	setCollapsed(false, true)
+	return true
+end
+
 setCollapsed = function(isCollapsed, focusInput)
 	collapsed = isCollapsed
 	if collapsed and inputBox:IsFocused() then inputBox:ReleaseFocus(false) end
@@ -103,7 +110,9 @@ local function createInterface()
 	gui.IgnoreGuiInset = false
 	gui.ResetOnSpawn = false
 	gui.Enabled = false
-	gui.Parent = player:WaitForChild("PlayerGui")
+	local playerGui = player:FindFirstChild("PlayerGui")
+	if not playerGui then error("[BLIKK CHAT] PlayerGui was unavailable after bootstrap", 0) end
+	gui.Parent = playerGui
 	panel = Instance.new("Frame")
 	panel.Name = "ChatPanel"
 	panel.BackgroundColor3 = UIStyle.Colors.Panel
@@ -192,14 +201,17 @@ function ChatController:Init(gameplayInputManager)
 		local source = message.TextSource
 		appendMessage(message.Text, source and source.Name or "SYSTEM", source == nil)
 	end)
-	UserInputService.InputBegan:Connect(function(input)
+	UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		if not gui.Enabled then return end
+		local focusedTextBox = UserInputService:GetFocusedTextBox()
 		if input.KeyCode == Enum.KeyCode.Return then
+			if focusedTextBox and focusedTextBox ~= inputBox then return end
 			if collapsed then
-				setCollapsed(false, true)
+				if gameProcessed and focusedTextBox then return end
+				openChat()
 			elseif inputBox:IsFocused() then
 				inputBox:ReleaseFocus(true)
-			else
+			elseif UINavigationController:CanOpenChat() then
 				inputBox:CaptureFocus()
 			end
 		elseif input.KeyCode == Enum.KeyCode.Backspace
@@ -208,6 +220,12 @@ function ChatController:Init(gameplayInputManager)
 		then
 			closeChat()
 		end
+	end)
+	inputManager.ActionBegan.Event:Connect(function(action)
+		if action == "Chat" and collapsed then openChat() end
+	end)
+	UINavigationController.MenuOwnershipChanged.Event:Connect(function(menuOwnsInput)
+		if menuOwnsInput and not collapsed then closeChat() end
 	end)
 	SessionSettings.Changed.Event:Connect(function(key)
 		if key == "ChatVisible" or key == "ChatOpacity" or key == "ChatScale" then applySettings() end

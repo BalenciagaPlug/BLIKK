@@ -3,12 +3,15 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
-local Shared = ReplicatedStorage:WaitForChild("Shared")
+local PoseCoordinator = require(script.Parent.Parent.Character.PoseCoordinator)
+local Shared = ReplicatedStorage:FindFirstChild("Shared")
+assert(Shared, "Shared must be acquired by the client composition root before melee presentation")
 local Config = require(Shared.Combat.MeleePresentationConfig)
 
 local Controller = {}
 Controller.StateChanged = Instance.new("BindableEvent")
 Controller.TechniqueHook = Instance.new("BindableEvent")
+Controller.SemanticEvent = Instance.new("BindableEvent")
 
 local CHARACTER_PART_WAIT_SECONDS = 3
 
@@ -21,12 +24,12 @@ local humanoid
 local weaponModel
 local gripJoint
 local trail
-local poseJoints = {}
-local ownedPoseJoints = {}
 local connections = {}
 local state = "Holstered"
 local stateStarted = 0
 local generation = 0
+local characterGeneration = 0
+local pendingCharacter = nil
 local blockHeld = false
 local heldBlockActions = {}
 local bufferedBlockAt
@@ -37,14 +40,9 @@ local isInitialised = false
 local authoredTrack
 local playHook
 local playAuthoredHook
-
-local jointNames = {
-	RootJoint = "Root", Waist = "Waist", Neck = "Neck",
-	RightShoulder = "RightShoulder", LeftShoulder = "LeftShoulder",
-	RightElbow = "RightElbow", LeftElbow = "LeftElbow",
-	RightWrist = "RightWrist", LeftWrist = "LeftWrist",
-	RightHip = "RightHip", LeftHip = "LeftHip",
-}
+local slashVariant = 1
+local lastSlashAcceptedAt = -math.huge
+local visualState = "Holstered"
 
 local function diagnose(message)
 	if Config.Diagnostics.Enabled then print("[BLIKK MELEE] " .. message) end
@@ -56,11 +54,7 @@ local function disconnectCharacterConnections()
 end
 
 local function resetPose()
-	for alias in ownedPoseJoints do
-		local joint = poseJoints[alias]
-		if joint and joint.Parent then joint.Transform = CFrame.identity end
-	end
-	table.clear(ownedPoseJoints)
+	PoseCoordinator:Release("Melee")
 end
 
 local function setState(nextState)
@@ -68,6 +62,12 @@ local function setState(nextState)
 	state = nextState
 	stateStarted = os.clock()
 	if playHook then playHook(nextState) end
+	Controller.StateChanged:Fire(nextState)
+end
+
+local function setVisualState(nextState)
+	if visualState == nextState then return end
+	visualState = nextState
 	Controller.StateChanged:Fire(nextState)
 end
 
@@ -137,30 +137,51 @@ local function buildTrainingKatana()
 	return model, bladeTrail
 end
 
-local function attachWeapon(mode)
-	if not weaponModel or not character then return false end
+local function attachWeaponTo(model, targetCharacter, targetHumanoid, existingGrip, mode, dependencyDeadline)
+	if not model or not targetCharacter then return false, existingGrip end
 	local attachment = if mode == "Equipped" then Config.TrainingKatana.EquippedAttachment else Config.TrainingKatana.HolsteredAttachment
 	local fallbackPartName = if mode == "Equipped" then "Right Arm" else "Torso"
-	local targetPartName = if humanoid and humanoid.RigType == Enum.HumanoidRigType.R6
+	local targetPartName = if targetHumanoid and targetHumanoid.RigType == Enum.HumanoidRigType.R6
 		then fallbackPartName
 		else attachment.PartName
-	local bodyPart = character:FindFirstChild(targetPartName)
-		or character:WaitForChild(targetPartName, CHARACTER_PART_WAIT_SECONDS)
-	if not bodyPart then return false end
-	local handle = weaponModel.PrimaryPart
-	if not handle then return false end
-	if gripJoint and (gripJoint.Parent ~= handle or gripJoint.Part1 ~= handle) then
-		gripJoint = nil
+	local bodyPart = targetCharacter:FindFirstChild(targetPartName)
+		or targetCharacter:WaitForChild(
+			targetPartName,
+			math.max(0, (dependencyDeadline or (os.clock() + CHARACTER_PART_WAIT_SECONDS)) - os.clock())
+		)
+	if not bodyPart or not bodyPart:IsA("BasePart") then return false, existingGrip end
+	local handle = model.PrimaryPart
+	if not handle then return false, existingGrip end
+	local nextGrip = existingGrip
+	if nextGrip and (nextGrip.Parent ~= handle or nextGrip.Part1 ~= handle) then
+		nextGrip = nil
 	end
-	if not gripJoint then
-		gripJoint = Instance.new("Motor6D")
-		gripJoint.Name = "BLIKK_KatanaGrip"
-		gripJoint.Part1 = handle
-		gripJoint.Parent = handle
+	if not nextGrip then
+		nextGrip = Instance.new("Motor6D")
+		nextGrip.Name = "BLIKK_KatanaGrip"
+		nextGrip.Part1 = handle
+		nextGrip.Parent = handle
 	end
-	gripJoint.Part0 = bodyPart
-	gripJoint.C0 = attachment.Offset
-	gripJoint.C1 = attachment.GripPivot
+	nextGrip.Part0 = bodyPart
+	nextGrip.C0 = attachment.Offset
+	nextGrip.C1 = attachment.GripPivot
+	return true, nextGrip
+end
+
+local function attachWeapon(mode)
+	local bindGeneration = characterGeneration
+	local targetCharacter, targetHumanoid, model = character, humanoid, weaponModel
+	local attached, nextGrip = attachWeaponTo(
+		model,
+		targetCharacter,
+		targetHumanoid,
+		gripJoint,
+		mode,
+		os.clock() + CHARACTER_PART_WAIT_SECONDS
+	)
+	if not attached or bindGeneration ~= characterGeneration or targetCharacter ~= character
+		or model ~= weaponModel or targetCharacter ~= player.Character then return false end
+	gripJoint = nextGrip
 	return true
 end
 
@@ -233,6 +254,10 @@ local function enterBlock(cancelledSlash)
 	bufferedBlockAt = nil
 	updateTrail(false)
 	setState("Blocking")
+	setVisualState(if cancelledSlash
+		then (if isAirborne() then "AirSlashToBlockCancel" else "SlashToBlockCancel")
+		else "BlockEnter")
+	Controller.SemanticEvent:Fire("BlockAccepted", os.clock(), { Airborne = isAirborne(), Cancel = cancelledSlash })
 	if isAirborne() then
 		Controller.TechniqueHook:Fire(if cancelledSlash then "AirSlashCancelledToBlock" else "AirBlockAccepted", os.clock())
 	end
@@ -240,16 +265,26 @@ local function enterBlock(cancelledSlash)
 	if cancelledSlash then diagnose("SlashCancelledToBlock") end
 	local blockGeneration = generation
 	task.delay(Config.Slash.PostCancelBlockEnterBlendSeconds, function()
-		if generation == blockGeneration and state == "Blocking" then playAuthoredHook(if isAirborne() then "KatanaAirBlock" else "KatanaBlockHold", true, Enum.AnimationPriority.Action) end
+		if generation == blockGeneration and state == "Blocking" then
+			setVisualState("BlockHold")
+			playAuthoredHook(if isAirborne() then "KatanaAirBlock" else "KatanaBlockHold", true, Enum.AnimationPriority.Action)
+		end
 	end)
 end
 
 local function acceptSlash()
 	if not isMeleeActive() or state == "Slashing" or state == "Equipping" or state == "Unequipping" then return end
 	local acceptedAt = os.clock()
+	if acceptedAt - lastSlashAcceptedAt > Config.Slash.SequenceResetSeconds then slashVariant = 1 else slashVariant = 3 - slashVariant end
+	lastSlashAcceptedAt = acceptedAt
 	bufferedBlockAt = nil
 	cancelWindowReported = false
 	setState("Slashing")
+	setVisualState(if wallPresentationActive
+		then "WallSlash"
+		elseif isAirborne() then "AirSlash"
+		else "GroundSlash" .. tostring(slashVariant))
+	Controller.SemanticEvent:Fire("SlashAccepted", acceptedAt, { Airborne = isAirborne(), Variant = slashVariant })
 	movementEngine:ConfirmSlashAccepted(acceptedAt)
 	Controller.TechniqueHook:Fire("SlashAccepted", acceptedAt, isAirborne())
 	if isAirborne() then Controller.TechniqueHook:Fire("AirSlashAccepted", acceptedAt) end
@@ -273,32 +308,11 @@ local function beginBlock(action)
 	end
 end
 
-local function equipMelee()
-	if not character or not fighterController:SetActiveWeaponSlot("Melee") then return end
-	attachWeapon("Equipped")
-	setState("Equipping")
-end
-
-local function equipSlot(slotId)
-	if not fighterController:SetActiveWeaponSlot(slotId) then return end
-	interrupt("Unequipping")
-	attachWeapon("Holstered")
-end
-
-local function bindJoints()
-	table.clear(poseJoints)
-	for _, descendant in character:GetDescendants() do
-		if descendant:IsA("Motor6D") then
-			local alias = jointNames[descendant.Name:gsub(" ", "")]
-			if alias then poseJoints[alias] = descendant end
-		end
-	end
-end
-
 local function poseForState(now)
 	local airborne = isAirborne()
 	if state == "Equipping" and now - stateStarted >= Config.Equip.DurationSeconds then setState("MeleeIdle") end
-	if state == "Unequipping" and now - stateStarted >= Config.Equip.UnequipDurationSeconds then setState("Holstered") end
+	if state == "Equipping" and now - stateStarted >= Config.Equip.DurationSeconds then setVisualState(if airborne then "AirIdle" else "GroundIdle") end
+	if state == "Unequipping" and now - stateStarted >= Config.Equip.UnequipDurationSeconds then setState("Holstered"); setVisualState("Holstered") end
 	if state == "Slashing" then
 		local elapsed = now - stateStarted
 		local activeStart = Config.Slash.AnticipationSeconds
@@ -312,7 +326,7 @@ local function poseForState(now)
 		updateTrail(elapsed >= activeStart and elapsed < activeEnd)
 		if elapsed >= total then
 			updateTrail(false)
-			if blockHeld and bufferedBlockAt then enterBlock(false) else setState("MeleeIdle") end
+			if blockHeld and bufferedBlockAt then enterBlock(false) else setState("MeleeIdle"); setVisualState(if airborne then "AirIdle" else "GroundIdle") end
 		end
 	end
 	if state == "Holstered" or state == "Interrupted" or state == "Equipping" or state == "Unequipping" then return nil end
@@ -355,39 +369,66 @@ local function poseForState(now)
 end
 
 local function applyPose(deltaTime)
-	if not character or not humanoid or humanoid.Health <= 0 then return end
+	if not character or not humanoid or humanoid.Health <= 0 then resetPose(); return end
 	local now = os.clock()
 	local poses = poseForState(now)
-	if not poses then return end
-	for alias in ownedPoseJoints do
-		if not poses[alias] and poseJoints[alias] then poseJoints[alias].Transform = CFrame.identity end
-	end
-	table.clear(ownedPoseJoints)
+	if not poses then resetPose(); return end
 	local blockBlend = if state == "Blocking" then math.clamp((now - stateStarted) / Config.Slash.PostCancelBlockEnterBlendSeconds, 0, 1) else 1
 	local idleBlendSpeed = if isAirborne()
 		then Config.Pose.AirborneBlendSpeed
 		else Config.Pose.IdleBlendSpeed
 	local idleBlend = 1 - math.exp(-idleBlendSpeed * deltaTime)
 	local blend = if state == "MeleeIdle" then idleBlend else blockBlend
-	for alias, joint in poseJoints do
-		if poses[alias] then joint.Transform = joint.Transform:Lerp(poses[alias], blend); ownedPoseJoints[alias] = true end
-	end
+	PoseCoordinator:Submit("Melee", if state == "Slashing" or state == "Blocking" then 40 else 20, poses, blend)
 end
 
 local function bindCharacter(nextCharacter)
+	characterGeneration += 1
+	local bindCharacterGeneration = characterGeneration
+	pendingCharacter = nextCharacter
 	interrupt("Interrupted")
 	disconnectCharacterConnections()
 	if weaponModel then weaponModel:Destroy() end
 	gripJoint = nil
-	character = nextCharacter
-	humanoid = character:WaitForChild("Humanoid")
-	bindJoints()
-	weaponModel, trail = buildTrainingKatana()
-	weaponModel.Parent = character
-	attachWeapon(if isMeleeActive() then "Equipped" else "Holstered")
+	character, humanoid, weaponModel, trail = nil, nil, nil, nil
+	local dependencyDeadline = os.clock() + CHARACTER_PART_WAIT_SECONDS
+	local nextHumanoid = nextCharacter:FindFirstChild("Humanoid")
+		or nextCharacter:WaitForChild("Humanoid", math.max(0, dependencyDeadline - os.clock()))
+	if bindCharacterGeneration ~= characterGeneration or nextCharacter ~= player.Character
+		or not nextHumanoid or not nextHumanoid:IsA("Humanoid") then
+		if bindCharacterGeneration == characterGeneration then pendingCharacter = nil end
+		if bindCharacterGeneration == characterGeneration and nextCharacter == player.Character then
+			warn("[BLIKK MELEE] Character bind timed out waiting for Humanoid.")
+		end
+		return
+	end
+	local nextWeaponModel, nextTrail = buildTrainingKatana()
+	nextWeaponModel.Parent = nextCharacter
+	local attached, nextGrip = attachWeaponTo(
+		nextWeaponModel,
+		nextCharacter,
+		nextHumanoid,
+		nil,
+		if isMeleeActive() then "Equipped" else "Holstered",
+		dependencyDeadline
+	)
+	if not attached or bindCharacterGeneration ~= characterGeneration
+		or nextCharacter ~= player.Character or nextWeaponModel.Parent ~= nextCharacter then
+		if nextWeaponModel.Parent then nextWeaponModel:Destroy() end
+		if bindCharacterGeneration == characterGeneration then pendingCharacter = nil end
+		return
+	end
+	pendingCharacter = nil
+	character, humanoid = nextCharacter, nextHumanoid
+	weaponModel, trail, gripJoint = nextWeaponModel, nextTrail, nextGrip
 	setState(if isMeleeActive() then "MeleeIdle" else "Holstered")
-	table.insert(connections, humanoid.Died:Connect(function() interrupt("Interrupted") end))
+	setVisualState(if isMeleeActive() then "GroundIdle" else "Holstered")
+	character:SetAttribute("BLIKK_ClientMeleeReady", true)
+	table.insert(connections, humanoid.Died:Connect(function()
+		if bindCharacterGeneration == characterGeneration then interrupt("Interrupted") end
+	end))
 	table.insert(connections, humanoid.StateChanged:Connect(function(_, nextHumanoidState)
+		if bindCharacterGeneration ~= characterGeneration or character ~= nextCharacter then return end
 		if nextHumanoidState == Enum.HumanoidStateType.Landed or nextHumanoidState == Enum.HumanoidStateType.Running then
 			if isMeleeActive() and state ~= "Slashing" and state ~= "Blocking" then setState("MeleeIdle") end
 		end
@@ -401,10 +442,7 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 	isInitialised = true
 	inputManager, fighterController, movementEngine = inputManagerValue, fighterControllerValue, movementEngineValue
 	inputManager.ActionBegan.Event:Connect(function(action)
-		if action == "EquipMelee" then equipMelee()
-		elseif action == "EquipWeapon1" then equipSlot("Primary1")
-		elseif action == "EquipWeapon2" then equipSlot("Primary2")
-		elseif isMeleeActive() and (action == "Primary" or action == "Slash") then acceptSlash()
+		if isMeleeActive() and (action == "Primary" or action == "Slash") then acceptSlash()
 		elseif isMeleeActive() and (action == "Secondary" or action == "Block") then beginBlock(action) end
 	end)
 	inputManager.ActionEnded.Event:Connect(function(action)
@@ -414,10 +452,14 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 			bufferedBlockAt = nil
 			if state == "Blocking" and not blockHeld then
 				setState("MeleeIdle")
+				setVisualState("BlockExit")
 				local releasedAt = stateStarted
 				playAuthoredHook("KatanaBlockExit", false, Enum.AnimationPriority.Action)
 				task.delay(Config.Block.ExitPresentationSeconds, function()
-					if state == "MeleeIdle" and stateStarted == releasedAt then playHook("MeleeIdle") end
+					if state == "MeleeIdle" and stateStarted == releasedAt then
+						setVisualState(if isAirborne() then "AirIdle" else "GroundIdle")
+						playHook("MeleeIdle")
+					end
 				end)
 			end
 		end
@@ -430,7 +472,20 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 	end)
 	fighterController.LoadoutChanged.Event:Connect(function(changeType)
 		if changeType == "ActiveWeaponSlot" and character then
-			if isMeleeActive() then attachWeapon("Equipped"); setState("Equipping") else interrupt("Unequipping"); attachWeapon("Holstered") end
+			if isMeleeActive() then
+				local wasHolstered = state == "Holstered"
+				attachWeapon("Equipped")
+				setState("Equipping")
+				setVisualState("Equip")
+				if wasHolstered then
+					Controller.SemanticEvent:Fire("WeaponEquipped", os.clock(), { Slot = "Melee" })
+				end
+			elseif state ~= "Holstered" and state ~= "Unequipping" then
+				interrupt("Unequipping")
+				setVisualState("Unequip")
+				Controller.SemanticEvent:Fire("WeaponUnequipped", os.clock(), { Slot = "Melee" })
+				attachWeapon("Holstered")
+			end
 		end
 	end)
 	movementEngine.DashStarted.Event:Connect(function()
@@ -442,7 +497,12 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 		wallPresentationActive = nextState == "VerticalWallRun"
 			or nextState == "HorizontalWallRun"
 			or nextState == "WallJumpRecovery"
-		if wallPresentationActive then resetPose() end
+		if wallPresentationActive then
+			resetPose()
+			if isMeleeActive() and state == "MeleeIdle" then setVisualState("WallReady") end
+		elseif isMeleeActive() and state == "MeleeIdle" then
+			setVisualState(if isAirborne() then "AirIdle" else "GroundIdle")
+		end
 	end)
 	SessionSettings.Changed.Event:Connect(function(key)
 		if key == "EffectsQuality" or key == "ReducedEffects" or key == "BladeTrailVisible"
@@ -450,7 +510,17 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 	end)
 	player.CharacterAdded:Connect(bindCharacter)
 	player.CharacterRemoving:Connect(function(removingCharacter)
-		if character == removingCharacter then interrupt("Interrupted"); disconnectCharacterConnections(); character, humanoid, weaponModel, gripJoint, trail = nil, nil, nil, nil, nil end
+		if pendingCharacter == removingCharacter then
+			characterGeneration += 1
+			pendingCharacter = nil
+		end
+		if character == removingCharacter then
+			characterGeneration += 1
+			interrupt("Interrupted")
+			disconnectCharacterConnections()
+			if weaponModel then weaponModel:Destroy() end
+			character, humanoid, weaponModel, gripJoint, trail = nil, nil, nil, nil, nil
+		end
 	end)
 	if player.Character then bindCharacter(player.Character) end
 	RunService:BindToRenderStep("BLIKKMeleePresentation", Enum.RenderPriority.Character.Value + 3, applyPose)

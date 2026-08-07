@@ -33,6 +33,7 @@ end
 function ReplayService:AddPlayer(matchId, player)
 	local recording = recordings[matchId]
 	if not recording or not recording.Active then return false end
+	playerMatchIds[player] = matchId
 	self:RecordEvent(matchId, "PlayerJoined", { UserId = player.UserId })
 	return true
 end

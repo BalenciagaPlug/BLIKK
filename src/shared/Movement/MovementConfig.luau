@@ -1,8 +1,8 @@
 local MovementConfig = {
 	Dash = {
 		DoubleTapWindowSeconds = 0.25,
-		GroundDistanceStuds = 14.5,
-		AirDistanceStuds = 13,
+		GroundDistanceStuds = 18.125,
+		AirDistanceStuds = 16.25,
 		EntryDurationSeconds = 0.035,
 		TravelDurationSeconds = 0.115,
 		ExitDurationSeconds = 0.085,
@@ -25,7 +25,6 @@ local MovementConfig = {
 			CounterTwistDegrees = 8,
 			ArmBraceDegrees = 22,
 			HipTuckDegrees = 14,
-			CameraFovImpulseDegrees = 3.5,
 			EffectIntensity = 0.8,
 			StreakCount = 3,
 			StreakHeightsStuds = { 2.15, 0, -2.15 },
@@ -41,7 +40,8 @@ local MovementConfig = {
 			LowLifetimeMultiplier = 0.5,
 			GroundAccentSizeStuds = 2.8,
 			GroundAccentLifetimeSeconds = 0.12,
-			SoundId = "",
+			SoundId = "rbxassetid://9119738974",
+			SoundVolume = 0.35,
 			AnimationIds = { Forward = "", Backward = "", Left = "", Right = "" },
 		},
 		Diagnostics = { Enabled = false },

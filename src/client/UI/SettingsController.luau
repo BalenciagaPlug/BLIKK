@@ -8,8 +8,10 @@ local BindingState = require(script.Parent.Parent.Input.BindingState)
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 local PlayerPreferencesController = require(script.Parent.Parent.Settings.PlayerPreferencesController)
 local UIStyle = require(script.Parent.UIStyle)
+local UINavigationController = require(script.Parent.UINavigationController)
 
-local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Shared = ReplicatedStorage:FindFirstChild("Shared")
+assert(Shared, "Shared must be acquired by the client composition root before settings")
 local CameraConfig = require(Shared.Camera.CameraConfig)
 local ActionCatalogue = require(Shared.Input.ActionCatalogue)
 local SettingsConfig = require(Shared.Settings.SettingsConfig)
@@ -48,6 +50,24 @@ local isFrontendActive = false
 local returnButton = nil
 local openContext = "Gameplay"
 local settingsGui = nil
+local settingsScope = nil
+local conflictScope = nil
+local confirmationScope = nil
+local captureScope = nil
+local activationCallbacks = {}
+local sliderKeyboardCommitGeneration = {}
+local conflictReplaceButton = nil
+local conflictCancelButton = nil
+local confirmationYesButton = nil
+local confirmationNoButton = nil
+local cancelCapture = nil
+local tabOrder = { "VIDEO", "SOUND", "CONTROLS", "EXTRAS" }
+local activeTabName = "VIDEO"
+
+local function bindActivation(button, callback)
+	activationCallbacks[button] = callback
+	button.Activated:Connect(callback)
+end
 
 local cameraSliders = {
 	{
@@ -212,6 +232,35 @@ local function setSliderFromScreenX(control, screenX)
 	updateSliderVisual(control)
 end
 
+local function cancelPendingSliderCommit(control)
+	sliderKeyboardCommitGeneration[control] = (sliderKeyboardCommitGeneration[control] or 0) + 1
+end
+
+local function scheduleSliderCommit(control, value)
+	cancelPendingSliderCommit(control)
+	local generation = sliderKeyboardCommitGeneration[control]
+	task.delay(SettingsConfig.KeyboardSliderCommitDelaySeconds, function()
+		if sliderKeyboardCommitGeneration[control] ~= generation then return end
+		sliderKeyboardCommitGeneration[control] = nil
+		PlayerPreferencesController:SetPreference(control.Key, value)
+	end)
+end
+
+local function adjustSlider(control, direction)
+	if direction ~= "Left" and direction ~= "Right" then return false end
+	local range = control.Range
+	local directionMultiplier = if direction == "Left" then -1 else 1
+	local value = math.clamp(
+		control.Source:Get(control.Key) + range.Step * directionMultiplier,
+		range.Minimum,
+		range.Maximum
+	)
+	control.Source:Set(control.Key, value)
+	updateSliderVisual(control)
+	scheduleSliderCommit(control, value)
+	return true
+end
+
 local function updateToggleVisual(control)
 	local enabled = control.Source:Get(control.Key)
 	control.Button.Text = if enabled then "ON" else "OFF"
@@ -332,13 +381,16 @@ local function createSlider(parent, definition, rowIndex, source, ranges)
 		Fill = fill,
 		Knob = knob,
 		ValueLabel = valueLabel,
+		Row = row,
+		AllowNumericEntry = definition.AllowNumericEntry == true,
 	}
 
 	table.insert(sliderControls, control)
 	updateSliderVisual(control)
 
 	if definition.AllowNumericEntry then
-		valueLabel.FocusLost:Connect(function()
+		valueLabel.FocusLost:Connect(function(enterPressed)
+			cancelPendingSliderCommit(control)
 			local typedValue = tonumber(valueLabel.Text)
 
 			if typedValue then
@@ -353,11 +405,17 @@ local function createSlider(parent, definition, rowIndex, source, ranges)
 
 			updateSliderVisual(control)
 			PlayerPreferencesController:SetPreference(control.Key, control.Source:Get(control.Key))
+			if enterPressed and settingsScope then
+				task.defer(function()
+					if settingsScope and settingsScope:IsActive() then settingsScope:Refresh(control.Row) end
+				end)
+			end
 		end)
 	end
 
 	hitArea.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			cancelPendingSliderCommit(control)
 			activeSlider = control
 			setSliderFromScreenX(control, input.Position.X)
 		end
@@ -402,7 +460,7 @@ local function createToggle(parent, key, labelText, rowIndex, source, positionYO
 	toggleControls[key] = control
 	updateToggleVisual(control)
 
-	button.Activated:Connect(function()
+	bindActivation(button, function()
 		PlayerPreferencesController:SetPreference(key, not source:Get(key))
 		updateToggleVisual(control)
 	end)
@@ -425,7 +483,7 @@ local function createCameraPage(parent)
 		UDim2.fromOffset(210, 34)
 	)
 	resetButton.TextColor3 = colors.Accent
-	resetButton.Activated:Connect(function()
+	bindActivation(resetButton, function()
 		PlayerPreferencesController:ResetPreferenceGroup("Camera")
 
 		for _, control in sliderControls do
@@ -522,10 +580,11 @@ local function createControlsPage(parent)
 			)
 			button.TextSize = 9
 			bindingButtons[definition.Id][slot] = button
-			button.Activated:Connect(function()
+			bindActivation(button, function()
 				captureAction = definition.Id
 				captureSlot = slot
 				inputManager:SetBindingCaptureActive(true)
+				if captureScope then captureScope:SetActive(true) end
 				button.Text = "PRESS INPUT..."
 				button.TextColor3 = colors.Blood
 			end)
@@ -539,7 +598,7 @@ local function createControlsPage(parent)
 			UDim2.fromOffset(38, 27)
 		)
 		reset.TextSize = 9
-		reset.Activated:Connect(function()
+		bindActivation(reset, function()
 			PlayerPreferencesController:ResetBinding(definition.Id)
 		end)
 	end
@@ -552,7 +611,7 @@ local function createControlsPage(parent)
 		UDim2.fromOffset(180, 30)
 	)
 	resetAll.TextColor3 = colors.Accent
-	resetAll.Activated:Connect(function()
+	bindActivation(resetAll, function()
 		PlayerPreferencesController:ResetAllBindings()
 	end)
 
@@ -592,7 +651,9 @@ local function createControlsPage(parent)
 		UDim2.fromOffset(98, 32)
 	)
 	cancelButton.ZIndex = 11
-	replaceButton.Activated:Connect(function()
+	conflictReplaceButton = replaceButton
+	conflictCancelButton = cancelButton
+	bindActivation(replaceButton, function()
 		if pendingConflict then
 			local replaced = PlayerPreferencesController:SetBinding(
 				pendingConflict.Action,
@@ -607,10 +668,12 @@ local function createControlsPage(parent)
 		end
 		pendingConflict = nil
 		conflictFrame.Visible = false
+		if conflictScope then conflictScope:SetActive(false) end
 	end)
-	cancelButton.Activated:Connect(function()
+	bindActivation(cancelButton, function()
 		pendingConflict = nil
 		conflictFrame.Visible = false
+		if conflictScope then conflictScope:SetActive(false) end
 	end)
 end
 
@@ -637,14 +700,14 @@ local function createExtrasPage(parent)
 	createToggle(content, "ChatTimestamps", "CHAT TIMESTAMPS", 1, SessionSettings, 648)
 	local quality = createButton(content, "EffectsQuality", "EFFECTS QUALITY // " .. SessionSettings:Get("EffectsQuality"), UDim2.fromOffset(16, 700), UDim2.new(1, -32, 0, 38))
 	effectsQualityButton = quality
-	quality.Activated:Connect(function()
+	bindActivation(quality, function()
 		local current = SessionSettings:Get("EffectsQuality")
 		local nextValue = if current == "HIGH" then "MEDIUM" elseif current == "MEDIUM" then "LOW" else "HIGH"
 		PlayerPreferencesController:SetPreference("EffectsQuality", nextValue)
 		quality.Text = "EFFECTS QUALITY // " .. SessionSettings:Get("EffectsQuality")
 	end)
 	local preset = createButton(content, "RenderPreset", "RENDER PRESET // " .. SessionSettings:Get("RenderPreset"), UDim2.fromOffset(16, 752), UDim2.new(1, -32, 0, 38))
-	preset.Activated:Connect(function()
+	bindActivation(preset, function()
 		local current = SessionSettings:Get("RenderPreset")
 		local nextValue = if current == "COMPETITIVE" then "BALANCED" elseif current == "BALANCED" then "CINEMATIC" elseif current == "CINEMATIC" then "CUSTOM" else "COMPETITIVE"
 		PlayerPreferencesController:SetPreference("RenderPreset", nextValue)
@@ -658,14 +721,14 @@ local function createExtrasPage(parent)
 	createToggle(content, "AtmosphereEnabled", "CUSTOM // ATMOSPHERE", 1, SessionSettings, 1058)
 	createToggle(content, "WeaponTrailsEnabled", "CUSTOM // WEAPON TRAILS", 1, SessionSettings, 1109)
 	local particleDensity = createButton(content, "ParticleDensity", "CUSTOM // PARTICLE DENSITY // " .. SessionSettings:Get("ParticleDensity"), UDim2.fromOffset(16, 1160), UDim2.new(1, -32, 0, 38))
-	particleDensity.Activated:Connect(function()
+	bindActivation(particleDensity, function()
 		local current = SessionSettings:Get("ParticleDensity")
 		local nextValue = if current < 0.35 then 0.35 elseif current < 0.7 then 0.7 elseif current < 1 then 1 else 0
 		PlayerPreferencesController:SetPreference("ParticleDensity", nextValue)
 		particleDensity.Text = "CUSTOM // PARTICLE DENSITY // " .. SessionSettings:Get("ParticleDensity")
 	end)
 	local shake = createButton(content, "ScreenShakeScale", "CUSTOM // SCREEN IMPULSE // " .. SessionSettings:Get("ScreenShakeScale"), UDim2.fromOffset(16, 1211), UDim2.new(1, -32, 0, 38))
-	shake.Activated:Connect(function()
+	bindActivation(shake, function()
 		local current = SessionSettings:Get("ScreenShakeScale")
 		local nextValue = if current < 0.35 then 0.35 elseif current < 0.7 then 0.7 elseif current < 1 then 1 else 0
 		PlayerPreferencesController:SetPreference("ScreenShakeScale", nextValue)
@@ -675,11 +738,19 @@ local function createExtrasPage(parent)
 end
 
 local function selectTab(tabName)
+	activeTabName = tabName
 	for name, page in tabPages do
 		local selected = name == tabName
 		page.Visible = selected
 		tabButtons[name].BackgroundColor3 = if selected then colors.AccentDim else colors.Raised
 		tabButtons[name].TextColor3 = if selected then colors.Accent else colors.TextMuted
+	end
+	if settingsScope and settingsScope:IsActive() then
+		task.defer(function()
+			if settingsScope and settingsScope:IsActive() then
+				settingsScope:Refresh(tabButtons[tabName])
+			end
+		end)
 	end
 end
 
@@ -699,7 +770,17 @@ local function setOpen(nextIsOpen)
 
 	if not isOpen then
 		activeSlider = nil
+		if cancelCapture then cancelCapture() end
+		if conflictScope then conflictScope:SetActive(false) end
+		if confirmationScope then confirmationScope:SetActive(false) end
+		if captureScope then captureScope:SetActive(false) end
+		if conflictFrame then conflictFrame.Visible = false end
+		local focusedTextBox = UserInputService:GetFocusedTextBox()
+		if focusedTextBox and focusedTextBox:IsDescendantOf(panel) then
+			focusedTextBox:ReleaseFocus(false)
+		end
 	end
+	if settingsScope then settingsScope:SetActive(isOpen) end
 end
 
 local function decorateGear(button)
@@ -790,7 +871,7 @@ local function refreshBindingButtons()
 	end
 end
 
-local function cancelCapture()
+cancelCapture = function()
 	if not captureAction then
 		return
 	end
@@ -798,6 +879,7 @@ local function cancelCapture()
 	captureAction = nil
 	captureSlot = nil
 	inputManager:SetBindingCaptureActive(false)
+	if captureScope then captureScope:SetActive(false) end
 	refreshBindingButtons()
 end
 
@@ -811,6 +893,7 @@ local function acceptCapturedToken(token)
 	captureAction = nil
 	captureSlot = nil
 	inputManager:SetBindingCaptureActive(false)
+	if captureScope then captureScope:SetActive(false) end
 
 	local oldAction, oldSlot = BindingState:FindOwner(token, action, slot)
 
@@ -829,6 +912,7 @@ local function acceptCapturedToken(token)
 			string.upper(oldSlot)
 		)
 		conflictFrame.Visible = true
+		if conflictScope then conflictScope:SetActive(true) end
 	else
 		PlayerPreferencesController:SetBinding(action, slot, token)
 	end
@@ -855,7 +939,8 @@ local function updateResponsiveScale()
 end
 
 local function createInterface()
-	local playerGui = player:WaitForChild("PlayerGui")
+	local playerGui = player:FindFirstChild("PlayerGui")
+	if not playerGui then error("[BLIKK SETTINGS] PlayerGui was unavailable after bootstrap", 0) end
 	local existing = playerGui:FindFirstChild("BLIKKSettings")
 
 	if existing then
@@ -945,9 +1030,7 @@ local function createInterface()
 	returnButton.TextSize = 10
 	returnButton.TextColor3 = colors.Blood
 
-	local tabNames = { "VIDEO", "SOUND", "CONTROLS", "EXTRAS" }
-
-	for index, name in tabNames do
+	for index, name in tabOrder do
 		local button = createButton(
 			panel,
 			name .. "Tab",
@@ -956,7 +1039,7 @@ local function createInterface()
 			UDim2.fromOffset(152, 38)
 		)
 		tabButtons[name] = button
-		button.Activated:Connect(function()
+		bindActivation(button, function()
 			selectTab(name)
 		end)
 
@@ -979,12 +1062,13 @@ local function createInterface()
 	selectTab("VIDEO")
 	refreshBindingButtons()
 
-	gearButton.Activated:Connect(function()
+	bindActivation(gearButton, function()
+		if UINavigationController:IsMenuActive() then return end
 		openContext = "Gameplay"
 		settingsGui.DisplayOrder = UIStyle.DisplayOrders.Settings
 		setOpen(true)
 	end)
-	closeButton.Activated:Connect(function()
+	bindActivation(closeButton, function()
 		setOpen(false)
 	end)
 
@@ -1019,19 +1103,89 @@ local function createInterface()
 		confirmationFrame, "No", "NO", UDim2.new(1, -204, 0, 142), UDim2.fromOffset(166, 42)
 	)
 	noButton.ZIndex = 21
-	returnButton.Activated:Connect(function()
+	confirmationYesButton = yesButton
+	confirmationNoButton = noButton
+	bindActivation(returnButton, function()
 		confirmationFrame.Visible = true
+		if confirmationScope then confirmationScope:SetActive(true) end
 	end)
-	noButton.Activated:Connect(function()
+	bindActivation(noButton, function()
 		confirmationFrame.Visible = false
+		if confirmationScope then confirmationScope:SetActive(false) end
 	end)
-	yesButton.Activated:Connect(function()
+	bindActivation(yesButton, function()
 		if not returnToMenuCallback then return end
 		confirmationFrame.Visible = false
+		if confirmationScope then confirmationScope:SetActive(false) end
 		returnToMenuCallback()
 	end)
 
 	settingsGui.Parent = playerGui
+	settingsScope = UINavigationController:CreateScope("SettingsModal", {
+		Root = panel,
+		Default = tabButtons.VIDEO,
+		Back = function() setOpen(false) end,
+		AllowSettingsAction = true,
+	})
+	for button, callback in activationCallbacks do
+		if button:IsDescendantOf(panel)
+			and not button:IsDescendantOf(conflictFrame)
+			and not button:IsDescendantOf(confirmationFrame) then
+			local tabName = nil
+			for name, tabButton in tabButtons do
+				if tabButton == button then tabName = name; break end
+			end
+			settingsScope:Register(button, {
+				Activate = callback,
+				IsFocusVisualVisible = if tabName then function()
+					return activeTabName ~= tabName
+				end else nil,
+				Adjust = if tabName then function(direction)
+					if direction ~= "Left" and direction ~= "Right" then return false end
+					local index = table.find(tabOrder, tabName)
+					local offset = if direction == "Left" then -1 else 1
+					local nextName = tabOrder[(index - 1 + offset) % #tabOrder + 1]
+					selectTab(nextName)
+					settingsScope:Refresh(tabButtons[nextName])
+					return true
+				end else nil,
+			})
+		end
+	end
+	for _, control in sliderControls do
+		settingsScope:Register(control.Row, {
+			Adjust = function(direction) return adjustSlider(control, direction) end,
+		})
+		if control.AllowNumericEntry then settingsScope:Register(control.ValueLabel) end
+	end
+	conflictScope = UINavigationController:CreateScope("SettingsConflictModal", {
+		Root = conflictFrame,
+		Default = conflictCancelButton,
+		Back = function()
+			pendingConflict = nil
+			conflictFrame.Visible = false
+			conflictScope:SetActive(false)
+		end,
+		AllowSettingsAction = true,
+	})
+	conflictScope:Register(conflictReplaceButton, { Activate = activationCallbacks[conflictReplaceButton] })
+	conflictScope:Register(conflictCancelButton, { Activate = activationCallbacks[conflictCancelButton] })
+	confirmationScope = UINavigationController:CreateScope("SettingsReturnConfirmation", {
+		Root = confirmationFrame,
+		Default = confirmationNoButton,
+		Back = function()
+			confirmationFrame.Visible = false
+			confirmationScope:SetActive(false)
+		end,
+		AllowSettingsAction = true,
+	})
+	confirmationScope:Register(confirmationYesButton, { Activate = activationCallbacks[confirmationYesButton] })
+	confirmationScope:Register(confirmationNoButton, { Activate = activationCallbacks[confirmationNoButton] })
+	captureScope = UINavigationController:CreateScope("SettingsBindingCapture", {
+		Root = panel,
+		Back = function() cancelCapture() end,
+		AllowSettingsAction = true,
+	})
 	updateResponsiveScale()
 
 	local currentCamera = Workspace.CurrentCamera
@@ -1066,6 +1220,7 @@ function SettingsController:Init(gameplayInputManager, cameraController)
 	UserInputService.InputBegan:Connect(function(input)
 		if confirmationFrame and confirmationFrame.Visible and input.KeyCode == Enum.KeyCode.Escape then
 			confirmationFrame.Visible = false
+			if confirmationScope then confirmationScope:SetActive(false) end
 			return
 		end
 		if not captureAction then
@@ -1115,10 +1270,15 @@ function SettingsController:Init(gameplayInputManager, cameraController)
 	inputManager.ActionBegan.Event:Connect(function(action)
 		if (action == "Settings" or action == "Cancel") and confirmationFrame and confirmationFrame.Visible then
 			confirmationFrame.Visible = false
-		elseif action == "Settings" and not captureAction and not isFrontendActive then
-			openContext = "Gameplay"
-			settingsGui.DisplayOrder = UIStyle.DisplayOrders.Settings
-			setOpen(not isOpen)
+			if confirmationScope then confirmationScope:SetActive(false) end
+		elseif action == "Settings" and not captureAction then
+			if isOpen then
+				setOpen(false)
+			elseif not isFrontendActive then
+				openContext = "Gameplay"
+				settingsGui.DisplayOrder = UIStyle.DisplayOrders.Settings
+				setOpen(true)
+			end
 		end
 	end)
 end

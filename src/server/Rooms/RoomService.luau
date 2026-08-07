@@ -18,12 +18,21 @@ local activityRemote = nil
 local profiles = nil
 local matchService = nil
 local directoryService = nil
+local directoryMutationStates = {}
 local limiter = RateLimiter.New()
 local joinSequence = 0
 local isRunning = false
 
 local function trim(value)
 	return if type(value) == "string" then value:match("^%s*(.-)%s*$") else nil
+end
+
+local function isFiniteInteger(value)
+	return type(value) == "number"
+		and value == value
+		and value > -math.huge
+		and value < math.huge
+		and value % 1 == 0
 end
 
 local function filterText(player, value, maximumLength)
@@ -51,6 +60,65 @@ local function memberSnapshot(member)
 	}
 end
 
+local function enqueueDirectoryMutation(room, shouldClose)
+	local service = directoryService
+	if not service or type(room) ~= "table" or type(room.RoomId) ~= "string" then return end
+	local roomId = room.RoomId
+	local state = directoryMutationStates[roomId]
+	if not state then
+		state = {
+			Desired = nil,
+			Running = false,
+			WarnedFailure = false,
+		}
+		directoryMutationStates[roomId] = state
+	end
+	state.Desired = {
+		Service = service,
+		Room = room,
+		Revision = room.Revision,
+		Close = shouldClose == true,
+	}
+	if state.Running then return end
+	state.Running = true
+	task.spawn(function()
+		while state.Desired do
+			local operation = state.Desired
+			state.Desired = nil
+			local isCurrentService = directoryService == operation.Service
+			local shouldRun = operation.Close
+				or (rooms[roomId] == operation.Room
+					and operation.Room.Revision >= operation.Revision)
+			local succeeded, message = true, nil
+			if isCurrentService and shouldRun then
+				if operation.Close then
+					succeeded, message = pcall(
+						operation.Service.CloseRoom,
+						operation.Service,
+						operation.Room
+					)
+				else
+					succeeded, message = pcall(
+						operation.Service.UpdateRoom,
+						operation.Service,
+						operation.Room
+					)
+				end
+			end
+			if not succeeded and not state.WarnedFailure then
+				state.WarnedFailure = true
+				warn("[BLIKK ROOM] Ordered directory mutation failed: " .. tostring(message))
+			elseif succeeded then
+				state.WarnedFailure = false
+			end
+		end
+		state.Running = false
+		if not state.Desired and rooms[roomId] == nil then
+			directoryMutationStates[roomId] = nil
+		end
+	end)
+end
+
 local function snapshot(room, includePrivate)
 	local members = {}
 	for _, member in room.Members do table.insert(members, memberSnapshot(member)) end
@@ -66,19 +134,24 @@ end
 
 local function publish(room)
 	room.Revision += 1
-	for player, member in room.Members do
-		if player.Parent == Players then updateRemote:FireClient(player, snapshot(room, member.IsRoomLeader)) end
+	if not room.ClientPublicationSuppressed then
+		for player, member in room.Members do
+			if player.Parent == Players then updateRemote:FireClient(player, snapshot(room, member.IsRoomLeader)) end
+		end
 	end
-	if directoryService then directoryService:UpdateRoom(room) end
+	if not room.DirectoryPublicationSuppressed then enqueueDirectoryMutation(room, false) end
 end
 
 local function chooseLeader(room)
 	local candidates = {}
+	local fallbackCandidates = {}
 	for _, member in room.Members do
+		table.insert(fallbackCandidates, member)
 		if os.clock() - member.LastActivityAt < Config.AfkLeaderMigrationSeconds then
 			table.insert(candidates, member)
 		end
 	end
+	if #candidates == 0 then candidates = fallbackCandidates end
 	table.sort(candidates, function(a, b)
 		if a.IsSpectator ~= b.IsSpectator then return not a.IsSpectator end
 		local aPing, bPing = a.Player:GetNetworkPing(), b.Player:GetNetworkPing()
@@ -94,7 +167,7 @@ local function migrateLeader(room, selected)
 	if not nextMember then
 		room.State = "Closing"
 		rooms[room.RoomId] = nil
-		if directoryService then directoryService:CloseRoom(room.RoomId) end
+		enqueueDirectoryMutation(room, true)
 		return
 	end
 	for _, member in room.Members do member.IsRoomLeader = member == nextMember end
@@ -104,18 +177,34 @@ end
 
 local function removePlayer(player)
 	local room = playerRoom[player]
-	if not room then return end
+	if not room then return nil end
 	local member = room.Members[player]
 	if matchService then matchService:RemovePlayer(player) end
-	room.Members[player] = nil; playerRoom[player] = nil
+	room.Members[player] = nil
+	playerRoom[player] = nil
+	local didClose = false
 	if not next(room.Members) then
-		room.State = "Closing"; rooms[room.RoomId] = nil
-		if directoryService then directoryService:CloseRoom(room.RoomId) end
+		room.State = "Closing"
+		room.Revision += 1
+		rooms[room.RoomId] = nil
+		if matchService then matchService:StopRoom(room.RoomId) end
+		if room.ReservationPending then
+			room.ReservationPending = false
+			room.ReservationGeneration = (room.ReservationGeneration or 0) + 1
+		else
+			enqueueDirectoryMutation(room, true)
+		end
+		didClose = true
 	elseif member.IsRoomLeader then
 		migrateLeader(room)
 	else
 		publish(room)
 	end
+	return {
+		RoomId = room.RoomId,
+		Revision = room.Revision,
+		Closed = didClose,
+	}
 end
 
 local function validateConfiguration(payload)
@@ -124,25 +213,28 @@ local function validateConfiguration(payload)
 	local mode = Modes.Get(payload.ModeId)
 	if not map or not map.IsMultiplayerEnabled or not mode or not Maps.SupportsMode(map.Id, mode.Id) then return nil end
 	local maximumPlayers = payload.MaximumPlayers
-	if type(maximumPlayers) ~= "number" or maximumPlayers % 1 ~= 0 then return nil end
+	if not isFiniteInteger(maximumPlayers) then return nil end
 	maximumPlayers = math.clamp(maximumPlayers, Config.RoomCreationMinimumPlayers,
 		math.min(mode.MaximumPlayers, map.MaximumPlayers, Config.MaximumPlayers))
 	local mutators = {}
 	if type(payload.Mutators) == "table" and payload.Mutators.MeleeOnly == true then mutators.MeleeOnly = true end
+	local spectatorSlots = tonumber(payload.SpectatorSlots) or 0
+	if not isFiniteInteger(spectatorSlots) then return nil end
 	return {
 		MapId = map.Id, ModeId = mode.Id, MaximumPlayers = maximumPlayers,
 		IsPublic = payload.IsPublic ~= false, Mutators = mutators,
 		TeamAssignmentMode = mode.TeamMode and "PLAYER_CHOICE_BALANCED" or "NONE",
 		JoinInProgressEnabled = mode.JoinInProgressEnabled
 			and payload.JoinInProgressEnabled ~= false and payload.JoinInProgress ~= false,
-		SpectatorSlots = math.clamp(tonumber(payload.SpectatorSlots) or 0, 0, Config.MaximumSpectatorSlots),
+		SpectatorSlots = math.clamp(spectatorSlots, 0, Config.MaximumSpectatorSlots),
 		ReadyRequired = mode.Competitive,
 	}
 end
 
 local function isJoinable(room, isSpectator)
-	if room.State == "Lobby" or room.State == "Countdown" then return true end
-	if room.State == "InProgress" or room.State == "RoundIntermission" then
+	if room.State == "Lobby" then return true end
+	if room.State == "LoadingMatch" or room.State == "Countdown"
+		or room.State == "InProgress" or room.State == "RoundIntermission" then
 		return isSpectator or room.Config.JoinInProgressEnabled
 	end
 	return false
@@ -179,17 +271,23 @@ local function addMember(room, player, isSpectator)
 	return member
 end
 
-local function createRoom(player, payload)
+local function createRoom(player, payload, suppressDirectoryPublication)
+	if player.Parent ~= Players then return nil, "PLAYER_UNAVAILABLE" end
 	if playerRoom[player] or not profiles:IsReady(player) then return nil, "PROFILE_NOT_READY" end
 	if not RateLimiter.Allow(limiter, player, "Create", Config.RoomCreationCooldownSeconds, 1) then return nil, "RATE_LIMITED" end
 	local configuration = validateConfiguration(payload)
 	local name = configuration and filterText(player, payload.Name, Config.RoomNameMaximumLength)
 	if not configuration or not name then return nil, "INVALID_ROOM" end
+	if player.Parent ~= Players or playerRoom[player] then return nil, "PLAYER_UNAVAILABLE" end
 	joinSequence += 1
 	local room = {
 		RoomId = HttpService:GenerateGUID(false), Name = name, State = "Lobby",
 		RoomLeaderUserId = player.UserId, JoinCode = configuration.IsPublic and nil or makeJoinCode(),
 		Config = configuration, Members = {}, Revision = 0, CreatedAtUnix = os.time(),
+		DirectoryPublicationSuppressed = suppressDirectoryPublication == true,
+		ClientPublicationSuppressed = suppressDirectoryPublication == true,
+		ReservationPending = suppressDirectoryPublication == true,
+		ReservationGeneration = if suppressDirectoryPublication == true then 1 else 0,
 	}
 	room.Members[player] = {
 		Player = player, State = "InLobby", IsReady = false, IsSpectator = false,
@@ -241,7 +339,16 @@ end
 
 local function startMatch(player)
 	local room = playerRoom[player]; local member = room and room.Members[player]
-	if not member or not member.IsRoomLeader or room.State ~= "Lobby" then return nil, "NOT_ROOM_LEADER" end
+	if not member then return nil, "NOT_IN_ROOM" end
+	if not member.IsRoomLeader then return nil, "NOT_ROOM_LEADER" end
+	if room.State ~= "Lobby" then
+		if room.State == "Starting" or room.State == "LoadingMatch"
+			or room.State == "Countdown" or room.State == "InProgress"
+			or room.State == "RoundIntermission" then
+			return nil, "MATCH_ALREADY_STARTING"
+		end
+		return nil, "INVALID_STATE"
+	end
 	local mode = Modes.Get(room.Config.ModeId); local eligible = 0
 	local teamCounts = { ALPHA = 0, OMEGA = 0 }
 	for _, candidate in room.Members do if candidate.TeamId then teamCounts[candidate.TeamId] += 1 end end
@@ -257,14 +364,18 @@ local function startMatch(player)
 	end
 	if eligible < mode.StartMinimumPlayers then return nil, "NOT_ENOUGH_PLAYERS" end
 	room.State = "Starting"; publish(room)
-	if not matchService:StartRoom(room) then room.State = "Lobby"; publish(room); return nil, "MATCH_START_FAILED" end
-	room.State = "Countdown"; publish(room)
+	if not matchService:StartRoom(room) then
+		room.State = "Lobby"
+		publish(room)
+		warn("[BLIKK ROOM] Match entry failed: MATCH_START_FAILED")
+		return nil, "MATCH_START_FAILED"
+	end
 	return snapshot(room, false)
 end
 
 local function transfer(player, targetUserId)
 	local room = playerRoom[player]; local member = room and room.Members[player]
-	if not member or not member.IsRoomLeader or type(targetUserId) ~= "number" then return nil, "NOT_ROOM_LEADER" end
+	if not member or not member.IsRoomLeader or not isFiniteInteger(targetUserId) then return nil, "NOT_ROOM_LEADER" end
 	local target = Players:GetPlayerByUserId(targetUserId)
 	if not target or not room.Members[target] then return nil, "INVALID_TARGET" end
 	migrateLeader(room, room.Members[target]); return snapshot(room, false)
@@ -282,10 +393,20 @@ end
 
 local function kickMember(player, targetUserId)
 	local room = playerRoom[player]; local member = room and room.Members[player]
-	if not member or not member.IsRoomLeader or room.State ~= "Lobby" or type(targetUserId) ~= "number" or targetUserId == player.UserId then return nil, "NOT_PERMITTED" end
+	if not member or not member.IsRoomLeader or room.State ~= "Lobby"
+		or not isFiniteInteger(targetUserId) or targetUserId == player.UserId then
+		return nil, "NOT_PERMITTED"
+	end
 	local target = Players:GetPlayerByUserId(targetUserId)
 	if not target or playerRoom[target] ~= room then return nil, "INVALID_TARGET" end
-	removePlayer(target); updateRemote:FireClient(target, { Warning = "REMOVED_FROM_ROOM" }); return snapshot(room, true)
+	local departure = removePlayer(target)
+	updateRemote:FireClient(target, {
+		Warning = "REMOVED_FROM_ROOM",
+		RoomId = departure and departure.RoomId or room.RoomId,
+		Revision = departure and departure.Revision or room.Revision,
+		RoomClosed = departure and departure.Closed or false,
+	})
+	return snapshot(room, true)
 end
 
 local operations = { Create = createRoom, JoinLocal = joinLocal, SetReady = setReady, SetTeam = setTeam, Start = startMatch, TransferLeader = transfer, UpdateConfig = updateConfiguration, Kick = kickMember }
@@ -299,17 +420,44 @@ function RoomService:GetLocalListings()
 		if room.Config.IsPublic and room.State ~= "Closing" then
 			local count = 0; for _ in room.Members do count += 1 end
 			local mode = Modes.Get(room.Config.ModeId)
-			table.insert(result, { RoomId = room.RoomId, Name = room.Name, LeaderUserId = room.RoomLeaderUserId, ModeId = room.Config.ModeId, MapId = room.Config.MapId, CurrentPlayers = count, MaximumPlayers = room.Config.MaximumPlayers, State = room.State, IsPublic = true, JoinInProgressEnabled = room.Config.JoinInProgressEnabled, Joinable = isJoinable(room, false), LateJoinBehavior = mode.LateJoinBehavior, UpdatedAtUnix = os.time() })
+			table.insert(result, { RoomId = room.RoomId, Name = room.Name, LeaderUserId = room.RoomLeaderUserId, ModeId = room.Config.ModeId, MapId = room.Config.MapId, CurrentPlayers = count, MaximumPlayers = room.Config.MaximumPlayers, State = room.State, IsPublic = true, JoinInProgressEnabled = room.Config.JoinInProgressEnabled, Joinable = isJoinable(room, false), LateJoinBehavior = mode.LateJoinBehavior, Revision = room.Revision, UpdatedAtUnix = os.time() })
 		end
 	end
 	return result
 end
 function RoomService:SetDirectoryService(service) directoryService = service end
-function RoomService:CreateForPlayer(player, payload) return createRoom(player, payload) end
+function RoomService:CreateForPlayer(player, payload, suppressDirectoryPublication)
+	return createRoom(player, payload, suppressDirectoryPublication)
+end
 function RoomService:JoinForPlayer(player, payload) return joinLocal(player, payload) end
+function RoomService:LeavePlayer(player) return removePlayer(player) end
+function RoomService:GetMatchSnapshot(player)
+	return matchService and matchService:GetSnapshot(player) or nil
+end
+
+function RoomService:IsReservationCurrent(player, room, generation)
+	return type(room) == "table" and room.ReservationPending == true
+		and room.ReservationGeneration == generation
+		and player.Parent == Players
+		and rooms[room.RoomId] == room
+		and playerRoom[player] == room
+		and room.Members[player] ~= nil
+end
+
+function RoomService:ReleaseForTeleport(player, expectedRoom, generation)
+	local room = playerRoom[player]
+	if room ~= expectedRoom or not self:IsReservationCurrent(player, room, generation) then return false end
+	room.ReservationPending = false
+	room.ReservationGeneration += 1
+	room.Members[player] = nil
+	playerRoom[player] = nil
+	rooms[room.RoomId] = nil
+	return true
+end
 
 function RoomService:AcceptTeleportedPlayer(player, record, requestedRole)
-	if type(record) ~= "table" or type(record.RoomId) ~= "string" or playerRoom[player] then return false end
+	if type(record) ~= "table" or type(record.RoomId) ~= "string"
+		or not isFiniteInteger(record.RoomLeaderUserId) or playerRoom[player] then return false end
 	local room = rooms[record.RoomId]
 	if not room then
 		local configuration = validateConfiguration(record.Config)
@@ -317,15 +465,38 @@ function RoomService:AcceptTeleportedPlayer(player, record, requestedRole)
 		room = { RoomId = record.RoomId, Name = record.Name, State = "Lobby", RoomLeaderUserId = record.RoomLeaderUserId, JoinCode = record.JoinCode, Config = configuration, Members = {}, Revision = 0, CreatedAtUnix = record.CreatedAtUnix or os.time() }
 		rooms[room.RoomId] = room
 	end
-	local isSpectator = requestedRole == "Spectator"
+	local isLeader = player.UserId == room.RoomLeaderUserId
+	local isSpectator = requestedRole == "Spectator" and not isLeader
 	if not isJoinable(room, isSpectator) then return false end
-	local memberCount, spectatorCount = 0, 0; for _, member in room.Members do if member.IsSpectator then spectatorCount += 1 else memberCount += 1 end end
-	if (isSpectator and spectatorCount >= room.Config.SpectatorSlots) or (not isSpectator and memberCount >= room.Config.MaximumPlayers) then return false end
-	local isLeader = player.UserId == room.RoomLeaderUserId or not next(room.Members)
+	local memberCount, spectatorCount = 0, 0
+	local hasLeader = false
+	for _, member in room.Members do
+		if member.IsSpectator then spectatorCount += 1 else memberCount += 1 end
+		if member.IsRoomLeader then hasLeader = true end
+	end
+	local fighterCapacity = room.Config.MaximumPlayers
+	if not isLeader and not hasLeader then fighterCapacity = math.max(0, fighterCapacity - 1) end
+	if (isSpectator and spectatorCount >= room.Config.SpectatorSlots)
+		or (not isSpectator and memberCount >= fighterCapacity) then return false end
 	local member = addMember(room, player, isSpectator)
 	if not member then return false end
 	member.IsRoomLeader = isLeader
-	if isLeader then room.RoomLeaderUserId = player.UserId end
+	if isLeader then
+		room.LeaderArrivalGeneration = (room.LeaderArrivalGeneration or 0) + 1
+		for _, candidate in room.Members do candidate.IsRoomLeader = candidate == member end
+	elseif not hasLeader and not room.LeaderArrivalScheduled then
+		room.LeaderArrivalScheduled = true
+		room.LeaderArrivalGeneration = (room.LeaderArrivalGeneration or 0) + 1
+		local arrivalGeneration = room.LeaderArrivalGeneration
+		task.delay(Config.Directory.FounderArrivalTimeoutSeconds, function()
+			if rooms[room.RoomId] ~= room or room.LeaderArrivalGeneration ~= arrivalGeneration then return end
+			for _, candidate in room.Members do
+				if candidate.IsRoomLeader then return end
+			end
+			room.LeaderArrivalScheduled = false
+			migrateLeader(room)
+		end)
+	end
 	publish(room)
 	return true
 end
@@ -336,8 +507,30 @@ function RoomService:Init(remoteRegistry, profileService)
 	profiles = profileService
 	remote.OnServerInvoke = function(player, operation, payload)
 		if type(operation) ~= "string" or #operation > 32 then return { Success = false, Code = "INVALID_OPERATION" } end
-		if operation == "Snapshot" then local room = playerRoom[player]; return { Success = true, Snapshot = room and snapshot(room, false) } end
-		if operation == "Leave" then removePlayer(player); return { Success = true } end
+		local currentRoom = playerRoom[player]
+		if currentRoom and currentRoom.ReservationPending then
+			return { Success = false, Code = "ROOM_RESERVATION_IN_PROGRESS" }
+		end
+		if not RunService:IsStudio() and (operation == "Create" or operation == "JoinLocal") then
+			return { Success = false, Code = "DIRECTORY_ROUTE_REQUIRED" }
+		end
+		if operation == "Snapshot" then
+			local room = playerRoom[player]
+			return {
+				Success = true,
+				Snapshot = room and snapshot(room, false),
+				MatchSnapshot = matchService and matchService:GetSnapshot(player) or nil,
+			}
+		end
+		if operation == "Leave" then
+			local departure = removePlayer(player)
+			return {
+				Success = true,
+				LeftRoomId = departure and departure.RoomId or nil,
+				Revision = departure and departure.Revision or nil,
+				RoomClosed = departure and departure.Closed or false,
+			}
+		end
 		if not RateLimiter.Allow(limiter, player, "Mutation", Config.RoomMutationCooldownSeconds, 2) then return { Success = false, Code = "RATE_LIMITED" } end
 		local handler = operations[operation]
 		if not handler then return { Success = false, Code = "UNKNOWN_OPERATION" } end
@@ -376,7 +569,44 @@ function RoomService:SetMatchPhase(roomId, state)
 	local room = rooms[roomId]
 	if not room then return end
 	room.State = state
+	if state == "LoadingMatch" then
+		for _, member in room.Members do
+			if not member.IsSpectator then member.State = "Loading" end
+		end
+	elseif state == "InProgress" then
+		for _, member in room.Members do
+			if member.State == "Loading" then member.State = "Alive" end
+		end
+	elseif state == "PostMatch" then
+		for _, member in room.Members do
+			member.State = member.IsSpectator and "Spectating" or "PostMatch"
+		end
+	end
 	publish(room)
+end
+
+function RoomService:SetMemberMatchState(player, state)
+	local room = playerRoom[player]
+	local member = room and room.Members[player]
+	if not member or type(state) ~= "string" then return false end
+	member.State = state
+	publish(room)
+	return true
+end
+
+function RoomService:SetMatchMemberStates(roomId, statesByPlayer)
+	local room = rooms[roomId]
+	if not room or type(statesByPlayer) ~= "table" then return false end
+	local changed = false
+	for player, state in statesByPlayer do
+		local member = room.Members[player]
+		if member and type(state) == "string" and member.State ~= state then
+			member.State = state
+			changed = true
+		end
+	end
+	if changed then publish(room) end
+	return true
 end
 
 function RoomService:ReturnToLobby(roomId)

@@ -6,13 +6,13 @@ The server owns one versioned character-profile account per Roblox `UserId`. Cli
 create, update, delete, select, or snapshot-request intent and render only server-confirmed snapshots.
 `DataStoreService` is used exclusively by `CharacterProfileService` on the server.
 
-The durable store remains `BLIKKCharacterProfilesV1`; keys use `Player_<UserId>`. Schema version 2
+The durable store remains `BLIKKCharacterProfilesV1`; keys use `Player_<UserId>`. Schema version 3
 stores up to five fighters, a selected fighter ID, server timestamps, semantic input bindings, and
 the camera, sound, UI, chat, and effects preferences exposed by the settings interface. Profile IDs
 are server-generated GUID strings. Appearance values remain the named definitions already exposed
 by `ProfileConfig`.
 
-Schema-1 records migrate in place during load. The migration preserves fighter records, generated
+Schema-1 and schema-2 records migrate in place during load. The migration preserves fighter records, generated
 IDs, selection, levels, appearance, and timestamps while adding validated default bindings and
 preferences. Unsupported future schemas are rejected and never overwritten. Binding tokens and
 preference values are allowlisted and bounded on the server; protected interface actions retain at
@@ -46,6 +46,25 @@ Profile transport discovery is independent from account readiness. The client ch
 remote folder immediately, observes it for a bounded eight-second window when necessary, and retries
 discovery when the Profiles screen is entered. A late or temporarily failed request cannot erase the
 last confirmed snapshot or downgrade a ready account with an older loading response.
+
+Profiles, Character Creation, and Operations Hub share one local `ViewportFrame` preview path. It
+prioritizes a repository-owned canonical BLIKK R15 rig, then a neutral forced-R15 description, then
+a previously validated cached description, with a bounded repository-owned visible fallback. The
+path proves core limbs through the connected Motor6D graph, removes detached or extreme clone-only
+parts, excludes the invisible root, and validates final bounds and camera distance before display.
+Preview diagnostics are deduplicated and disabled by default.
+
+The visually accepted Sprint 009 implementation at `35a4356` stabilized the model for one frame,
+used `GetBoundingBox`, translated that center to half-height above the preview origin, and delegated
+distance to the unchanged `MenuCamera`. The repaired path preserves those centering and camera
+semantics with rig-aware sanitization. Preview identity currently resolves first from the local
+user's native Roblox avatar through `CreateHumanoidModelFromUserIdAsync`, preserving R6 or R15.
+Rig-specific core body maps drive validation and framing, while finite nonzero bounds are camera-
+clamped instead of rejected for preferred proportions. Canonical BLIKK sources remain later
+candidates until an approved fighter rig exists. Profile cosmetics apply only to BLIKK fighter
+sources. The primitive diagnostic rig
+is disabled for normal operation; total failure remains visible as `PREVIEW UNAVAILABLE — RESELECT
+TO RETRY`.
 
 Transient interface state, camera orientation, free-look state, character transforms and velocity,
 current equipment, chat input, dash state, preview state, and runtime objects are deliberately not
