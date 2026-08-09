@@ -58,6 +58,24 @@ Primary Action maps to slash and Alternate Action maps to block while the Melee 
 
 The provisional slash phases are 0.025 seconds anticipation, 0.115 seconds active presentation, and 0.160 seconds recovery. Block may cancel slash from 0.055 through 0.205 seconds after acceptance, with 0.080 seconds of early buffering. Per-weapon cancellation, forgiveness, blend, and lockout values are centralized in `TechniqueConfig` and require feel testing.
 
+`KatanaSlash1` is the first approved authored-ground-slash integration point. Its original BLIKK
+motion is a compact one-handed right-to-left lateral cut at waist-to-lower-rib height, authored for
+the exact upgraded R15 gameplay rig. It may key only Waist, both shoulders, both elbows, RightWrist,
+and an optional Neck counter-rotation no greater than 6 degrees. Root and lower-body joints remain
+unkeyed so locomotion, jump, dash, and wall systems retain ownership. The complete authoring,
+publication, and asset-registration contract is in `docs/ANIMATION_ASSETS.md`.
+
+Gameplay code—not animation length or markers—continues to own slash acceptance, the exact
+0.025/0.115/0.160-second phases, the 0.055–0.205 cancel window, the 0.080-second input buffer, and
+the 0.025–0.140 trail window. A valid slash track runs at Action priority and 1.0 speed with its
+slash-specific fades. While it plays, the melee controller releases its competing procedural ground
+slash claim; movement and unkeyed lower-body animation continue. If the asset is absent, rejected,
+or fails to load/play, the unchanged procedural slash resumes immediately without affecting timing.
+Block, switching, unequip, death, replacement, room exit, stronger presentation, and controller
+teardown stop and release the authored track. The existing two-variant gameplay alternation is
+preserved; both grounded variants may use `KatanaSlash1` until a separately approved
+`KatanaSlash2` exists.
+
 ## Sprint 025.0 training arsenal
 
 The Training Katana remains presentation-only. The B-8 shotgun has a narrow server-authoritative

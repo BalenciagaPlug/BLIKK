@@ -7,6 +7,7 @@ local PoseCoordinator = require(script.Parent.Parent.Character.PoseCoordinator)
 local Shared = ReplicatedStorage:FindFirstChild("Shared")
 assert(Shared, "Shared must be acquired by the client composition root before melee presentation")
 local CharacterDependency = require(Shared.Character.CharacterDependency)
+local GroundSlashAnimationConfig = require(Shared.Combat.GroundSlashAnimationConfig)
 local Config = require(Shared.Combat.MeleePresentationConfig)
 local TrainingKatanaPresentation = require(Shared.Combat.TrainingKatanaPresentation)
 local MultiplayerConfig = require(Shared.Multiplayer.MultiplayerConfig)
@@ -28,6 +29,7 @@ local weaponModel
 local gripJoint
 local trail
 local connections = {}
+local lifetimeConnections = {}
 local state = "Holstered"
 local stateStarted = 0
 local generation = 0
@@ -42,11 +44,18 @@ local dashActive = false
 local wallPresentationActive = false
 local isInitialised = false
 local authoredTrack
+local groundSlashTrack
+local groundSlashTrackAnimationId
+local groundSlashStoppedConnection
+local authoredGroundSlashActive = false
+local warnedGroundSlashAnimationIds = {}
 local playHook
 local playAuthoredHook
 local slashVariant = 1
 local lastSlashAcceptedAt = -math.huge
 local visualState = "Holstered"
+local renderStepBound = false
+local isDestroyed = false
 
 local function diagnose(message)
 	if Config.Diagnostics.Enabled then print("[BLIKK MELEE] " .. message) end
@@ -57,15 +66,26 @@ local function disconnectCharacterConnections()
 	table.clear(connections)
 end
 
+local function ownLifetimeConnection(connection)
+	table.insert(lifetimeConnections, connection)
+	return connection
+end
+
+local function disconnectLifetimeConnections()
+	for _, connection in lifetimeConnections do connection:Disconnect() end
+	table.clear(lifetimeConnections)
+end
+
 local function resetPose()
 	PoseCoordinator:Release("Melee")
 end
 
 local function setState(nextState)
 	if state == nextState then return end
+	local previousState = state
 	state = nextState
 	stateStarted = os.clock()
-	if playHook then playHook(nextState) end
+	if playHook then playHook(nextState, previousState) end
 	Controller.StateChanged:Fire(nextState)
 end
 
@@ -136,29 +156,156 @@ local function isMeleeActive()
 	return fighter.ActiveWeaponSlot == "Melee" and fighter.Weapons.Melee == "TrainingKatana"
 end
 
-playAuthoredHook = function(hookName, looped, priority)
-	if authoredTrack then authoredTrack:Stop(0.04); authoredTrack:Destroy(); authoredTrack = nil end
-	if not humanoid or not isMeleeActive() then return end
+local function stopTrack(track, fadeOutSeconds)
+	if not track then return end
+	pcall(function()
+		track:Stop(fadeOutSeconds)
+	end)
+end
+
+local function stopAuthoredTrack(fadeOutSeconds)
+	local track = authoredTrack
+	authoredTrack = nil
+	authoredGroundSlashActive = false
+	if not track then return end
+	stopTrack(track, fadeOutSeconds)
+	if track ~= groundSlashTrack then
+		pcall(function()
+			track:Destroy()
+		end)
+	end
+end
+
+local function destroyGroundSlashTrack()
+	local track = groundSlashTrack
+	groundSlashTrack = nil
+	groundSlashTrackAnimationId = nil
+	authoredGroundSlashActive = false
+	if authoredTrack == track then authoredTrack = nil end
+	if groundSlashStoppedConnection then
+		groundSlashStoppedConnection:Disconnect()
+		groundSlashStoppedConnection = nil
+	end
+	if track then
+		stopTrack(track, 0)
+		pcall(function()
+			track:Destroy()
+		end)
+	end
+end
+
+local function warnGroundSlashAnimationOnce(animationId, message)
+	if warnedGroundSlashAnimationIds[animationId] then return end
+	warnedGroundSlashAnimationIds[animationId] = true
+	warn(string.format("[BLIKK MELEE] KatanaSlash1 unavailable for this character (%s): %s", animationId, message))
+end
+
+local function loadGroundSlashTrack(animationId)
+	if groundSlashTrack and groundSlashTrackAnimationId == animationId then return groundSlashTrack end
+	destroyGroundSlashTrack()
+	if not humanoid or humanoid.RigType ~= Enum.HumanoidRigType.R15 then return nil end
+
+	local animator = humanoid:FindFirstChildOfClass("Animator")
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Parent = humanoid
+	end
+	local animation = Instance.new("Animation")
+	animation.AnimationId = animationId
+	local loaded, trackOrError = pcall(function()
+		return animator:LoadAnimation(animation)
+	end)
+	animation:Destroy()
+	if not loaded or not trackOrError then
+		warnGroundSlashAnimationOnce(animationId, if loaded then "Animator returned no track" else tostring(trackOrError))
+		return nil
+	end
+
+	local track = trackOrError
+	track.Priority = Enum.AnimationPriority.Action
+	track.Looped = false
+	groundSlashTrack = track
+	groundSlashTrackAnimationId = animationId
+	local trackCharacterGeneration = characterGeneration
+	groundSlashStoppedConnection = track.Stopped:Connect(function()
+		if groundSlashTrack ~= track then return end
+		if authoredTrack == track then authoredTrack = nil end
+		if trackCharacterGeneration == characterGeneration then authoredGroundSlashActive = false end
+	end)
+	return track
+end
+
+playAuthoredHook = function(hookName, looped, priority, replacementFadeOutSeconds)
+	stopAuthoredTrack(replacementFadeOutSeconds or GroundSlashAnimationConfig.CancelFadeOutSeconds)
+	if not humanoid or not isMeleeActive() then return false end
 	local animationId = fighterController:GetAnimationHook("Melee", hookName)
-	if type(animationId) ~= "string" or animationId == "" or not animationId:match("^rbxassetid://%d+$") then return end
+	if type(animationId) ~= "string" or animationId == "" or not animationId:match("^rbxassetid://%d+$") then return false end
+	if hookName == GroundSlashAnimationConfig.HookName then
+		if GroundSlashAnimationConfig.ReferenceOnlyAssetIds[animationId] then
+			warnGroundSlashAnimationOnce(animationId, "reference-only animation IDs are not runtime approved")
+			return false
+		end
+		local track = loadGroundSlashTrack(animationId)
+		if not track then return false end
+		authoredTrack = track
+		authoredGroundSlashActive = true
+		local played, playError = pcall(function()
+			track:Play(
+				GroundSlashAnimationConfig.FadeInSeconds,
+				1,
+				GroundSlashAnimationConfig.PlaybackSpeed
+			)
+		end)
+		if not played then
+			warnGroundSlashAnimationOnce(animationId, tostring(playError))
+			destroyGroundSlashTrack()
+			return false
+		end
+		return true
+	end
+
 	local animator = humanoid:FindFirstChildOfClass("Animator") or Instance.new("Animator", humanoid)
 	local animation = Instance.new("Animation")
 	animation.AnimationId = animationId
-	authoredTrack = animator:LoadAnimation(animation)
+	local loaded, trackOrError = pcall(function()
+		return animator:LoadAnimation(animation)
+	end)
 	animation:Destroy()
-	authoredTrack.Priority = priority
-	authoredTrack.Looped = looped
-	authoredTrack:Play(0.04)
+	if not loaded or not trackOrError then return false end
+	local track = trackOrError
+	track.Priority = priority
+	track.Looped = looped
+	local played = pcall(function()
+		track:Play(0.04)
+	end)
+	if not played then
+		track:Destroy()
+		return false
+	end
+	authoredTrack = track
+	return true
 end
 
-playHook = function(nextState)
+playHook = function(nextState, previousState)
 	local hookByState = {
 		Equipping = "KatanaEquip", Unequipping = "KatanaUnequip", MeleeIdle = if isAirborne() then "KatanaAirIdle" else "KatanaIdle",
 		Slashing = if isAirborne() then "KatanaAirSlash" else "KatanaSlash1",
 		Blocking = if isAirborne() then "KatanaAirBlock" else "KatanaBlockEnter",
 	}
 	local hook = hookByState[nextState]
-	if hook then playAuthoredHook(hook, nextState == "MeleeIdle", if nextState == "MeleeIdle" then Enum.AnimationPriority.Movement else Enum.AnimationPriority.Action) end
+	local fadeOutSeconds = if previousState == "Slashing" and nextState == "MeleeIdle"
+		then GroundSlashAnimationConfig.CompletionFadeOutSeconds
+		else GroundSlashAnimationConfig.CancelFadeOutSeconds
+	if not hook then
+		stopAuthoredTrack(fadeOutSeconds)
+		return false
+	end
+	return playAuthoredHook(
+		hook,
+		nextState == "MeleeIdle",
+		if nextState == "MeleeIdle" then Enum.AnimationPriority.Movement else Enum.AnimationPriority.Action,
+		fadeOutSeconds
+	)
 end
 
 local function updateTrail(enabled)
@@ -187,7 +334,7 @@ local function interrupt(nextState)
 	table.clear(heldBlockActions)
 	bufferedBlockAt = nil
 	updateTrail(false)
-	if authoredTrack then authoredTrack:Stop(0.03); authoredTrack:Destroy(); authoredTrack = nil end
+	stopAuthoredTrack(GroundSlashAnimationConfig.CancelFadeOutSeconds)
 	resetPose()
 	setState(nextState or "Interrupted")
 end
@@ -271,6 +418,7 @@ local function poseForState(now)
 			if blockHeld and bufferedBlockAt then enterBlock(false) else setState("MeleeIdle"); setVisualState(if airborne then "AirIdle" else "GroundIdle") end
 		end
 	end
+	if state == "Slashing" and authoredGroundSlashActive then return nil end
 	if state == "Holstered" or state == "Interrupted" or state == "Equipping" or state == "Unequipping" then return nil end
 	if dashActive and not airborne and state ~= "Slashing" and state ~= "Blocking" then return nil end
 	local poses = {}
@@ -326,10 +474,12 @@ end
 
 local function bindCharacter(nextCharacter)
 	characterGeneration += 1
+	table.clear(warnedGroundSlashAnimationIds)
 	local bindCharacterGeneration = characterGeneration
 	pendingCharacter = nextCharacter
 	if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 	interrupt("Interrupted")
+	destroyGroundSlashTrack()
 	disconnectCharacterConnections()
 	if weaponModel then weaponModel:Destroy() end
 	gripJoint = nil
@@ -363,7 +513,10 @@ local function bindCharacter(nextCharacter)
 			setVisualState(if isMeleeActive() then "GroundIdle" else "Holstered")
 			character:SetAttribute("BLIKK_ClientMeleeReady", true)
 			table.insert(connections, humanoid.Died:Connect(function()
-				if bindCharacterGeneration == characterGeneration then interrupt("Interrupted") end
+				if bindCharacterGeneration == characterGeneration then
+					interrupt("Interrupted")
+					destroyGroundSlashTrack()
+				end
 			end))
 			table.insert(connections, humanoid.StateChanged:Connect(function(_, nextHumanoidState)
 				if bindCharacterGeneration ~= characterGeneration or character ~= nextCharacter then return end
@@ -394,14 +547,14 @@ end
 function Controller:GetState() return state end
 
 function Controller:Init(inputManagerValue, fighterControllerValue, movementEngineValue, wallInteractionController)
-	if isInitialised then return end
+	if isInitialised or isDestroyed then return end
 	isInitialised = true
 	inputManager, fighterController, movementEngine = inputManagerValue, fighterControllerValue, movementEngineValue
-	inputManager.ActionBegan.Event:Connect(function(action)
+	ownLifetimeConnection(inputManager.ActionBegan.Event:Connect(function(action)
 		if isMeleeActive() and (action == "Primary" or action == "Slash") then acceptSlash()
 		elseif isMeleeActive() and (action == "Secondary" or action == "Block") then beginBlock(action) end
-	end)
-	inputManager.ActionEnded.Event:Connect(function(action)
+	end))
+	ownLifetimeConnection(inputManager.ActionEnded.Event:Connect(function(action)
 		if action == "Secondary" or action == "Block" then
 			heldBlockActions[action] = nil
 			blockHeld = next(heldBlockActions) ~= nil
@@ -419,14 +572,14 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 				end)
 			end
 		end
-	end)
-	inputManager.GameplayEnabledChanged.Event:Connect(function(enabled)
+	end))
+	ownLifetimeConnection(inputManager.GameplayEnabledChanged.Event:Connect(function(enabled)
 		if not enabled then interrupt(if isMeleeActive() then "MeleeIdle" else "Holstered") end
-	end)
-	inputManager.SuppressionChanged.Event:Connect(function(suppressed)
+	end))
+	ownLifetimeConnection(inputManager.SuppressionChanged.Event:Connect(function(suppressed)
 		if suppressed then interrupt(if isMeleeActive() then "MeleeIdle" else "Holstered") end
-	end)
-	fighterController.LoadoutChanged.Event:Connect(function(changeType)
+	end))
+	ownLifetimeConnection(fighterController.LoadoutChanged.Event:Connect(function(changeType)
 		if changeType == "ActiveWeaponSlot" and character then
 			if isMeleeActive() then
 				local wasHolstered = state == "Holstered"
@@ -443,29 +596,31 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 				attachWeapon("Holstered")
 			end
 		end
-	end)
-	movementEngine.DashStarted.Event:Connect(function()
+	end))
+	ownLifetimeConnection(movementEngine.DashStarted.Event:Connect(function()
 		dashActive = true
+		stopAuthoredTrack(GroundSlashAnimationConfig.CancelFadeOutSeconds)
 		resetPose()
-	end)
-	movementEngine.DashEnded.Event:Connect(function() dashActive = false end)
-	wallInteractionController.StateChanged.Event:Connect(function(nextState)
+	end))
+	ownLifetimeConnection(movementEngine.DashEnded.Event:Connect(function() dashActive = false end))
+	ownLifetimeConnection(wallInteractionController.StateChanged.Event:Connect(function(nextState)
 		wallPresentationActive = nextState == "VerticalWallRun"
 			or nextState == "HorizontalWallRun"
 			or nextState == "WallJumpRecovery"
 		if wallPresentationActive then
+			stopAuthoredTrack(GroundSlashAnimationConfig.CancelFadeOutSeconds)
 			resetPose()
 			if isMeleeActive() and state == "MeleeIdle" then setVisualState("WallReady") end
 		elseif isMeleeActive() and state == "MeleeIdle" then
 			setVisualState(if isAirborne() then "AirIdle" else "GroundIdle")
 		end
-	end)
-	SessionSettings.Changed.Event:Connect(function(key)
+	end))
+	ownLifetimeConnection(SessionSettings.Changed.Event:Connect(function(key)
 		if key == "EffectsQuality" or key == "ReducedEffects" or key == "BladeTrailVisible"
 			or key == "BladeTrailOpacity" or key == "WeaponTrailsEnabled" then updateWeaponQuality() end
-	end)
-	player.CharacterAdded:Connect(bindCharacter)
-	player.CharacterRemoving:Connect(function(removingCharacter)
+	end))
+	ownLifetimeConnection(player.CharacterAdded:Connect(bindCharacter))
+	ownLifetimeConnection(player.CharacterRemoving:Connect(function(removingCharacter)
 		if pendingCharacter == removingCharacter then
 			characterGeneration += 1
 			pendingCharacter = nil
@@ -474,13 +629,39 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 		if character == removingCharacter then
 			characterGeneration += 1
 			interrupt("Interrupted")
+			destroyGroundSlashTrack()
 			disconnectCharacterConnections()
 			if weaponModel then weaponModel:Destroy() end
 			character, humanoid, weaponModel, gripJoint, trail = nil, nil, nil, nil, nil
 		end
-	end)
+	end))
 	if player.Character then bindCharacter(player.Character) end
 	RunService:BindToRenderStep("BLIKKMeleePresentation", Enum.RenderPriority.Character.Value + 3, applyPose)
+	renderStepBound = true
 end
+
+function Controller:Destroy()
+	if isDestroyed then return end
+	isDestroyed = true
+	characterGeneration += 1
+	if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
+	interrupt("Interrupted")
+	destroyGroundSlashTrack()
+	disconnectCharacterConnections()
+	disconnectLifetimeConnections()
+	if renderStepBound then
+		RunService:UnbindFromRenderStep("BLIKKMeleePresentation")
+		renderStepBound = false
+	end
+	if weaponModel then weaponModel:Destroy() end
+	character, humanoid, weaponModel, gripJoint, trail, pendingCharacter = nil, nil, nil, nil, nil, nil
+	Controller.StateChanged:Destroy()
+	Controller.TechniqueHook:Destroy()
+	Controller.SemanticEvent:Destroy()
+end
+
+ownLifetimeConnection(script.Destroying:Connect(function()
+	Controller:Destroy()
+end))
 
 return Controller
