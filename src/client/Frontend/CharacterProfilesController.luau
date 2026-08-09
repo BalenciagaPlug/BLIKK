@@ -398,7 +398,6 @@ function Controller:CreatePage(parent, navigation, fighterController)
 		else
 			status.Text = message
 		end
-		updateSelectedProfilePresentation()
 	end
 
 	local refresh
@@ -497,6 +496,7 @@ function Controller:CreatePage(parent, navigation, fighterController)
 	function object:SetVisible(visible)
 		page.Visible = visible
 		if visible then
+			CharacterPreviewController:BeginScreenSession()
 			if transportStatus ~= "Ready" then beginRemoteDiscovery() end
 			if transportStatus == "Ready" and accountStatus ~= "Ready" then requestSnapshot() end
 			if isRequestReady() and #profiles == 0 then
@@ -509,7 +509,6 @@ function Controller:CreatePage(parent, navigation, fighterController)
 			refresh()
 			profileScope:SetActive(true)
 			profileScope:Refresh(profileRowsByIdentity[selectedProfileRowIdentity] or profileRows[1] or create)
-			updateSelectedProfilePresentation()
 		else
 			profileScope:SetActive(false)
 			CharacterPreviewController:Stop()
@@ -522,7 +521,6 @@ function Controller:CreatePage(parent, navigation, fighterController)
 			return
 		end
 		refresh()
-		updateSelectedProfilePresentation()
 	end)
 	return object
 end

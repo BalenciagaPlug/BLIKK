@@ -3,6 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local ActionBuffer = require(ReplicatedStorage.Shared.Input.ActionBuffer)
+local CharacterDependency = require(ReplicatedStorage.Shared.Character.CharacterDependency)
 local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
 local MovementConfig = require(script.Parent.MovementConfig)
 local WallConfig = require(script.Parent.TechniqueConfig).Wall
@@ -36,6 +37,8 @@ local generation = 0
 local humanoid
 local rootPart
 local character
+local characterBindingTarget
+local cancelDependencyWatch
 local stateConnection
 local cameraController
 local heldDirections = {}
@@ -620,6 +623,8 @@ end
 function MovementEngine:BindCharacter(nextCharacter)
 	generation += 1
 	local bindGeneration = generation
+	characterBindingTarget = nextCharacter
+	if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 	finishDash(true)
 	if stateConnection then stateConnection:Disconnect() end
 	stateConnection = nil
@@ -630,45 +635,45 @@ function MovementEngine:BindCharacter(nextCharacter)
 	returnDashAvailable, returnDashExpiresAt = false, -math.huge
 	setMovementState("AirborneFree")
 	character, humanoid, rootPart = nil, nil, nil
-	local dependencyDeadline = os.clock() + MultiplayerConfig.CharacterDependencyTimeoutSeconds
-	local nextHumanoid = nextCharacter:FindFirstChild("Humanoid")
-		or nextCharacter:WaitForChild("Humanoid", math.max(0, dependencyDeadline - os.clock()))
-	local nextRootPart = nextCharacter:FindFirstChild("HumanoidRootPart")
-		or nextCharacter:WaitForChild("HumanoidRootPart", math.max(0, dependencyDeadline - os.clock()))
 	local player = Players.LocalPlayer
-	if bindGeneration ~= generation or player.Character ~= nextCharacter
-		or not nextHumanoid or not nextHumanoid:IsA("Humanoid")
-		or not nextRootPart or not nextRootPart:IsA("BasePart") then
-		if bindGeneration == generation and player.Character == nextCharacter then
-			warn("[BLIKK MOVEMENT] Character bind timed out waiting for required dependencies.")
-		end
-		return
-	end
-	character, humanoid, rootPart = nextCharacter, nextHumanoid, nextRootPart
-	humanoid.WalkSpeed = MovementConfig.Ground.WalkSpeedStudsPerSecond
-	humanoid.UseJumpPower = false
-	humanoid.JumpHeight = jumpConfig.HeightStuds
-	airDashCount, lastDashTime, lastDirectionPress, heldDirections = 0, -math.huge, {}, {}
-	wallContact, wallRun, lastWall = nil, nil, nil
-	lastGroundedAt = if humanoid.FloorMaterial ~= Enum.Material.Air then os.clock() else -math.huge
-	returnDashAvailable = false
-	measureCharacter()
-	setMovementState(if humanoid.FloorMaterial == Enum.Material.Air then "AirborneFree" else "Grounded")
-	stateConnection = humanoid.StateChanged:Connect(function(_, newState)
-		if bindGeneration ~= generation or character ~= nextCharacter then return end
-		if newState == Enum.HumanoidStateType.Landed or newState == Enum.HumanoidStateType.Running then
-			local wasAirborne = movementState ~= "Grounded"
-			airDashCount = 0
+	cancelDependencyWatch = CharacterDependency.ObserveHumanoidAndRoot(
+		nextCharacter,
+		MultiplayerConfig.CharacterDependencyTimeoutSeconds,
+		function(nextHumanoid, nextRootPart)
+			if bindGeneration ~= generation or characterBindingTarget ~= nextCharacter
+				or player.Character ~= nextCharacter then return end
+			character, humanoid, rootPart = nextCharacter, nextHumanoid, nextRootPart
+			humanoid.WalkSpeed = MovementConfig.Ground.WalkSpeedStudsPerSecond
+			humanoid.UseJumpPower = false
+			humanoid.JumpHeight = jumpConfig.HeightStuds
+			airDashCount, lastDashTime, lastDirectionPress, heldDirections = 0, -math.huge, {}, {}
 			wallContact, wallRun, lastWall = nil, nil, nil
+			lastGroundedAt = if humanoid.FloorMaterial ~= Enum.Material.Air then os.clock() else -math.huge
 			returnDashAvailable = false
-			finishDash(true)
-			setMovementState("Grounded")
-			if wasAirborne then MovementEngine.Landed:Fire(os.clock()) end
-		elseif newState == Enum.HumanoidStateType.Freefall and movementState == "JumpRising" then
-			setMovementState("AirborneFree")
+			measureCharacter()
+			setMovementState(if humanoid.FloorMaterial == Enum.Material.Air then "AirborneFree" else "Grounded")
+			stateConnection = humanoid.StateChanged:Connect(function(_, newState)
+				if bindGeneration ~= generation or character ~= nextCharacter then return end
+				if newState == Enum.HumanoidStateType.Landed or newState == Enum.HumanoidStateType.Running then
+					local wasAirborne = movementState ~= "Grounded"
+					airDashCount = 0
+					wallContact, wallRun, lastWall = nil, nil, nil
+					returnDashAvailable = false
+					finishDash(true)
+					setMovementState("Grounded")
+					if wasAirborne then MovementEngine.Landed:Fire(os.clock()) end
+				elseif newState == Enum.HumanoidStateType.Freefall and movementState == "JumpRising" then
+					setMovementState("AirborneFree")
+				end
+			end)
+			character:SetAttribute("BLIKK_ClientMovementReady", true)
+		end,
+		function()
+			if bindGeneration == generation and player.Character == nextCharacter then
+				warn("[BLIKK MOVEMENT] Character dependencies remain incomplete; continuing to observe the current character.")
+			end
 		end
-	end)
-	character:SetAttribute("BLIKK_ClientMovementReady", true)
+	)
 end
 
 function MovementEngine:Init(inputManager, gameplayCamera)
@@ -677,8 +682,10 @@ function MovementEngine:Init(inputManager, gameplayCamera)
 	local player = Players.LocalPlayer
 	player.CharacterAdded:Connect(function(nextCharacter) self:BindCharacter(nextCharacter) end)
 	player.CharacterRemoving:Connect(function(removingCharacter)
-		if removingCharacter ~= character then return end
+		if removingCharacter ~= characterBindingTarget then return end
 		generation += 1
+		characterBindingTarget = nil
+		if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 		finishDash(true)
 		if stateConnection then stateConnection:Disconnect(); stateConnection = nil end
 		wallContact, wallRun, lastWall = nil, nil, nil

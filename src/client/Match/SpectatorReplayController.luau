@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+local CharacterDependency = require(ReplicatedStorage.Shared.Character.CharacterDependency)
 local UINavigationController = require(script.Parent.Parent.UI.UINavigationController)
 
 local Controller = {}
@@ -10,9 +11,7 @@ local isInitialised = false
 local adoptMatchSnapshot = nil
 
 local function waitForRemote(parent, name, className, deadline)
-	local remainingSeconds = math.max(0, deadline - os.clock())
-	local remote = parent:FindFirstChild(name)
-		or parent:WaitForChild(name, remainingSeconds)
+	local remote = CharacterDependency.WaitForChildBefore(parent, name, deadline)
 	if not remote or not remote:IsA(className) then
 		warn(string.format("[BLIKK SPECTATOR] Missing %s %s; spectator controls are unavailable", className, name))
 		return nil

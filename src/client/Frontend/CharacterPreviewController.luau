@@ -2,22 +2,54 @@ local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 local MenuCamera = require(script.Parent.MenuCamera)
+local PreviewPoseAdapter = require(script.Parent.PreviewPoseAdapter)
+local MeleePresentationConfig = require(ReplicatedStorage.Shared.Combat.MeleePresentationConfig)
+local TrainingKatanaPresentation = require(ReplicatedStorage.Shared.Combat.TrainingKatanaPresentation)
 local ProfileConfig = require(ReplicatedStorage.Shared.Character.ProfileConfig)
+local StarterLoadout = require(ReplicatedStorage.Shared.Equipment.StarterLoadout)
+local WeaponDefinitions = require(ReplicatedStorage.Shared.Equipment.WeaponDefinitions)
 
 local Controller = {}
 Controller.IdleRequested = Instance.new("BindableEvent")
 
 local generation = 0
 local renderConnection = nil
-local viewportSizeConnection = nil
+local inspectionConnections = {}
+local timeoutThread = nil
+local currentIdleTrack = nil
 local currentViewport = nil
 local currentPreviewSource = "UNAVAILABLE"
 local cachedAvatarDescription = nil
-local cachedAvatarTemplate = nil
+local cachedAvatarRigType = nil
 local diagnosedOutliers = {}
-local PREVIEW_TIMEOUT_SECONDS = 12
+local retainedZoomDistance = nil
+local retainedYawRadians = nil
+
+local function resetInspectionState()
+	retainedZoomDistance = ProfileConfig.PreviewInspection.DefaultCameraDistanceStuds
+	retainedYawRadians = math.rad(ProfileConfig.PreviewInspection.DefaultYawDegrees)
+end
+
+local function disconnectInspection()
+	for _, connection in inspectionConnections do connection:Disconnect() end
+	table.clear(inspectionConnections)
+end
+
+local function isViewportActive(viewportFrame)
+	if currentViewport ~= viewportFrame or not viewportFrame.Parent or not viewportFrame.Visible then
+		return false
+	end
+	local ancestor = viewportFrame.Parent
+	while ancestor do
+		if ancestor:IsA("GuiObject") and not ancestor.Visible then return false end
+		if ancestor:IsA("ScreenGui") and not ancestor.Enabled then return false end
+		ancestor = ancestor.Parent
+	end
+	return true
+end
 local R15_CORE_BODY_PARTS = {
 	Head = true,
 	UpperTorso = true,
@@ -47,8 +79,82 @@ local R6_CORE_BODY_PARTS = {
 local function cleanClone(model)
 	for _, descendant in model:GetDescendants() do
 		if descendant:IsA("LuaSourceContainer") or descendant:IsA("Tool") then descendant:Destroy() end
-		if descendant:IsA("BasePart") then descendant.Anchored = true; descendant.CanCollide = false end
+		if descendant:IsA("BasePart") then
+			descendant.Anchored = descendant.Name == "HumanoidRootPart"
+			descendant.Massless = true
+			descendant.CanCollide = false
+			descendant.CanQuery = false
+			descendant.CanTouch = false
+		end
 	end
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.AutoRotate = false
+		humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	end
+end
+
+local function destroyAnimationTrack(track)
+	if not track then return end
+	pcall(function() track:Stop(0) end)
+	pcall(function() track:Destroy() end)
+end
+
+local function preparePreviewAnimator(model)
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return nil end
+	local animator = nil
+	for _, descendant in model:GetDescendants() do
+		if descendant:IsA("Animator") then
+			if descendant.Parent == humanoid and not animator then
+				animator = descendant
+			else
+				descendant:Destroy()
+			end
+		elseif descendant:IsA("AnimationController") then
+			descendant:Destroy()
+		end
+	end
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Name = "PreviewAnimator"
+		animator.Parent = humanoid
+	end
+	for _, track in animator:GetPlayingAnimationTracks() do destroyAnimationTrack(track) end
+	return animator, humanoid
+end
+
+local function loadIdleTrack(animator, animationId)
+	local animation = Instance.new("Animation")
+	animation.Name = "PreviewIdle"
+	animation.AnimationId = "rbxassetid://" .. tostring(animationId)
+	local track = nil
+	local succeeded, loadError = pcall(function()
+		track = animator:LoadAnimation(animation)
+		track.Priority = Enum.AnimationPriority.Core
+		track.Looped = true
+		track:Play(ProfileConfig.PreviewAnimation.InitialFadeSeconds, 1, 1)
+	end)
+	animation:Destroy()
+	if not succeeded then
+		destroyAnimationTrack(track)
+		return nil, tostring(loadError)
+	end
+	return track, nil
+end
+
+local function playPreviewIdle(model)
+	local animator, humanoid = preparePreviewAnimator(model)
+	if not animator or not humanoid then return nil, nil, "Humanoid Animator unavailable" end
+	-- HumanoidDescription animation fields can identify catalog animation items rather
+	-- than loadable AnimationClips. Only repository-trusted clip IDs may reach Animator.
+	local animationId = ProfileConfig.PreviewAnimation.TrustedIdleAnimationIds[humanoid.RigType.Name]
+	if type(animationId) ~= "number" or animationId <= 0 then
+		return nil, nil, "no trusted idle configured for rig type " .. humanoid.RigType.Name
+	end
+	local track, loadError = loadIdleTrack(animator, animationId)
+	if track then return track, animationId, nil end
+	return nil, nil, string.format("trusted idle %d failed (%s)", animationId, loadError)
 end
 
 local function isFiniteNumber(value)
@@ -99,11 +205,6 @@ local function validateAvatarIdentity(model)
 end
 
 local function createNativeUserAvatar(profile)
-	if cachedAvatarTemplate then
-		local clone = cachedAvatarTemplate:Clone()
-		clone.Name = (profile and profile.Name or "BLIKK Fighter") .. "Preview"
-		return clone, nil
-	end
 	local succeeded, modelOrError = pcall(
 		Players.CreateHumanoidModelFromUserIdAsync,
 		Players,
@@ -111,16 +212,15 @@ local function createNativeUserAvatar(profile)
 	)
 	if not succeeded or not modelOrError then return nil, tostring(modelOrError) end
 	modelOrError.Name = (profile and profile.Name or "BLIKK Fighter") .. "Preview"
-	cachedAvatarTemplate = modelOrError:Clone()
 	return modelOrError, nil
 end
 
-local function createR15Model(description, profile)
+local function createAvatarFromDescription(description, rigType, profile)
 	local succeeded, result = pcall(
 		Players.CreateHumanoidModelFromDescriptionAsync,
 		Players,
 		description,
-		Enum.HumanoidRigType.R15
+		rigType
 	)
 	if not succeeded then return nil, tostring(result) end
 	result.Name = (profile and profile.Name or "BLIKK Fighter") .. "Preview"
@@ -139,7 +239,6 @@ end
 local function collectBlikkSources(profile)
 	local candidates = {}
 	local seen = {}
-	local liveCharacter = Players.LocalPlayer.Character
 	local function add(source, sourceKind)
 		if not source or not source:IsA("Model") or seen[source] then return end
 		seen[source] = true
@@ -151,42 +250,33 @@ local function collectBlikkSources(profile)
 	for _, name in { "BLIKKFighter", "BLIKKFighterRig" } do
 		add(ReplicatedStorage:FindFirstChild(name, true), "CANONICAL_BLIKK")
 	end
-	if liveCharacter and liveCharacter:GetAttribute("BLIKK_Fighter") == true then
-		add(liveCharacter, "LIVE_BLIKK")
-	elseif liveCharacter then
-		local succeeded, appearanceLoaded = pcall(Players.LocalPlayer.HasAppearanceLoaded, Players.LocalPlayer)
-		if succeeded and appearanceLoaded then add(liveCharacter, "LIVE_ROBLOX_AVATAR") end
-	end
 	return candidates
 end
 
-local function createUserAvatar(profile)
+local function getAvatarDescription()
 	local description = cachedAvatarDescription and cachedAvatarDescription:Clone()
-	if not description then
-		local succeeded, result = pcall(
-			Players.GetHumanoidDescriptionFromUserIdAsync,
-			Players,
-			Players.LocalPlayer.UserId
-		)
-		if not succeeded then return nil, tostring(result) end
-		description = result
-		cachedAvatarDescription = description:Clone()
-	end
-	local model, modelError = createR15Model(description, profile)
-	description:Destroy()
-	return model, modelError
-end
+	local rigType = cachedAvatarRigType
+	if description and rigType then return description, rigType, nil end
 
--- Temporary prototype compatibility debt: use only after the modern avatar path is unusable.
-local function createCompatibilityUserAvatar(profile)
-	local succeeded, modelOrError = pcall(
-		Players.CreateHumanoidModelFromUserId,
+	local succeeded, result = pcall(
+		Players.GetHumanoidDescriptionFromUserIdAsync,
 		Players,
 		Players.LocalPlayer.UserId
 	)
-	if not succeeded then return nil, tostring(modelOrError) end
-	modelOrError.Name = (profile and profile.Name or "BLIKK Fighter") .. "Preview"
-	return modelOrError, nil
+	if not succeeded then return nil, nil, tostring(result) end
+	description = result
+	rigType = Enum.HumanoidRigType.R15
+	cachedAvatarDescription = description:Clone()
+	cachedAvatarRigType = rigType
+	return description, rigType, nil
+end
+
+local function createUserAvatar(profile)
+	local description, rigType, descriptionError = getAvatarDescription()
+	if not description then return nil, descriptionError end
+	local model, modelError = createAvatarFromDescription(description, rigType, profile)
+	description:Destroy()
+	return model, modelError
 end
 
 local function createPrimitiveR15Fallback(profile)
@@ -269,7 +359,9 @@ local function applyAppearanceAsset(model, slotName, selection)
 	clone:SetAttribute("BLIKKPreviewSlot", slotName)
 	local humanoid = model:FindFirstChildOfClass("Humanoid")
 	if clone:IsA("Accessory") and humanoid then
-		removeMatchingAccessories(model, clone.AccessoryType)
+		if clone.AccessoryType ~= Enum.AccessoryType.Unknown then
+			removeMatchingAccessories(model, clone.AccessoryType)
+		end
 		humanoid:AddAccessory(clone)
 	elseif clone:IsA("Shirt") or clone:IsA("Pants") or clone:IsA("ShirtGraphic") then
 		local existing = model:FindFirstChildOfClass(clone.ClassName)
@@ -295,6 +387,61 @@ local function applyProfileAppearance(model, profile)
 		local selection = profile.Appearance[slotName]
 		if selection then applyAppearanceAsset(model, slotName, selection) end
 	end
+end
+
+local function removePresentationWeapons(model)
+	local weapons = {}
+	for _, descendant in model:GetDescendants() do
+		if descendant:IsA("Model") and descendant:GetAttribute("BLIKK_WeaponDefinition") then
+			table.insert(weapons, descendant)
+		end
+	end
+	for _, weapon in weapons do weapon:Destroy() end
+end
+
+local function buildTrainingKatana()
+	local definitionId = StarterLoadout.Weapons.Melee
+	local definition = definitionId and WeaponDefinitions[definitionId]
+	if not definition or definition.Id ~= "TrainingKatana" then return nil end
+
+	local model = TrainingKatanaPresentation.Build(true)
+	model:SetAttribute("BLIKK_MenuPreview", true)
+	return model
+end
+
+local function attachTrainingKatana(model)
+	removePresentationWeapons(model)
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return false end
+	local attachment = MeleePresentationConfig.TrainingKatana.EquippedAttachment
+	local bodyPartName = if humanoid.RigType == Enum.HumanoidRigType.R6
+		then "Right Arm" else attachment.PartName
+	local bodyPart = model:FindFirstChild(bodyPartName, true)
+	if not bodyPart or not bodyPart:IsA("BasePart") then return false end
+
+	local katana = buildTrainingKatana()
+	if not katana or not katana.PrimaryPart then return false end
+	-- WorldModels do not simulate a full Workspace assembly. Place the handle at the
+	-- exact Motor6D solution before creating the joint so no origin-frame sword can render.
+	local handleCFrame = bodyPart.CFrame * attachment.Offset * attachment.GripPivot:Inverse()
+	katana:PivotTo(handleCFrame)
+	katana.Parent = model
+	local grip = Instance.new("Motor6D")
+	grip.Name = "BLIKK_KatanaGrip"
+	grip.Part0 = bodyPart
+	grip.Part1 = katana.PrimaryPart
+	grip.C0 = attachment.Offset
+	grip.C1 = attachment.GripPivot
+	grip.Parent = katana.PrimaryPart
+	return true
+end
+
+local function collectMenuReadyPoseJoints(model)
+	return PreviewPoseAdapter.Collect(model, MeleePresentationConfig.Pose.EquippedIdle)
+end
+
+local function applyMenuReadyPose(jointsByName)
+	PreviewPoseAdapter.Apply(jointsByName, MeleePresentationConfig.Pose.EquippedIdle)
 end
 
 local function faceCamera(model, position, cameraDirection)
@@ -373,10 +520,12 @@ end
 
 local function isAttachedCosmetic(part, model, coreBodyParts)
 	local accessory = part:FindFirstAncestorOfClass("Accessory")
-	if accessory and accessory:IsDescendantOf(model) then
-		local handle = accessory:FindFirstChild("Handle")
-		local weld = handle and handle:FindFirstChild("AccessoryWeld")
-		if weld and weld:IsA("Weld") and weld.Part0 and weld.Part1 then return true end
+	if accessory and accessory:IsDescendantOf(model) then return true end
+	local ancestor = part.Parent
+	while ancestor and ancestor ~= model do
+		if ancestor:GetAttribute("BLIKK_WeaponDefinition")
+			or ancestor:GetAttribute("BLIKKPreviewSlot") then return true end
+		ancestor = ancestor.Parent
 	end
 	for _, joint in part:GetChildren() do
 		if joint:IsA("Weld") or joint:IsA("WeldConstraint") or joint:IsA("Motor6D") then
@@ -417,7 +566,6 @@ local function preparePreviewBounds(model, coreBodyParts, cameraDirection, activ
 					elseif not isAttached then "DETACHED_COSMETIC"
 					else "EXTREME_COSMETIC"
 				diagnoseOutlier(category, descendant)
-				descendant:Destroy()
 			end
 		end
 	end
@@ -450,7 +598,7 @@ local function waitForValidViewportSize(viewportFrame, activeGeneration)
 	connection = viewportFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
 		if isValid() or activeGeneration ~= generation then resolve() end
 	end)
-	task.delay(1, resolve)
+	task.delay(ProfileConfig.PreviewTiming.ViewportSizeTimeoutSeconds, resolve)
 	completed.Event:Wait()
 	connection:Disconnect()
 	completed:Destroy()
@@ -463,6 +611,7 @@ function Controller:Render(viewportFrame, profile, enableIdleHooks)
 	generation += 1
 	local activeGeneration = generation
 	currentViewport = viewportFrame
+	viewportFrame.Active = true
 	viewportFrame:ClearAllChildren()
 	viewportFrame.ImageTransparency = 1
 	local loading = Instance.new("TextLabel")
@@ -482,7 +631,15 @@ function Controller:Render(viewportFrame, profile, enableIdleHooks)
 		request.Reported[key] = true
 		warn(string.format("[BLIKK PREVIEW] %s rejected: %s", source, reason))
 	end
-	task.delay(PREVIEW_TIMEOUT_SECONDS, function()
+	local function reportIdle(source, reason)
+		local key = "IDLE"
+		if request.Reported[key] then return end
+		request.Reported[key] = true
+		warn(string.format("[BLIKK PREVIEW:IDLE] %s: %s", source, reason))
+	end
+	local scheduledTimeout = nil
+	scheduledTimeout = task.delay(ProfileConfig.PreviewTiming.RequestTimeoutSeconds, function()
+		if timeoutThread == scheduledTimeout then timeoutThread = nil end
 		if request.Terminal or activeGeneration ~= generation or not loading.Parent then return end
 		request.Terminal = true
 		request.TimedOut = true
@@ -490,6 +647,7 @@ function Controller:Render(viewportFrame, profile, enableIdleHooks)
 		loading.Text = "PREVIEW UNAVAILABLE - RESELECT TO RETRY"
 		warn("[BLIKK PREVIEW:TIMEOUT] Avatar preview generation exceeded its bounded request time.")
 	end)
+	timeoutThread = scheduledTimeout
 
 	task.spawn(function()
 		local viewportSize = waitForValidViewportSize(viewportFrame, activeGeneration)
@@ -515,14 +673,8 @@ function Controller:Render(viewportFrame, profile, enableIdleHooks)
 			return size, focus, distance
 		end
 		local candidates = {}
-		local nativeAvatar, nativeError = createNativeUserAvatar(profile)
-		if nativeAvatar then
-			table.insert(candidates, { Model = nativeAvatar, Source = "ROBLOX_AVATAR" })
-		else
-			report("ROBLOX_AVATAR", "generation failed: " .. tostring(nativeError))
-		end
-		for _, candidate in collectBlikkSources(profile) do table.insert(candidates, candidate) end
-		local clone, world, size, focus, distance = nil, nil, nil, nil, nil
+		local clone, world, poseJoints, idleTrack, size, focus, distance =
+			nil, nil, nil, nil, nil, nil, nil
 		local function tryCandidates(candidateList)
 			for _, candidate in candidateList do
 				if activeGeneration ~= generation or request.Terminal then
@@ -530,8 +682,15 @@ function Controller:Render(viewportFrame, profile, enableIdleHooks)
 					continue
 				end
 				local candidateModel = candidate.Model
-				if candidate.Source == "CANONICAL_BLIKK" or candidate.Source == "LIVE_BLIKK" then
+				local identityValid, rejectionReason, coreBodyParts, rigName = validateAvatarIdentity(
+					candidateModel
+				)
+				if identityValid then
 					applyProfileAppearance(candidateModel, profile)
+					if not attachTrainingKatana(candidateModel) then
+						identityValid = false
+						rejectionReason = "Training Katana could not attach to the preview rig"
+					end
 				end
 				cleanClone(candidateModel)
 				local candidateWorld = Instance.new("WorldModel")
@@ -539,15 +698,24 @@ function Controller:Render(viewportFrame, profile, enableIdleHooks)
 				candidateWorld.Parent = viewportFrame
 				candidateModel.Parent = candidateWorld
 				RunService.Heartbeat:Wait()
+				if activeGeneration ~= generation or request.Terminal or not candidateModel.Parent then
+					candidateWorld:Destroy()
+					continue
+				end
+				local candidateIdleTrack, _, idleDiagnostic = playPreviewIdle(candidateModel)
+				if idleDiagnostic then reportIdle(candidate.Source, idleDiagnostic) end
 				RunService.Heartbeat:Wait()
-				local identityValid, rejectionReason, coreBodyParts, rigName = validateAvatarIdentity(candidateModel)
+				local candidatePoseJoints = collectMenuReadyPoseJoints(candidateModel)
+				applyMenuReadyPose(candidatePoseJoints)
+				RunService.Heartbeat:Wait()
 				if activeGeneration == generation and not request.Terminal and identityValid then
 					local candidateSize, candidateFocus, candidateDistance = resolveFrame(
 						candidateModel,
 						coreBodyParts
 					)
 					if candidateSize then
-						clone, world = candidateModel, candidateWorld
+						clone, world, poseJoints, idleTrack =
+							candidateModel, candidateWorld, candidatePoseJoints, candidateIdleTrack
 						size, focus, distance = candidateSize, candidateFocus, candidateDistance
 						currentPreviewSource = candidate.Source
 						candidateModel:SetAttribute("BLIKK_PreviewRig", rigName)
@@ -558,37 +726,36 @@ function Controller:Render(viewportFrame, profile, enableIdleHooks)
 				if activeGeneration == generation and not request.Terminal then
 					report(candidate.Source, rejectionReason or "request became unusable")
 				end
-				if candidate.Source == "ROBLOX_AVATAR" and cachedAvatarTemplate then
-					cachedAvatarTemplate:Destroy()
-					cachedAvatarTemplate = nil
-				end
+				destroyAnimationTrack(candidateIdleTrack)
 				candidateWorld:Destroy()
 			end
 			return false
 		end
 
-		tryCandidates(candidates)
-		if not clone and not nativeAvatar and activeGeneration == generation and not request.Terminal then
-			local avatar, avatarError = createUserAvatar(profile)
-			if avatar then
-				local avatarCandidates = { { Model = avatar, Source = "ROBLOX_AVATAR" } }
-				table.insert(candidates, avatarCandidates[1])
-				tryCandidates(avatarCandidates)
+		local descriptionAvatar, descriptionError = createUserAvatar(profile)
+		if descriptionAvatar then
+			local descriptionCandidates = {
+				{ Model = descriptionAvatar, Source = "ROBLOX_APPLIED_DESCRIPTION" },
+			}
+			table.insert(candidates, descriptionCandidates[1])
+			tryCandidates(descriptionCandidates)
+		else
+			report("ROBLOX_APPLIED_DESCRIPTION", "generation failed: " .. tostring(descriptionError))
+		end
+		if not clone and activeGeneration == generation and not request.Terminal then
+			local nativeAvatar, nativeError = createNativeUserAvatar(profile)
+			if nativeAvatar then
+				local nativeCandidates = { { Model = nativeAvatar, Source = "ROBLOX_AVATAR" } }
+				table.insert(candidates, nativeCandidates[1])
+				tryCandidates(nativeCandidates)
 			else
-				report("ROBLOX_AVATAR", "generation failed: " .. tostring(avatarError))
+				report("ROBLOX_AVATAR", "generation failed: " .. tostring(nativeError))
 			end
 		end
 		if not clone and activeGeneration == generation and not request.Terminal then
-			local compatibilityAvatar, compatibilityError = createCompatibilityUserAvatar(profile)
-			if compatibilityAvatar then
-				local compatibilityCandidates = {
-					{ Model = compatibilityAvatar, Source = "ROBLOX_AVATAR_COMPATIBILITY" },
-				}
-				table.insert(candidates, compatibilityCandidates[1])
-				tryCandidates(compatibilityCandidates)
-			else
-				report("ROBLOX_AVATAR_COMPATIBILITY", "generation failed: " .. tostring(compatibilityError))
-			end
+			local fallbackCandidates = collectBlikkSources(profile)
+			for _, candidate in fallbackCandidates do table.insert(candidates, candidate) end
+			tryCandidates(fallbackCandidates)
 		end
 		if not clone and ProfileConfig.PreviewBounds.DeveloperPrimitiveFallbackEnabled
 			and activeGeneration == generation and not request.Terminal then
@@ -601,48 +768,92 @@ function Controller:Render(viewportFrame, profile, enableIdleHooks)
 		if not size or not clone or not world then
 			if activeGeneration ~= generation or request.TimedOut then return end
 			request.Terminal = true
+			if timeoutThread then task.cancel(timeoutThread); timeoutThread = nil end
 			camera:Destroy()
 			currentPreviewSource = "UNAVAILABLE"
 			loading.Text = "PREVIEW UNAVAILABLE — RESELECT TO RETRY"
 			return
 		end
 		request.Terminal = true
+		if timeoutThread then task.cancel(timeoutThread); timeoutThread = nil end
 		for _, candidate in candidates do
 			if candidate.Model ~= clone and candidate.Model.Parent == nil then candidate.Model:Destroy() end
 		end
 		MenuCamera:Frame(camera, focus, distance, 0)
 		local basePivot = faceCamera(clone, clone:GetPivot().Position, camera.CFrame.Position - focus)
 		if activeGeneration ~= generation then
+			destroyAnimationTrack(idleTrack)
 			world:Destroy()
 			camera:Destroy()
 			return
 		end
+		currentIdleTrack = idleTrack
 		loading:Destroy()
 		viewportFrame.ImageTransparency = 0
 		local startedAt = os.clock()
-		viewportSizeConnection = viewportFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-			local resized = viewportFrame.AbsoluteSize
-			if resized.X < 32 or resized.Y < 32 then return end
+		local inspection = ProfileConfig.PreviewInspection
+		local yawRadians = retainedYawRadians or math.rad(inspection.DefaultYawDegrees)
+		local isDragging = false
+		local lastPointerX = 0
+		distance = math.clamp(
+			retainedZoomDistance or inspection.DefaultCameraDistanceStuds,
+			inspection.MinimumCameraDistanceStuds,
+			inspection.MaximumCameraDistanceStuds
+		)
+		retainedZoomDistance = distance
+		retainedYawRadians = yawRadians
+		local nextIdleAt = if enableIdleHooks
+			then math.random(ProfileConfig.RandomIdleMinimumSeconds, ProfileConfig.RandomIdleMaximumSeconds)
+			else nil
+		table.insert(inspectionConnections, viewportFrame.InputBegan:Connect(function(input)
+			if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+			isDragging = true
+			lastPointerX = input.Position.X
+		end))
+		table.insert(inspectionConnections, viewportFrame.InputChanged:Connect(function(input)
+			if input.UserInputType ~= Enum.UserInputType.MouseWheel then return end
 			distance = math.clamp(
-				MenuCamera:GetDistanceForBounds(camera, size, resized),
-				ProfileConfig.PreviewBounds.MinimumCameraDistanceStuds,
-				ProfileConfig.PreviewBounds.MaximumCameraDistanceStuds
+				distance - input.Position.Z * inspection.ZoomStepStuds,
+				inspection.MinimumCameraDistanceStuds,
+				inspection.MaximumCameraDistanceStuds
 			)
-		end)
-		renderConnection = RunService.RenderStepped:Connect(function()
+			retainedZoomDistance = distance
+		end))
+		table.insert(inspectionConnections, UserInputService.InputChanged:Connect(function(input)
+			if not isDragging or input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+			local pointerX = input.Position.X
+			local deltaX = pointerX - lastPointerX
+			lastPointerX = pointerX
+			yawRadians = (yawRadians + math.rad(deltaX * inspection.DragDegreesPerPixel)) % (math.pi * 2)
+			retainedYawRadians = yawRadians
+		end))
+		table.insert(inspectionConnections, UserInputService.InputEnded:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 and isDragging then
+				isDragging = false
+			end
+		end))
+		table.insert(inspectionConnections, UserInputService.WindowFocusReleased:Connect(function()
+			isDragging = false
+		end))
+		renderConnection = RunService.RenderStepped:Connect(function(deltaTime)
+			if activeGeneration ~= generation or clone.Parent ~= world then return end
+			applyMenuReadyPose(poseJoints)
+			if not isViewportActive(viewportFrame) then return end
 			local elapsed = os.clock() - startedAt
-			local showcaseElapsed = math.max(elapsed - 0.6, 0)
-			clone:PivotTo(basePivot * CFrame.Angles(0, showcaseElapsed * 0.12, 0))
+			if not isDragging then
+				yawRadians = (yawRadians + math.rad(
+					inspection.AutomaticRotationSpeedDegreesPerSecond
+				) * deltaTime) % (math.pi * 2)
+				retainedYawRadians = yawRadians
+			end
+			clone:PivotTo(basePivot * CFrame.Angles(0, yawRadians, 0))
 			MenuCamera:Frame(camera, focus, distance, elapsed)
+			if nextIdleAt and elapsed >= nextIdleAt then
+				self.IdleRequested:Fire(profile)
+				nextIdleAt = elapsed
+					+ math.random(ProfileConfig.RandomIdleMinimumSeconds, ProfileConfig.RandomIdleMaximumSeconds)
+			end
 		end)
-		if enableIdleHooks then
-			task.spawn(function()
-				while activeGeneration == generation do
-					task.wait(math.random(ProfileConfig.RandomIdleMinimumSeconds, ProfileConfig.RandomIdleMaximumSeconds))
-					if activeGeneration == generation then self.IdleRequested:Fire(profile) end
-				end
-			end)
-		end
 	end)
 end
 
@@ -650,11 +861,23 @@ function Controller:GetPreviewSource()
 	return currentPreviewSource
 end
 
+function Controller:BeginScreenSession()
+	resetInspectionState()
+end
+
+function Controller:EndFrontendSession()
+	self:Stop()
+	resetInspectionState()
+end
+
 function Controller:Stop()
 	generation += 1
 	currentPreviewSource = "UNAVAILABLE"
+	if timeoutThread then task.cancel(timeoutThread); timeoutThread = nil end
+	disconnectInspection()
 	if renderConnection then renderConnection:Disconnect(); renderConnection = nil end
-	if viewportSizeConnection then viewportSizeConnection:Disconnect(); viewportSizeConnection = nil end
+	destroyAnimationTrack(currentIdleTrack)
+	currentIdleTrack = nil
 	if currentViewport then
 		currentViewport:ClearAllChildren()
 		currentViewport.CurrentCamera = nil

@@ -3,6 +3,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TextService = game:GetService("TextService")
+local TextChatService = game:GetService("TextChatService")
 
 local Modes = require(ReplicatedStorage.Shared.Multiplayer.GameModeRegistry)
 local Maps = require(ReplicatedStorage.Shared.Multiplayer.MapRegistry)
@@ -22,6 +23,63 @@ local directoryMutationStates = {}
 local limiter = RateLimiter.New()
 local joinSequence = 0
 local isRunning = false
+
+local function ensureRoomChat(room)
+	if room.ChatChannel and room.ChatChannel.Parent then return room.ChatChannel end
+	local channels = TextChatService:FindFirstChild("TextChannels")
+	if not channels then
+		warn("[BLIKK ROOM CHAT] TextChannels was unavailable; room chat could not initialise.")
+		return nil
+	end
+	local channel = Instance.new("TextChannel")
+	channel.Name = Config.RoomChatChannelPrefix .. room.RoomId:gsub("%-", "")
+	channel.Parent = channels
+	room.ChatChannel = channel
+	room.ChatChannelName = channel.Name
+	room.ChatSources = room.ChatSources or {}
+	return channel
+end
+
+local function addRoomChatMember(room, player)
+	local channel = ensureRoomChat(room)
+	if not channel or player.Parent ~= Players then return false end
+	task.spawn(function()
+		local succeeded, source = pcall(channel.AddUserAsync, channel, player.UserId)
+		if not succeeded or not source then
+			if playerRoom[player] == room then
+				warn(string.format("[BLIKK ROOM CHAT] Could not add user %d to room channel.", player.UserId))
+			end
+			return
+		end
+		if playerRoom[player] ~= room or room.Members[player] == nil
+			or room.ChatChannel ~= channel or not channel.Parent then
+			source:Destroy()
+			return
+		end
+		local previous = room.ChatSources[player]
+		if previous and previous ~= source then previous:Destroy() end
+		room.ChatSources[player] = source
+	end)
+	return true
+end
+
+local function removeRoomChatMember(room, player)
+	local source = room.ChatSources and room.ChatSources[player]
+	if source then source:Destroy() end
+	if room.ChatSources then room.ChatSources[player] = nil end
+end
+
+local function destroyRoomChat(room)
+	if room.ChatSources then
+		for player, source in room.ChatSources do
+			if source then source:Destroy() end
+			room.ChatSources[player] = nil
+		end
+	end
+	if room.ChatChannel then room.ChatChannel:Destroy() end
+	room.ChatChannel = nil
+	room.ChatChannelName = nil
+end
 
 local function trim(value)
 	return if type(value) == "string" then value:match("^%s*(.-)%s*$") else nil
@@ -126,7 +184,7 @@ local function snapshot(room, includePrivate)
 	local result = {
 		RoomId = room.RoomId, Name = room.Name, State = room.State,
 		RoomLeaderUserId = room.RoomLeaderUserId, Config = table.clone(room.Config),
-		Members = members, Revision = room.Revision,
+		Members = members, Revision = room.Revision, ChatChannelName = room.ChatChannelName,
 	}
 	if includePrivate then result.JoinCode = room.JoinCode end
 	return result
@@ -167,6 +225,7 @@ local function migrateLeader(room, selected)
 	if not nextMember then
 		room.State = "Closing"
 		rooms[room.RoomId] = nil
+		destroyRoomChat(room)
 		enqueueDirectoryMutation(room, true)
 		return
 	end
@@ -180,6 +239,7 @@ local function removePlayer(player)
 	if not room then return nil end
 	local member = room.Members[player]
 	if matchService then matchService:RemovePlayer(player) end
+	removeRoomChatMember(room, player)
 	room.Members[player] = nil
 	playerRoom[player] = nil
 	local didClose = false
@@ -188,6 +248,7 @@ local function removePlayer(player)
 		room.Revision += 1
 		rooms[room.RoomId] = nil
 		if matchService then matchService:StopRoom(room.RoomId) end
+		destroyRoomChat(room)
 		if room.ReservationPending then
 			room.ReservationPending = false
 			room.ReservationGeneration = (room.ReservationGeneration or 0) + 1
@@ -268,6 +329,7 @@ local function addMember(room, player, isSpectator)
 			return nil
 		end
 	end
+	addRoomChatMember(room, player)
 	return member
 end
 
@@ -289,11 +351,13 @@ local function createRoom(player, payload, suppressDirectoryPublication)
 		ReservationPending = suppressDirectoryPublication == true,
 		ReservationGeneration = if suppressDirectoryPublication == true then 1 else 0,
 	}
+	ensureRoomChat(room)
 	room.Members[player] = {
 		Player = player, State = "InLobby", IsReady = false, IsSpectator = false,
 		TeamId = nil, IsRoomLeader = true, JoinSequence = joinSequence,
 		LastActivityAt = os.clock(), WasWarned = false, ClanId = player:GetAttribute("BLIKK_ClanId"), ClanTag = player:GetAttribute("BLIKK_ClanTag"),
 	}
+	addRoomChatMember(room, player)
 	rooms[room.RoomId] = room; playerRoom[player] = room
 	publish(room)
 	return snapshot(room, true)
@@ -449,9 +513,11 @@ function RoomService:ReleaseForTeleport(player, expectedRoom, generation)
 	if room ~= expectedRoom or not self:IsReservationCurrent(player, room, generation) then return false end
 	room.ReservationPending = false
 	room.ReservationGeneration += 1
+	removeRoomChatMember(room, player)
 	room.Members[player] = nil
 	playerRoom[player] = nil
 	rooms[room.RoomId] = nil
+	destroyRoomChat(room)
 	return true
 end
 
@@ -465,6 +531,7 @@ function RoomService:AcceptTeleportedPlayer(player, record, requestedRole)
 		room = { RoomId = record.RoomId, Name = record.Name, State = "Lobby", RoomLeaderUserId = record.RoomLeaderUserId, JoinCode = record.JoinCode, Config = configuration, Members = {}, Revision = 0, CreatedAtUnix = record.CreatedAtUnix or os.time() }
 		rooms[room.RoomId] = room
 	end
+	ensureRoomChat(room)
 	local isLeader = player.UserId == room.RoomLeaderUserId
 	local isSpectator = requestedRole == "Spectator" and not isLeader
 	if not isJoinable(room, isSpectator) then return false end

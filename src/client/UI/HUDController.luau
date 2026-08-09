@@ -4,6 +4,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 local UIStyle = require(script.Parent.UIStyle)
 local Branding = require(ReplicatedStorage.Shared.Branding.Branding)
+local CharacterDependency = require(ReplicatedStorage.Shared.Character.CharacterDependency)
+local FighterVitalsConfig = require(ReplicatedStorage.Shared.Combat.FighterVitalsConfig)
 local MeleeConfig = require(ReplicatedStorage.Shared.Combat.MeleePresentationConfig)
 local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
 
@@ -16,9 +18,16 @@ local isInitialised = false
 local screenGui = nil
 local healthFill = nil
 local healthValue = nil
+local armourFill = nil
+local armourValue = nil
 local healthConnection = nil
+local maximumHealthConnection = nil
+local armourConnection = nil
+local maximumArmourConnection = nil
 local characterGeneration = 0
 local healthCharacter = nil
+local characterBindingTarget = nil
+local cancelDependencyWatch = nil
 local statusRoot = nil
 local weaponRoot = nil
 local weaponSlotLabel = nil
@@ -240,39 +249,39 @@ local function createStatusBlock(parent)
 		colors.Text
 	)
 
-	healthFill = createMeter(
+	armourFill = createMeter(
 		root,
-		"Health",
+		"Armour",
 		31,
 		style.PrimaryBarHeightPixels,
 		Color3.fromRGB(31, 142, 221),
 		Color3.fromRGB(13, 66, 118),
 		1
 	)
-	createMeter(
+	healthFill = createMeter(
 		root,
-		"Armour",
+		"Health",
 		61,
 		style.PrimaryBarHeightPixels,
 		colors.Accent,
 		colors.TechniqueDark,
-		0
+		1
 	)
 
-	healthValue = createLabel(
+	armourValue = createLabel(
 		root,
-		"HealthValue",
-		"-- / --",
+		"ArmourValue",
+		"AP // -- / --",
 		UDim2.fromOffset(style.StatusRailStartPixels, 33),
 		UDim2.fromOffset(style.StatusRailWidthPixels, 18),
 		13,
 		colors.Text,
 		Enum.TextXAlignment.Center
 	)
-	createLabel(
+	healthValue = createLabel(
 		root,
-		"ArmourValue",
-		"ARMOUR // --",
+		"HealthValue",
+		"HP // -- / --",
 		UDim2.fromOffset(style.StatusRailStartPixels, 63),
 		UDim2.fromOffset(style.StatusRailWidthPixels, 18),
 		12,
@@ -422,32 +431,77 @@ local function updateHealth(humanoid)
 	local maximumHealth = math.max(humanoid.MaxHealth, 1)
 	local health = math.clamp(humanoid.Health, 0, maximumHealth)
 	healthFill.Size = UDim2.fromScale(health / maximumHealth, 1)
-	healthValue.Text = string.format("%d / %d", math.round(health), math.round(maximumHealth))
+	healthValue.Text = string.format(
+		"HP // %d / %d",
+		math.round(health),
+		math.round(maximumHealth)
+	)
+end
+
+local function updateArmour(character)
+	local maximumArmour = character:GetAttribute(FighterVitalsConfig.Attributes.MaximumArmour)
+	local armour = character:GetAttribute(FighterVitalsConfig.Attributes.Armour)
+	maximumArmour = if type(maximumArmour) == "number" then math.max(maximumArmour, 1) else 1
+	armour = if type(armour) == "number" then math.clamp(armour, 0, maximumArmour) else 0
+	armourFill.Size = UDim2.fromScale(armour / maximumArmour, 1)
+	armourValue.Text = string.format(
+		"AP // %d / %d",
+		math.round(armour),
+		math.round(maximumArmour)
+	)
+end
+
+local function disconnectVitals()
+	if healthConnection then healthConnection:Disconnect() end
+	if maximumHealthConnection then maximumHealthConnection:Disconnect() end
+	if armourConnection then armourConnection:Disconnect() end
+	if maximumArmourConnection then maximumArmourConnection:Disconnect() end
+	healthConnection = nil
+	maximumHealthConnection = nil
+	armourConnection = nil
+	maximumArmourConnection = nil
 end
 
 local function bindCharacter(character)
 	characterGeneration += 1
 	local bindGeneration = characterGeneration
-	if healthConnection then
-		healthConnection:Disconnect()
-		healthConnection = nil
-	end
+	characterBindingTarget = character
+	if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
+	disconnectVitals()
 	healthCharacter = nil
-
-	local humanoid = character:WaitForChild("Humanoid", MultiplayerConfig.CharacterDependencyTimeoutSeconds)
-	if bindGeneration ~= characterGeneration or character ~= player.Character
-		or not humanoid or not humanoid:IsA("Humanoid") then
-		if bindGeneration == characterGeneration and character == player.Character then
-			warn("[BLIKK HUD] Character bind timed out waiting for Humanoid.")
+	cancelDependencyWatch = CharacterDependency.ObserveHumanoidAndRoot(
+		character,
+		MultiplayerConfig.CharacterDependencyTimeoutSeconds,
+		function(humanoid)
+			if bindGeneration ~= characterGeneration or characterBindingTarget ~= character
+				or character ~= player.Character then return end
+			updateHealth(humanoid)
+			updateArmour(character)
+			healthConnection = humanoid.HealthChanged:Connect(function()
+				if bindGeneration == characterGeneration then updateHealth(humanoid) end
+			end)
+			maximumHealthConnection = humanoid:GetPropertyChangedSignal("MaxHealth"):Connect(function()
+				if bindGeneration == characterGeneration then updateHealth(humanoid) end
+			end)
+			armourConnection = character:GetAttributeChangedSignal(
+				FighterVitalsConfig.Attributes.Armour
+			):Connect(function()
+				if bindGeneration == characterGeneration then updateArmour(character) end
+			end)
+			maximumArmourConnection = character:GetAttributeChangedSignal(
+				FighterVitalsConfig.Attributes.MaximumArmour
+			):Connect(function()
+				if bindGeneration == characterGeneration then updateArmour(character) end
+			end)
+			healthCharacter = character
+			character:SetAttribute("BLIKK_ClientHudReady", true)
+		end,
+		function()
+			if bindGeneration == characterGeneration and character == player.Character then
+				warn("[BLIKK HUD] Character dependencies remain incomplete; continuing to observe the current character.")
+			end
 		end
-		return
-	end
-	updateHealth(humanoid)
-	healthConnection = humanoid.HealthChanged:Connect(function()
-		if bindGeneration == characterGeneration then updateHealth(humanoid) end
-	end)
-	healthCharacter = character
-	character:SetAttribute("BLIKK_ClientHudReady", true)
+	)
 end
 
 function HUDController:Init(fighterController, firearmController)
@@ -487,9 +541,11 @@ function HUDController:Init(fighterController, firearmController)
 
 	player.CharacterAdded:Connect(bindCharacter)
 	player.CharacterRemoving:Connect(function(removingCharacter)
-		if removingCharacter ~= healthCharacter then return end
+		if removingCharacter ~= characterBindingTarget then return end
 		characterGeneration += 1
-		if healthConnection then healthConnection:Disconnect(); healthConnection = nil end
+		characterBindingTarget = nil
+		if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
+		disconnectVitals()
 		healthCharacter = nil
 	end)
 	fighterController.LoadoutChanged.Event:Connect(function(changeType)

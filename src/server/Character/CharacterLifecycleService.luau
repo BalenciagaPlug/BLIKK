@@ -2,6 +2,8 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
+local CharacterDependency = require(ReplicatedStorage.Shared.Character.CharacterDependency)
+local FighterVitalsConfig = require(ReplicatedStorage.Shared.Combat.FighterVitalsConfig)
 local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
 local RateLimiter = require(script.Parent.Parent.Networking.RateLimiter)
 
@@ -88,10 +90,9 @@ local function waitForCharacterParts(player, character, deadline)
 	if not character or character ~= player.Character then return nil, nil, "STALE_CHARACTER" end
 	local expiresAt = deadline or (os.clock() + MultiplayerConfig.CharacterDependencyTimeoutSeconds)
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
-		or character:WaitForChild("Humanoid", math.max(0, expiresAt - os.clock()))
+		or CharacterDependency.WaitForChildBefore(character, "Humanoid", expiresAt)
 	if character ~= player.Character then return nil, nil, "STALE_CHARACTER" end
-	local root = character:FindFirstChild("HumanoidRootPart")
-		or character:WaitForChild("HumanoidRootPart", math.max(0, expiresAt - os.clock()))
+	local root = CharacterDependency.WaitForChildBefore(character, "HumanoidRootPart", expiresAt)
 	if character ~= player.Character then return nil, nil, "STALE_CHARACTER" end
 	if not humanoid or not humanoid:IsA("Humanoid") or not root or not root:IsA("BasePart") then
 		return nil, nil, "CHARACTER_INCOMPLETE"
@@ -300,6 +301,16 @@ end
 
 local function completeRequest(player, state, request, character, humanoid, root, placementResult)
 	if not isLatestRequest(state, request) or player.Character ~= character then return false end
+	if character:GetAttribute(FighterVitalsConfig.Attributes.FreshLifeInitialized) ~= true then
+		humanoid.MaxHealth = FighterVitalsConfig.MaximumHealth
+		humanoid.Health = FighterVitalsConfig.MaximumHealth
+		character:SetAttribute(
+			FighterVitalsConfig.Attributes.MaximumArmour,
+			FighterVitalsConfig.MaximumArmour
+		)
+		character:SetAttribute(FighterVitalsConfig.Attributes.Armour, FighterVitalsConfig.MaximumArmour)
+		character:SetAttribute(FighterVitalsConfig.Attributes.FreshLifeInitialized, true)
+	end
 	local current = {
 		Identity = request.Identity,
 		Character = character,

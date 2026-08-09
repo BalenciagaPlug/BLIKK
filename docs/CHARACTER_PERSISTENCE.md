@@ -48,21 +48,23 @@ discovery when the Profiles screen is entered. A late or temporarily failed requ
 last confirmed snapshot or downgrade a ready account with an older loading response.
 
 Profiles, Character Creation, and Operations Hub share one local `ViewportFrame` preview path. It
-prioritizes a repository-owned canonical BLIKK R15 rig, then a neutral forced-R15 description, then
-a previously validated cached description, with a bounded repository-owned visible fallback. The
-path proves core limbs through the connected Motor6D graph, removes detached or extreme clone-only
-parts, excludes the invisible root, and validates final bounds and camera distance before display.
-Preview diagnostics are deduplicated and disabled by default.
+builds an isolated avatar from the local player's applied `HumanoidDescription`, preserving the
+live rig type, proportions, body colours, face, hair, clothing, and supported accessories. The
+server-confirmed BLIKK profile layers are then applied when corresponding repository or Studio-owned
+preview assets exist. The preview owns its own Training Katana and equipped-idle pose; it never
+reuses a live presentation weapon or mutates `Player.Character`.
 
 The visually accepted Sprint 009 implementation at `35a4356` stabilized the model for one frame,
-used `GetBoundingBox`, translated that center to half-height above the preview origin, and delegated
-distance to the unchanged `MenuCamera`. The repaired path preserves those centering and camera
-semantics with rig-aware sanitization. Preview identity currently resolves first from the local
-user's native Roblox avatar through `CreateHumanoidModelFromUserIdAsync`, preserving R6 or R15.
-Rig-specific core body maps drive validation and framing, while finite nonzero bounds are camera-
-clamped instead of rejected for preferred proportions. Canonical BLIKK sources remain later
-candidates until an approved fighter rig exists. Profile cosmetics apply only to BLIKK fighter
-sources. The primitive diagnostic rig
+translated its center to half-height above the preview origin, and delegated distance to the
+unchanged `MenuCamera`. The repaired path preserves those optical framing semantics with rig-aware
+core bounds. Finite attached cosmetics and the preview weapon may expand the camera bounds, while
+unrecognized or extreme parts are excluded from framing without being destroyed. If applied-
+description construction fails, supported native-avatar generation, a complete live-character
+clone, and an approved canonical rig are bounded fallback candidates in that order. Every candidate
+receives the selected profile layer, one preview-owned Training Katana, and the menu-ready pose.
+Generation checks prevent an older asynchronous request from replacing a newer selection, and
+teardown clears the owned WorldModel, camera, connections, and idle scheduling. The primitive
+diagnostic rig
 is disabled for normal operation; total failure remains visible as `PREVIEW UNAVAILABLE — RESELECT
 TO RETRY`.
 

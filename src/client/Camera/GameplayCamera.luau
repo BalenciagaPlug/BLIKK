@@ -8,6 +8,7 @@ local Workspace = game:GetService("Workspace")
 local Shared = ReplicatedStorage:FindFirstChild("Shared")
 assert(Shared, "Shared must be acquired by the client composition root before the gameplay camera")
 local CameraConfig = require(Shared.Camera.CameraConfig)
+local CharacterDependency = require(Shared.Character.CharacterDependency)
 local MultiplayerConfig = require(Shared.Multiplayer.MultiplayerConfig)
 local CameraObstruction = require(script.Parent.CameraObstruction)
 local CameraSettings = require(script.Parent.CameraSettings)
@@ -28,6 +29,7 @@ local characterBindingTarget = nil
 local characterBindGeneration = 0
 local humanoid = nil
 local rootPart = nil
+local cancelDependencyWatch = nil
 local crosshairGui = nil
 local characterDiedConnection = nil
 local isGameplayRequestedActive = false
@@ -162,6 +164,7 @@ local function bindCharacter(newCharacter)
 	characterBindGeneration += 1
 	local bindGeneration = characterBindGeneration
 	characterBindingTarget = newCharacter
+	if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 	newCharacter:SetAttribute(CAMERA_READY_ATTRIBUTE, nil)
 	cancelFreeLook()
 	CameraObstruction.Reset()
@@ -171,49 +174,37 @@ local function bindCharacter(newCharacter)
 	end
 
 	character, humanoid, rootPart = nil, nil, nil
-	local dependencyDeadline = os.clock() + MultiplayerConfig.CharacterDependencyTimeoutSeconds
-	local newHumanoid = newCharacter:FindFirstChild("Humanoid")
-		or newCharacter:WaitForChild(
-			"Humanoid",
-			math.max(0, dependencyDeadline - os.clock())
-		)
-	local newRootPart = newCharacter:FindFirstChild("HumanoidRootPart")
-		or newCharacter:WaitForChild(
-			"HumanoidRootPart",
-			math.max(0, dependencyDeadline - os.clock())
-		)
-	if bindGeneration ~= characterBindGeneration
-		or characterBindingTarget ~= newCharacter
-		or player.Character ~= newCharacter
-		or not newCharacter.Parent
-	then
-		return
-	end
-	if not newHumanoid or not newHumanoid:IsA("Humanoid")
-		or not newRootPart or not newRootPart:IsA("BasePart")
-	then
-		characterBindingTarget = nil
-		warn("[BLIKK CAMERA] Character dependencies did not become ready before the bounded timeout")
-		return
-	end
+	cancelDependencyWatch = CharacterDependency.ObserveHumanoidAndRoot(
+		newCharacter,
+		MultiplayerConfig.CharacterDependencyTimeoutSeconds,
+		function(newHumanoid, newRootPart)
+			if bindGeneration ~= characterBindGeneration
+				or characterBindingTarget ~= newCharacter
+				or player.Character ~= newCharacter
+				or not newCharacter.Parent then return end
+			character = newCharacter
+			humanoid = newHumanoid
+			rootPart = newRootPart
+			humanoid.AutoRotate = false
 
-	character = newCharacter
-	humanoid = newHumanoid
-	rootPart = newRootPart
-	humanoid.AutoRotate = false
+			local lookVector = rootPart.CFrame.LookVector
+			yawRadians = math.atan2(-lookVector.X, -lookVector.Z)
+			pitchRadians = math.rad(CameraConfig.NeutralPitchDegrees)
 
-	local lookVector = rootPart.CFrame.LookVector
-	yawRadians = math.atan2(-lookVector.X, -lookVector.Z)
-	pitchRadians = math.rad(CameraConfig.NeutralPitchDegrees)
-
-	characterDiedConnection = humanoid.Died:Connect(function()
-		cancelFreeLook()
-		CameraObstruction.Reset()
-		updateMouseCapture()
-	end)
-
-	newCharacter:SetAttribute(CAMERA_READY_ATTRIBUTE, true)
-	updateMouseCapture()
+			characterDiedConnection = humanoid.Died:Connect(function()
+				cancelFreeLook()
+				CameraObstruction.Reset()
+				updateMouseCapture()
+			end)
+			newCharacter:SetAttribute(CAMERA_READY_ATTRIBUTE, true)
+			updateMouseCapture()
+		end,
+		function()
+			if bindGeneration == characterBindGeneration and player.Character == newCharacter then
+				warn("[BLIKK CAMERA] Character dependencies remain incomplete; continuing to observe the current character")
+			end
+		end
+	)
 end
 
 local function beginFreeLook()
@@ -424,6 +415,7 @@ function GameplayCamera:Destroy()
 	table.clear(gameplayBlockers)
 	characterBindGeneration += 1
 	characterBindingTarget = nil
+	if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 	if character and character.Parent then character:SetAttribute(CAMERA_READY_ATTRIBUTE, nil) end
 	cancelFreeLook()
 	CameraObstruction.Reset()
@@ -498,6 +490,7 @@ function GameplayCamera:Init(inputManager)
 		if removingCharacter == characterBindingTarget then
 			characterBindGeneration += 1
 			characterBindingTarget = nil
+			if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 			removingCharacter:SetAttribute(CAMERA_READY_ATTRIBUTE, nil)
 		end
 		if removingCharacter == character then

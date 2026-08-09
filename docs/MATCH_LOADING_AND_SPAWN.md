@@ -91,8 +91,19 @@ most one pending request. Preparation performs the following sequence:
    false.
 7. Ask `DistrictZeroSpawnService` to select and apply one valid placement.
 8. Recheck the exact identity and current character.
-9. Register one death observer and publish `Prepared`.
-10. Keep the character held until an exact release request succeeds.
+9. Initialize that fresh character life once with the configured maximum health
+   and server-owned armour attributes. The per-character initialized marker
+   prevents repeated lifecycle observation or HUD rebinding from refilling it.
+10. Register one death observer and publish `Prepared`.
+11. Keep the character held until an exact release request succeeds.
+
+Fresh-life vitals are configured in `FighterVitalsConfig`. Health uses the
+authoritative `Humanoid` values. Armour uses replicated server-written
+`BLIKK_Armour` and `BLIKK_MaximumArmour` character attributes; clients only
+observe them for HUD presentation. Every Movement Lab, match entry, round,
+join-in-progress, and intended respawn character uses this single lifecycle
+path. A new character receives full values, while a rebind of the same
+character cannot heal or restore armour.
 
 The current tuning is held in `MultiplayerConfig`:
 
@@ -201,6 +212,16 @@ Each controller sets its marker only after its character dependencies and
 connections are committed for the current character bind generation. Markers
 belong to that character instance; they must never be accumulated across
 characters.
+
+Client character binders use one cancellable, event-driven dependency observer
+for the current character. The initial dependency window emits one diagnostic
+if the Humanoid or HumanoidRootPart is still absent, but the observer remains
+eligible to commit if those dependencies replicate later while the exact
+character and bind generation are still current. Character replacement or
+removal cancels that observer. Finite deadline helpers return `nil` when their
+budget is exhausted and never pass a zero timeout to `WaitForChild`. The normal
+client-readiness and server preparation deadlines remain authoritative; late
+dependency arrival cannot release an expired or superseded generation.
 
 Immediately before acknowledgement, the client rechecks character context,
 room, match, and spawn generation against the prepared identity. It then sends

@@ -15,17 +15,21 @@ local claimSerial = 0
 local boundCharacter = nil
 local descendantConnection = nil
 local isInitialised = false
-local BIND_TIMEOUT_SECONDS = math.max(
-	1,
-	MultiplayerConfig.RequiredClientReadinessTimeoutSeconds - 3
-)
+local BIND_TIMEOUT_SECONDS = MultiplayerConfig.CharacterDependencyTimeoutSeconds
 
 local aliases = {
-	Root = "Root", RootJoint = "Root", Waist = "Waist", Neck = "Neck",
-	RightShoulder = "RightShoulder", LeftShoulder = "LeftShoulder",
-	RightElbow = "RightElbow", LeftElbow = "LeftElbow",
-	RightWrist = "RightWrist", LeftWrist = "LeftWrist",
-	RightHip = "RightHip", LeftHip = "LeftHip",
+	Root = "Root",
+	RootJoint = "Root",
+	Waist = "Waist",
+	Neck = "Neck",
+	RightShoulder = "RightShoulder",
+	LeftShoulder = "LeftShoulder",
+	RightElbow = "RightElbow",
+	LeftElbow = "LeftElbow",
+	RightWrist = "RightWrist",
+	LeftWrist = "LeftWrist",
+	RightHip = "RightHip",
+	LeftHip = "LeftHip",
 }
 
 local EXPECTED_CAPABILITIES = { "Root", "Waist", "RightShoulder", "LeftShoulder" }
@@ -47,28 +51,37 @@ local function bindCharacter(character)
 	table.clear(joints)
 	boundCharacter = character
 	character:SetAttribute("BLIKK_ClientPoseReady", nil)
+	local function hasAllCapabilities()
+		for _, alias in EXPECTED_CAPABILITIES do
+			if not joints[alias] then return false end
+		end
+		return true
+	end
+	local function markReady()
+		if not hasAllCapabilities() or bindGeneration ~= generation
+			or player.Character ~= character or not character.Parent then return false end
+		character:SetAttribute("BLIKK_ClientPoseReady", true)
+		return true
+	end
 	local function register(descendant)
 		if not descendant:IsA("Motor6D") then return end
 		local alias = aliases[descendant.Name:gsub(" ", "")]
-		if alias then joints[alias] = descendant end
+		if alias then
+			joints[alias] = descendant
+			markReady()
+		end
 	end
 	for _, descendant in character:GetDescendants() do register(descendant) end
 	descendantConnection = character.DescendantAdded:Connect(function(descendant)
 		if bindGeneration == generation and boundCharacter == character then register(descendant) end
 	end)
-	if bindGeneration == generation and player.Character == character and character.Parent then
-		character:SetAttribute("BLIKK_ClientPoseReady", true)
-	end
+	markReady()
 	task.spawn(function()
 		local deadline = os.clock() + BIND_TIMEOUT_SECONDS
 		repeat
 			if bindGeneration ~= generation or player.Character ~= character or not character.Parent then return end
 			for _, descendant in character:GetDescendants() do register(descendant) end
-			local hasAllCapabilities = true
-			for _, alias in EXPECTED_CAPABILITIES do
-				if not joints[alias] then hasAllCapabilities = false; break end
-			end
-			if hasAllCapabilities then return end
+			if markReady() then return end
 			RunService.Heartbeat:Wait()
 		until os.clock() >= deadline
 		if bindGeneration ~= generation or player.Character ~= character or not character.Parent then return end

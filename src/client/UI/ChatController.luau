@@ -1,10 +1,12 @@
 local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 local UIStyle = require(script.Parent.UIStyle)
 local UINavigationController = require(script.Parent.UINavigationController)
+local SettingsConfig = require(ReplicatedStorage.Shared.Settings.SettingsConfig)
 
 local ChatController = {}
 local player = Players.LocalPlayer
@@ -17,9 +19,14 @@ local channelLabel = nil
 local context = "Hidden"
 local collapsed = true
 local messageCount = 0
-local MAX_VISIBLE_MESSAGES = 80
+local historyGeneration = 0
+local isFollowingNewest = true
+local isPointerOverMessages = false
+local sessionKey = nil
+local activeChannelName = nil
 local collapseButton = nil
 local setCollapsed
+local CHAT_WHEEL_OWNER = "ChatHistoryScroll"
 
 local function addStroke(instance, color)
 	local stroke = Instance.new("UIStroke")
@@ -27,16 +34,72 @@ local function addStroke(instance, color)
 	stroke.Parent = instance
 end
 
+local function setPointerOverMessages(isOver)
+	isPointerOverMessages = isOver == true
+	if inputManager then inputManager:SetMouseWheelBlocked(CHAT_WHEEL_OWNER, isPointerOverMessages) end
+end
+
 local function applySettings()
 	if not gui then return end
 	gui.Enabled = context ~= "Hidden" and SessionSettings:Get("ChatVisible")
+	if not gui.Enabled then setPointerOverMessages(false) end
 	panel.BackgroundTransparency = SessionSettings:Get("ChatOpacity")
 	local scale = panel:FindFirstChildOfClass("UIScale")
 	if scale then scale.Scale = SessionSettings:Get("ChatScale") end
 end
 
+local function getMessageLabels()
+	local messages = {}
+	if not messageList then return messages end
+	for _, child in messageList:GetChildren() do
+		if child:IsA("TextLabel") then table.insert(messages, child) end
+	end
+	table.sort(messages, function(a, b) return a.LayoutOrder < b.LayoutOrder end)
+	return messages
+end
+
+local function maximumCanvasY()
+	if not messageList then return 0 end
+	return math.max(0, messageList.AbsoluteCanvasSize.Y - messageList.AbsoluteSize.Y)
+end
+
+local function updateFollowState()
+	if not messageList then return end
+	isFollowingNewest = messageList.CanvasPosition.Y
+		>= maximumCanvasY() - SettingsConfig.Chat.AutoFollowThresholdPixels
+end
+
+local function updateMessageLayout(shouldFollow, previousCanvasY, removedHeight)
+	local messages = getMessageLabels()
+	for _, message in messages do message.Visible = true end
+	local expectedGeneration = historyGeneration
+	task.defer(function()
+		if not messageList or expectedGeneration ~= historyGeneration then return end
+		if shouldFollow then
+			messageList.CanvasPosition = Vector2.new(0, maximumCanvasY())
+			isFollowingNewest = true
+		elseif removedHeight and removedHeight > 0 then
+			messageList.CanvasPosition = Vector2.new(
+				0,
+				math.clamp((previousCanvasY or 0) - removedHeight, 0, maximumCanvasY())
+			)
+			updateFollowState()
+		end
+	end)
+end
+
+local function clearMessages()
+	historyGeneration += 1
+	for _, message in getMessageLabels() do message:Destroy() end
+	messageCount = 0
+	isFollowingNewest = true
+	if messageList then messageList.CanvasPosition = Vector2.zero end
+end
+
 local function appendMessage(text, sourceName, isSystem)
 	if not messageList then return end
+	local shouldFollow = isFollowingNewest
+	local previousCanvasY = messageList.CanvasPosition.Y
 	messageCount += 1
 	local timestamp = if SessionSettings:Get("ChatTimestamps") then os.date("[%H:%M] ") else ""
 	local label = Instance.new("TextLabel")
@@ -52,26 +115,32 @@ local function appendMessage(text, sourceName, isSystem)
 	label.TextWrapped = true
 	label.TextXAlignment = Enum.TextXAlignment.Left
 	label.Parent = messageList
-	local messages = {}
-	for _, child in messageList:GetChildren() do if child:IsA("TextLabel") then table.insert(messages, child) end end
-	if #messages > MAX_VISIBLE_MESSAGES then
-		table.sort(messages, function(a, b) return a.LayoutOrder < b.LayoutOrder end)
+	local messages = getMessageLabels()
+	local removedHeight = 0
+	if #messages > SettingsConfig.Chat.MaximumStoredMessages then
+		removedHeight = messages[1].AbsoluteSize.Y + SettingsConfig.Chat.MessagePaddingPixels
 		messages[1]:Destroy()
 	end
-	task.defer(function() messageList.CanvasPosition = Vector2.new(0, math.max(0, messageList.AbsoluteCanvasSize.Y - messageList.AbsoluteSize.Y)) end)
+	updateMessageLayout(shouldFollow, previousCanvasY, removedHeight)
+end
+
+local function getActiveChannel()
+	local channels = TextChatService:FindFirstChild("TextChannels")
+	local channelName = activeChannelName or "RBXGeneral"
+	local channel = channels and channels:FindFirstChild(channelName)
+	return if channel and channel:IsA("TextChannel") then channel else nil
 end
 
 local function sendCurrentMessage()
 	local text = inputBox.Text:match("^%s*(.-)%s*$")
 	inputBox.Text = ""
 	if text == "" then return end
-	local channels = TextChatService:FindFirstChild("TextChannels")
-	local general = channels and channels:FindFirstChild("RBXGeneral")
-	if general and general:IsA("TextChannel") then
-		local success = pcall(function() general:SendAsync(text) end)
+	local channel = getActiveChannel()
+	if channel then
+		local success = pcall(function() channel:SendAsync(text) end)
 		if not success then appendMessage("MESSAGE COULD NOT BE SENT.", "SYSTEM", true) end
 	else
-		appendMessage("TEXTCHATSERVICE GENERAL CHANNEL IS UNAVAILABLE.", "SYSTEM", true)
+		appendMessage("THE ACTIVE TEXT CHANNEL IS UNAVAILABLE.", "SYSTEM", true)
 	end
 end
 
@@ -93,13 +162,19 @@ end
 setCollapsed = function(isCollapsed, focusInput)
 	collapsed = isCollapsed
 	if collapsed and inputBox:IsFocused() then inputBox:ReleaseFocus(false) end
-	messageList.Visible = not collapsed
+	messageList.Visible = true
 	inputBox.Visible = not collapsed
 	channelLabel.Visible = not collapsed
-	panel.Size = if collapsed then UDim2.fromOffset(150, 34) else UDim2.fromOffset(430, 245)
+	panel.Size = if collapsed
+		then UDim2.fromOffset(SettingsConfig.Chat.CollapsedWidthPixels, SettingsConfig.Chat.CollapsedHeightPixels)
+		else UDim2.fromOffset(SettingsConfig.Chat.ExpandedWidthPixels, SettingsConfig.Chat.ExpandedHeightPixels)
 	collapseButton.Text = if collapsed then "BLIKK CHAT // ENTER" else "COLLAPSE"
 	collapseButton.Position = if collapsed then UDim2.fromOffset(0, 0) else UDim2.new(1, -82, 0, 5)
-	collapseButton.Size = if collapsed then UDim2.fromScale(1, 1) else UDim2.fromOffset(72, 25)
+	collapseButton.Size = if collapsed then UDim2.new(1, 0, 0, 28) else UDim2.fromOffset(72, 25)
+	messageList.Position = if collapsed then UDim2.fromOffset(8, 32) else UDim2.fromOffset(8, 36)
+	messageList.Size = if collapsed then UDim2.new(1, -16, 1, -40) else UDim2.new(1, -16, 1, -82)
+	messageList.ScrollBarThickness = if collapsed then 0 else 4
+	updateMessageLayout(isFollowingNewest)
 	if focusInput and not collapsed then task.defer(function() if inputBox.Visible then inputBox:CaptureFocus() end end) end
 end
 
@@ -149,6 +224,9 @@ local function createInterface()
 	messageList.Size = UDim2.new(1, -16, 1, -82)
 	messageList.AutomaticCanvasSize = Enum.AutomaticSize.Y
 	messageList.CanvasSize = UDim2.new()
+	messageList.Active = true
+	messageList.ElasticBehavior = Enum.ElasticBehavior.Never
+	messageList.ScrollingDirection = Enum.ScrollingDirection.Y
 	messageList.ScrollBarThickness = 4
 	messageList.ScrollBarImageColor3 = UIStyle.Colors.AccentDim
 	messageList.Visible = false
@@ -160,9 +238,12 @@ local function createInterface()
 	padding.PaddingBottom = UDim.new(0, 5)
 	padding.Parent = messageList
 	local layout = Instance.new("UIListLayout")
-	layout.Padding = UDim.new(0, 3)
+	layout.Padding = UDim.new(0, SettingsConfig.Chat.MessagePaddingPixels)
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.Parent = messageList
+	messageList:GetPropertyChangedSignal("CanvasPosition"):Connect(updateFollowState)
+	messageList.MouseEnter:Connect(function() setPointerOverMessages(true) end)
+	messageList.MouseLeave:Connect(function() setPointerOverMessages(false) end)
 	inputBox = Instance.new("TextBox")
 	inputBox.Name = "Input"
 	inputBox.BackgroundColor3 = UIStyle.Colors.Raised
@@ -198,8 +279,14 @@ function ChatController:Init(gameplayInputManager)
 	if TextChatService:FindFirstChild("ChatInputBarConfiguration") then TextChatService.ChatInputBarConfiguration.Enabled = false end
 	createInterface()
 	TextChatService.MessageReceived:Connect(function(message)
+		if context == "Hidden" or not sessionKey then return end
+		local messageChannel = message.TextChannel
+		local expectedChannelName = activeChannelName or "RBXGeneral"
+		if not messageChannel or messageChannel.Name ~= expectedChannelName then return end
 		local source = message.TextSource
-		appendMessage(message.Text, source and source.Name or "SYSTEM", source == nil)
+		local sourcePlayer = source and Players:GetPlayerByUserId(source.UserId)
+		local sourceName = sourcePlayer and sourcePlayer.DisplayName or (source and source.Name or "SYSTEM")
+		appendMessage(message.Text, sourceName, source == nil)
 	end)
 	UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		if not gui.Enabled then return end
@@ -230,14 +317,27 @@ function ChatController:Init(gameplayInputManager)
 	SessionSettings.Changed.Event:Connect(function(key)
 		if key == "ChatVisible" or key == "ChatOpacity" or key == "ChatScale" then applySettings() end
 	end)
-	appendMessage("BLIKK CHAT USES ROBLOX TEXT FILTERING AND PRIVACY CONTROLS.", "SYSTEM", true)
+	script.Destroying:Connect(function() setPointerOverMessages(false) end)
 	applySettings()
 end
 
-function ChatController:SetContext(nextContext)
+function ChatController:SetContext(nextContext, nextSessionKey, nextChannelName)
+	local sessionChanged = nextSessionKey ~= sessionKey
+	if nextContext == "Hidden" then nextSessionKey = nil; nextChannelName = nil end
+	if nextSessionKey == sessionKey and nextChannelName == nil then nextChannelName = activeChannelName end
 	context = nextContext
+	if nextContext == "Hidden" then setPointerOverMessages(false) end
+	if nextSessionKey ~= sessionKey then sessionChanged = true end
+	sessionKey = nextSessionKey
+	activeChannelName = nextChannelName
 	if inputBox and inputBox:IsFocused() then inputBox:ReleaseFocus(false) end
 	if inputBox then inputBox.Text = ""; setCollapsed(true, false) end
+	if sessionChanged then
+		clearMessages()
+		if sessionKey then
+			appendMessage("BLIKK CHAT USES ROBLOX TEXT FILTERING AND PRIVACY CONTROLS.", "SYSTEM", true)
+		end
+	end
 	if channelLabel then channelLabel.Text = if context == "Lobby" then "LOBBY // SYSTEM" elseif context == "Training" then "ALL // SYSTEM" else "SYSTEM" end
 	applySettings()
 end

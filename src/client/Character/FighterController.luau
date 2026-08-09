@@ -3,6 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:FindFirstChild("Shared")
 assert(Shared, "Shared must be acquired by the client composition root before FighterController")
+local CharacterDependency = require(Shared.Character.CharacterDependency)
 local FighterConfig = require(Shared.Character.FighterConfig)
 local FighterSlots = require(Shared.Character.FighterSlots)
 local StarterLoadout = require(Shared.Equipment.StarterLoadout)
@@ -16,6 +17,8 @@ FighterController.LoadoutChanged = Instance.new("BindableEvent")
 local player = Players.LocalPlayer
 local isInitialised = false
 local characterGeneration = 0
+local characterBindingTarget = nil
+local cancelDependencyWatch = nil
 local fighter = {
 	BodyType = StarterLoadout.BodyType,
 	ActiveWeaponSlot = StarterLoadout.ActiveWeaponSlot,
@@ -63,26 +66,27 @@ end
 local function bindCharacter(character)
 	characterGeneration += 1
 	local generation = characterGeneration
-	local dependencyDeadline = os.clock() + MultiplayerConfig.CharacterDependencyTimeoutSeconds
-	local humanoid = character:FindFirstChild("Humanoid")
-		or character:WaitForChild("Humanoid", math.max(0, dependencyDeadline - os.clock()))
-	local rootPart = character:FindFirstChild("HumanoidRootPart")
-		or character:WaitForChild("HumanoidRootPart", math.max(0, dependencyDeadline - os.clock()))
-	if generation ~= characterGeneration or character ~= player.Character then
-		return
-	end
-	if not humanoid or not humanoid:IsA("Humanoid")
-		or not rootPart or not rootPart:IsA("BasePart") then
-		warn("[BLIKK CHARACTER] Fighter bind timed out waiting for the accepted character dependencies.")
-		return
-	end
-
-	fighter.Character = character
-	fighter.Humanoid = humanoid
-	fighter.RootPart = rootPart
-	publishCharacterState()
-	character:SetAttribute("BLIKK_ClientFighterReady", true)
-	FighterController.CharacterBound:Fire(character, fighter)
+	characterBindingTarget = character
+	if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
+	cancelDependencyWatch = CharacterDependency.ObserveHumanoidAndRoot(
+		character,
+		MultiplayerConfig.CharacterDependencyTimeoutSeconds,
+		function(humanoid, rootPart)
+			if generation ~= characterGeneration or characterBindingTarget ~= character
+				or character ~= player.Character then return end
+			fighter.Character = character
+			fighter.Humanoid = humanoid
+			fighter.RootPart = rootPart
+			publishCharacterState()
+			character:SetAttribute("BLIKK_ClientFighterReady", true)
+			FighterController.CharacterBound:Fire(character, fighter)
+		end,
+		function()
+			if generation == characterGeneration and character == player.Character then
+				warn("[BLIKK CHARACTER] Fighter dependencies remain incomplete; continuing to observe the current character.")
+			end
+		end
+	)
 end
 
 function FighterController:GetFighter()
@@ -165,8 +169,12 @@ function FighterController:Init()
 	isInitialised = true
 	player.CharacterAdded:Connect(bindCharacter)
 	player.CharacterRemoving:Connect(function(character)
-		if fighter.Character == character then
+		if characterBindingTarget == character then
 			characterGeneration += 1
+			characterBindingTarget = nil
+			if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
+		end
+		if fighter.Character == character then
 			fighter.Character, fighter.Humanoid, fighter.RootPart = nil, nil, nil
 		end
 	end)

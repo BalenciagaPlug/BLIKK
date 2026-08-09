@@ -5,6 +5,7 @@ local Config = {
 	RoomNameMinimumLength = 1, RoomNameMaximumLength = 40, JoinCodeLength = 7,
 	MaximumPlayers = 16, MaximumSpectatorSlots = 4, RoomCreationCooldownSeconds = 8,
 	RoomCreationMinimumPlayers = 1,
+	RoomChatChannelPrefix = "BLIKKRoom_",
 	RemoteLookupTimeoutSeconds = 5, ClientRequestTimeoutSeconds = 30,
 	LeaveRequestTimeoutSeconds = 8,
 	BrowserQueryCooldownSeconds = 2, RoomMutationCooldownSeconds = 0.2,

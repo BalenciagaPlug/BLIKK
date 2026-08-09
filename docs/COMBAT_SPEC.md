@@ -167,6 +167,13 @@ Types
 
 # Armour
 
+The current prototype initializes each authoritative fresh fighter life with
+the `FighterVitalsConfig` maximum health and armour. Health remains owned by
+the server-side Humanoid and armour is replicated through server-written
+character attributes for HUD observation. Armour absorption, armour damage,
+regeneration, and equipment-derived maximum changes are not implemented by
+this initialization foundation.
+
 Slots
 
 Head

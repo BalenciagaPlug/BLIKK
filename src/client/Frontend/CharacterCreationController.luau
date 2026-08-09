@@ -234,6 +234,7 @@ function Controller:CreatePage(parent, navigation)
 	function object:SetVisible(visible)
 		page.Visible = visible
 		if visible then
+			CharacterPreviewController:BeginScreenSession()
 			cancel.Visible = #CharacterProfilesController:GetProfiles() > 0
 			errorLabel.Text = ""
 			creationScope:SetActive(true)

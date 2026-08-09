@@ -1,5 +1,4 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
 
 local Branding = require(ReplicatedStorage.Shared.Branding.Branding)
 local CharacterPreviewController = require(script.Parent.CharacterPreviewController)
@@ -70,7 +69,14 @@ local function makeButton(parent, text, order)
 	return button
 end
 
-function OperationsHubController:CreatePage(parent, enterMovementLab, openSettings, openMultiplayer, openClans, inputManager)
+function OperationsHubController:CreatePage(
+	parent,
+	enterMovementLab,
+	openSettings,
+	openMultiplayer,
+	openClans,
+	returnToProfiles
+)
 	local activationCallbacks = {}
 	local function bindActivation(button, callback)
 		activationCallbacks[button] = callback
@@ -132,75 +138,6 @@ function OperationsHubController:CreatePage(parent, enterMovementLab, openSettin
 	preview.Parent = showcase
 	local previewCaption = makeLabel(showcase, "ACTIVE FIGHTER", UDim2.new(0, 12, 1, -48), UDim2.new(1, -24, 0, 30), 13, COLORS.Muted)
 
-	local exitOverlay = Instance.new("Frame")
-	exitOverlay.Name = "LeaveInstructions"
-	exitOverlay.Active = true
-	exitOverlay.BackgroundColor3 = Color3.new(0, 0, 0)
-	exitOverlay.BackgroundTransparency = 0.28
-	exitOverlay.Size = UDim2.fromScale(1, 1)
-	exitOverlay.Visible = false
-	exitOverlay.ZIndex = 40
-	exitOverlay.Parent = canvas
-	local exitDialog = Instance.new("Frame")
-	exitDialog.AnchorPoint = Vector2.new(0.5, 0.5)
-	exitDialog.BackgroundColor3 = COLORS.Panel
-	exitDialog.Position = UDim2.fromScale(0.5, 0.5)
-	exitDialog.Size = UDim2.fromOffset(500, 260)
-	exitDialog.ZIndex = 41
-	exitDialog.Parent = exitOverlay
-	local exitStroke = Instance.new("UIStroke")
-	exitStroke.Color = Color3.fromRGB(113, 48, 126)
-	exitStroke.Thickness = 2
-	exitStroke.Parent = exitDialog
-	local exitTitle = makeLabel(exitDialog, "LEAVE BLIKK?", UDim2.fromOffset(24, 22), UDim2.new(1, -48, 0, 34), 24, COLORS.Text)
-	exitTitle.TextXAlignment = Enum.TextXAlignment.Center
-	exitTitle.ZIndex = 42
-	local exitInstructions = makeLabel(
-		exitDialog,
-		"Roblox controls session exit.\nPress ESC, then choose Leave.",
-		UDim2.fromOffset(36, 72),
-		UDim2.new(1, -72, 0, 72),
-		15,
-		COLORS.Muted
-	)
-	exitInstructions.TextXAlignment = Enum.TextXAlignment.Center
-	exitInstructions.ZIndex = 42
-	local returnButton = makeButton(exitDialog, "RETURN", 1)
-	returnButton.Position = UDim2.fromOffset(36, 190)
-	returnButton.Size = UDim2.fromOffset(200, 44)
-	returnButton.TextXAlignment = Enum.TextXAlignment.Center
-	returnButton.ZIndex = 42
-	local howButton = makeButton(exitDialog, "HOW TO LEAVE", 2)
-	howButton.Position = UDim2.new(1, -236, 0, 190)
-	howButton.Size = UDim2.fromOffset(200, 44)
-	howButton.TextXAlignment = Enum.TextXAlignment.Center
-	howButton.ZIndex = 42
-
-	local hubScope = nil
-	local exitScope = nil
-	local function closeExitInstructions()
-		exitOverlay.Visible = false
-		exitInstructions.Text = "Roblox controls session exit.\nPress ESC, then choose Leave."
-		exitInstructions.TextColor3 = COLORS.Muted
-		if exitScope then exitScope:SetActive(false) end
-	end
-	local function openExitInstructions()
-		if exitOverlay.Visible then return end
-		exitOverlay.Visible = true
-		if exitScope then exitScope:SetActive(true) end
-	end
-	bindActivation(returnButton, closeExitInstructions)
-	bindActivation(howButton, function()
-		exitInstructions.Text = "ESC  →  LEAVE\nUse Roblox's own menu to exit safely."
-		exitInstructions.TextColor3 = COLORS.Accent
-	end)
-	UserInputService.InputBegan:Connect(function(input)
-		if exitOverlay.Visible and input.KeyCode == Enum.KeyCode.Escape then closeExitInstructions() end
-	end)
-	inputManager.ActionBegan.Event:Connect(function(action)
-		if exitOverlay.Visible and (action == "Settings" or action == "Cancel") then closeExitInstructions() end
-	end)
-
 	local sections = {}
 	local mainButtons = {}
 	local function register(name, description, action)
@@ -218,7 +155,7 @@ function OperationsHubController:CreatePage(parent, enterMovementLab, openSettin
 		local button = makeButton(menu, name, index)
 		mainButtons[name] = button
 		bindActivation(button, function()
-			if name == "EXIT" then openExitInstructions(); return end
+			if name == "EXIT" then returnToProfiles(); return end
 			local section = sections[name]
 			contentTitle.Text = name
 			contentText.Text = section.Description
@@ -228,23 +165,14 @@ function OperationsHubController:CreatePage(parent, enterMovementLab, openSettin
 		end)
 	end
 
-	hubScope = UINavigationController:CreateScope("OperationsHub", {
+	local hubScope = UINavigationController:CreateScope("OperationsHub", {
 		Root = page,
 		Default = mainButtons.MULTIPLAYER,
-		Back = openExitInstructions,
+		Back = returnToProfiles,
 	})
 	for button, callback in activationCallbacks do
-		if not button:IsDescendantOf(exitOverlay) then
-			hubScope:Register(button, { Activate = callback })
-		end
+		hubScope:Register(button, { Activate = callback })
 	end
-	exitScope = UINavigationController:CreateScope("OperationsHubExit", {
-		Root = exitOverlay,
-		Default = returnButton,
-		Back = closeExitInstructions,
-	})
-	exitScope:Register(returnButton, { Activate = activationCallbacks[returnButton] })
-	exitScope:Register(howButton, { Activate = activationCallbacks[howButton] })
 
 	local currentProfile = nil
 	local object = {}
@@ -252,6 +180,7 @@ function OperationsHubController:CreatePage(parent, enterMovementLab, openSettin
 		page.Visible = visible
 		hubScope:SetActive(visible)
 		if visible then
+			CharacterPreviewController:BeginScreenSession()
 			currentProfile = profile or currentProfile
 			contentTitle.Text = currentProfile and currentProfile.Name:upper() or "OPERATIONS HUB"
 			if currentProfile then
@@ -267,7 +196,6 @@ function OperationsHubController:CreatePage(parent, enterMovementLab, openSettin
 			previewCaption.Text = currentProfile and (currentProfile.Name:upper() .. " // PROFILE") or "ACTIVE FIGHTER"
 			CharacterPreviewController:Render(preview, currentProfile, true)
 		else
-			closeExitInstructions()
 			CharacterPreviewController:Stop()
 		end
 	end

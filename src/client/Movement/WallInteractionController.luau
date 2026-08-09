@@ -6,6 +6,7 @@ local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage.Shared.Movement.TechniqueConfig).Wall
 local PoseCoordinator = require(script.Parent.Parent.Character.PoseCoordinator)
+local CharacterDependency = require(ReplicatedStorage.Shared.Character.CharacterDependency)
 local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
 
 local Controller = {}
@@ -30,6 +31,8 @@ local poseTargets = {}
 local characterConnections = {}
 local isInitialised = false
 local characterGeneration = 0
+local characterBindingTarget = nil
+local cancelDependencyWatch = nil
 
 local function diagnose(message)
 	if Config.DiagnosticsEnabled then print("[BLIKK WALL SENSOR] " .. message) end
@@ -182,27 +185,34 @@ end
 local function bindCharacter(nextCharacter)
 	characterGeneration += 1
 	local bindGeneration = characterGeneration
+	characterBindingTarget = nextCharacter
+	if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 	for _, connection in characterConnections do connection:Disconnect() end
 	table.clear(characterConnections)
 	clearPresentationState()
 	raycastParams.FilterDescendantsInstances = {}
 	character, humanoid, rootPart = nil, nil, nil
-	local dependencyDeadline = os.clock() + MultiplayerConfig.CharacterDependencyTimeoutSeconds
-	local nextHumanoid = nextCharacter:FindFirstChild("Humanoid")
-		or nextCharacter:WaitForChild("Humanoid", math.max(0, dependencyDeadline - os.clock()))
-	local nextRootPart = nextCharacter:FindFirstChild("HumanoidRootPart")
-		or nextCharacter:WaitForChild("HumanoidRootPart", math.max(0, dependencyDeadline - os.clock()))
-	if bindGeneration ~= characterGeneration or player.Character ~= nextCharacter
-		or not nextHumanoid or not nextHumanoid:IsA("Humanoid")
-		or not nextRootPart or not nextRootPart:IsA("BasePart") then return end
-	character, humanoid, rootPart = nextCharacter, nextHumanoid, nextRootPart
-	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-	raycastParams.FilterDescendantsInstances = { character }
-	raycastParams.IgnoreWater = true
-	character:SetAttribute("BLIKK_ClientWallReady", true)
-	table.insert(characterConnections, humanoid.Died:Connect(function()
-		if bindGeneration == characterGeneration then clearPresentationState() end
-	end))
+	cancelDependencyWatch = CharacterDependency.ObserveHumanoidAndRoot(
+		nextCharacter,
+		MultiplayerConfig.CharacterDependencyTimeoutSeconds,
+		function(nextHumanoid, nextRootPart)
+			if bindGeneration ~= characterGeneration or characterBindingTarget ~= nextCharacter
+				or player.Character ~= nextCharacter then return end
+			character, humanoid, rootPart = nextCharacter, nextHumanoid, nextRootPart
+			raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+			raycastParams.FilterDescendantsInstances = { character }
+			raycastParams.IgnoreWater = true
+			character:SetAttribute("BLIKK_ClientWallReady", true)
+			table.insert(characterConnections, humanoid.Died:Connect(function()
+				if bindGeneration == characterGeneration then clearPresentationState() end
+			end))
+		end,
+		function()
+			if bindGeneration == characterGeneration and player.Character == nextCharacter then
+				warn("[BLIKK WALL] Character dependencies remain incomplete; continuing to observe the current character.")
+			end
+		end
+	)
 end
 
 function Controller:GetState()
@@ -243,8 +253,10 @@ function Controller:Init(inputManager, movementEngineValue, gameplayCamera)
 	end)
 	player.CharacterAdded:Connect(bindCharacter)
 	player.CharacterRemoving:Connect(function(removingCharacter)
-		if removingCharacter ~= character then return end
+		if removingCharacter ~= characterBindingTarget then return end
 		characterGeneration += 1
+		characterBindingTarget = nil
+		if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 		for _, connection in characterConnections do connection:Disconnect() end
 		table.clear(characterConnections)
 		clearPresentationState()

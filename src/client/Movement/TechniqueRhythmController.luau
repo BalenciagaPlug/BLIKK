@@ -2,6 +2,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.Shared.Movement.TechniqueConfig)
+local CharacterDependency = require(ReplicatedStorage.Shared.Character.CharacterDependency)
 local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
 
 local Controller = {}
@@ -34,6 +35,8 @@ local movementState = "Grounded"
 local wallState = "None"
 local isInitialised = false
 local diedConnection
+local characterBindingTarget
+local cancelDependencyWatch
 local dashAction
 local semanticHistory = {}
 
@@ -138,20 +141,31 @@ local function bindCharacter(nextCharacter)
 	generation += 1
 	characterGeneration += 1
 	local bindGeneration = characterGeneration
+	characterBindingTarget = nextCharacter
+	if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 	breakChain("character replaced", true)
 	table.clear(semanticHistory)
 	if diedConnection then diedConnection:Disconnect(); diedConnection = nil end
 	character, humanoid = nil, nil
-	local nextHumanoid = nextCharacter:FindFirstChild("Humanoid")
-		or nextCharacter:WaitForChild("Humanoid", MultiplayerConfig.CharacterDependencyTimeoutSeconds)
-	if bindGeneration ~= characterGeneration or player.Character ~= nextCharacter
-		or not nextHumanoid or not nextHumanoid:IsA("Humanoid") then return end
-	character, humanoid = nextCharacter, nextHumanoid
-	dashAction = nil
-	diedConnection = humanoid.Died:Connect(function()
-		if bindGeneration == characterGeneration then generation += 1; breakChain("death", true) end
-	end)
-	character:SetAttribute("BLIKK_ClientTechniqueReady", true)
+	cancelDependencyWatch = CharacterDependency.ObserveHumanoidAndRoot(
+		nextCharacter,
+		MultiplayerConfig.CharacterDependencyTimeoutSeconds,
+		function(nextHumanoid)
+			if bindGeneration ~= characterGeneration or characterBindingTarget ~= nextCharacter
+				or player.Character ~= nextCharacter then return end
+			character, humanoid = nextCharacter, nextHumanoid
+			dashAction = nil
+			diedConnection = humanoid.Died:Connect(function()
+				if bindGeneration == characterGeneration then generation += 1; breakChain("death", true) end
+			end)
+			character:SetAttribute("BLIKK_ClientTechniqueReady", true)
+		end,
+		function()
+			if bindGeneration == characterGeneration and player.Character == nextCharacter then
+				warn("[BLIKK TECHNIQUE] Character dependencies remain incomplete; continuing to observe the current character.")
+			end
+		end
+	)
 end
 
 function Controller:GetTelemetry()
@@ -218,9 +232,11 @@ function Controller:Init(inputManager, movementEngine, meleeController, wallCont
 	fighterController.LoadoutChanged.Event:Connect(function(changeType) if changeType == "ActiveWeaponSlot" then generation += 1; breakChain("weapon switched", true) end end)
 	player.CharacterAdded:Connect(bindCharacter)
 	player.CharacterRemoving:Connect(function(removingCharacter)
-		if removingCharacter == character then
+		if removingCharacter == characterBindingTarget then
 			generation += 1
 			characterGeneration += 1
+			characterBindingTarget = nil
+			if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 			breakChain("character removing", true)
 			if diedConnection then diedConnection:Disconnect(); diedConnection = nil end
 			dashAction = nil

@@ -3,6 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local PoseCoordinator = require(script.Parent.Parent.Character.PoseCoordinator)
+local CharacterDependency = require(ReplicatedStorage.Shared.Character.CharacterDependency)
 local Config = require(ReplicatedStorage.Shared.Combat.FirearmPresentationConfig)
 local CombatConfig = require(ReplicatedStorage.Shared.Combat.FirearmCombatConfig)
 local FighterSlots = require(ReplicatedStorage.Shared.Character.FighterSlots)
@@ -27,6 +28,8 @@ local generation = 0
 local switchGeneration = 0
 local pendingSwitch = nil
 local deathConnection = nil
+local characterBindingTarget = nil
+local cancelDependencyWatch = nil
 local gameplayEnabled = true
 local inputSuppressed = false
 local isCommittingSwitch = false
@@ -507,38 +510,54 @@ end
 local function bindCharacter(nextCharacter)
 	destroyCharacterPresentation()
 	local bindGeneration = generation
-	local nextHumanoid = nextCharacter:FindFirstChildOfClass("Humanoid")
-		or nextCharacter:WaitForChild("Humanoid", MultiplayerConfig.CharacterDependencyTimeoutSeconds)
-	if bindGeneration ~= generation or player.Character ~= nextCharacter or not nextHumanoid then return end
-	character, humanoid = nextCharacter, nextHumanoid
-	for _, slotId in { "Primary1", "Primary2" } do
-		local model, hinge, muzzles, shells, shellJoints = buildWeapon(slotId)
-		model.Parent = nextCharacter
-		local slot = {
-			Id = slotId, Model = model, Hinge = hinge, Muzzles = muzzles, Shells = shells,
-			ShellJoints = shellJoints,
-			Grip = nil,
-			State = "Idle",
-			StateStartedAt = os.clock(),
-			Barrels = table.create(Config.ChamberCapacity, true),
-			Reserve = Config.StartingReserve, NextFireAt = 0, LastFireAt = nil, LastBarrel = 0, Token = 0,
-		}
-		slots[slotId] = slot
-		attachSlot(slot, fighterController:GetFighter().ActiveWeaponSlot == slotId)
-		updateShells(slot)
-		nextCharacter:SetAttribute("BLIKK_Client" .. slotId .. "Ready", true)
-	end
-	local desiredSlot = fighterController:GetFighter().ActiveWeaponSlot
-	activeSlot = "Melee"
-	if slots[desiredSlot] then
-		switchGeneration += 1
-		commitSwitch(desiredSlot, switchGeneration, generation)
-	else
-		activeSlot = desiredSlot
-	end
-	deathConnection = nextHumanoid.Died:Connect(function()
-		if character == nextCharacter then destroyCharacterPresentation() end
-	end)
+	characterBindingTarget = nextCharacter
+	if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
+	cancelDependencyWatch = CharacterDependency.ObserveHumanoidAndRoot(
+		nextCharacter,
+		MultiplayerConfig.CharacterDependencyTimeoutSeconds,
+		function(nextHumanoid)
+			if bindGeneration ~= generation or characterBindingTarget ~= nextCharacter
+				or player.Character ~= nextCharacter then return end
+			character, humanoid = nextCharacter, nextHumanoid
+			for _, slotId in { "Primary1", "Primary2" } do
+				local model, hinge, muzzles, shells, shellJoints = buildWeapon(slotId)
+				model.Parent = nextCharacter
+				local slot = {
+					Id = slotId, Model = model, Hinge = hinge, Muzzles = muzzles, Shells = shells,
+					ShellJoints = shellJoints,
+					Grip = nil,
+					State = "Idle",
+					StateStartedAt = os.clock(),
+					Barrels = table.create(Config.ChamberCapacity, true),
+					Reserve = Config.StartingReserve, NextFireAt = 0, LastFireAt = nil, LastBarrel = 0, Token = 0,
+				}
+				slots[slotId] = slot
+				if not attachSlot(slot, fighterController:GetFighter().ActiveWeaponSlot == slotId) then
+					warn("[BLIKK FIREARM] Character weapon attachment parts were unavailable.")
+					return
+				end
+				updateShells(slot)
+				nextCharacter:SetAttribute("BLIKK_Client" .. slotId .. "Ready", true)
+			end
+			local desiredSlot = fighterController:GetFighter().ActiveWeaponSlot
+			activeSlot = "Melee"
+			if slots[desiredSlot] then
+				switchGeneration += 1
+				commitSwitch(desiredSlot, switchGeneration, generation)
+			else
+				activeSlot = desiredSlot
+			end
+			deathConnection = nextHumanoid.Died:Connect(function()
+				if character == nextCharacter then destroyCharacterPresentation() end
+			end)
+		end,
+		function()
+			if bindGeneration == generation and player.Character == nextCharacter then
+				warn("[BLIKK FIREARM] Character dependencies remain incomplete; continuing to observe the current character.")
+			end
+		end,
+		{ "RightHand", "UpperTorso" }
+	)
 end
 
 function Controller:GetActiveStatus()
@@ -630,7 +649,10 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 	end)
 	player.CharacterAdded:Connect(bindCharacter)
 	player.CharacterRemoving:Connect(function(removingCharacter)
-		if removingCharacter == character then destroyCharacterPresentation() end
+		if removingCharacter ~= characterBindingTarget then return end
+		characterBindingTarget = nil
+		if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
+		destroyCharacterPresentation()
 	end)
 	if player.Character then bindCharacter(player.Character) end
 	RunService:BindToRenderStep(

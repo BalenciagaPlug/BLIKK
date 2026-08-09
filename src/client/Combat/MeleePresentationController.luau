@@ -6,7 +6,10 @@ local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 local PoseCoordinator = require(script.Parent.Parent.Character.PoseCoordinator)
 local Shared = ReplicatedStorage:FindFirstChild("Shared")
 assert(Shared, "Shared must be acquired by the client composition root before melee presentation")
+local CharacterDependency = require(Shared.Character.CharacterDependency)
 local Config = require(Shared.Combat.MeleePresentationConfig)
+local TrainingKatanaPresentation = require(Shared.Combat.TrainingKatanaPresentation)
+local MultiplayerConfig = require(Shared.Multiplayer.MultiplayerConfig)
 
 local Controller = {}
 Controller.StateChanged = Instance.new("BindableEvent")
@@ -30,6 +33,7 @@ local stateStarted = 0
 local generation = 0
 local characterGeneration = 0
 local pendingCharacter = nil
+local cancelDependencyWatch = nil
 local blockHeld = false
 local heldBlockActions = {}
 local bufferedBlockAt
@@ -71,70 +75,8 @@ local function setVisualState(nextState)
 	Controller.StateChanged:Fire(nextState)
 end
 
-local function makePart(parent, name, size, color, material, cframe)
-	local part = Instance.new("Part")
-	part.Name = name
-	part.Size = size
-	part.Color = color
-	part.Material = material
-	part.CFrame = cframe or CFrame.identity
-	part.Anchored = false
-	part.Massless = true
-	part.CanCollide = false
-	part.CanQuery = false
-	part.CanTouch = false
-	part.CastShadow = SessionSettings:Get("EffectsQuality") ~= "LOW"
-	part.Parent = parent
-	return part
-end
-
-local function weld(handle, part)
-	local weldConstraint = Instance.new("WeldConstraint")
-	weldConstraint.Part0 = handle
-	weldConstraint.Part1 = part
-	weldConstraint.Parent = part
-end
-
 local function buildTrainingKatana()
-	local dimensions = Config.TrainingKatana.Dimensions
-	local geometry = Config.TrainingKatana.Geometry
-	local handleHalfLength = dimensions.Handle.Y * 0.5
-	local guardCenterY = handleHalfLength + dimensions.Guard.Y * 0.5
-	local bladeStartY = handleHalfLength + dimensions.Guard.Y + geometry.BladeGuardGapStuds
-	local bladeCenterY = bladeStartY + dimensions.Blade.Y * 0.5
-	local bladeEndY = bladeStartY + dimensions.Blade.Y
-	local pommelCenterY = -handleHalfLength - dimensions.Pommel.Y * 0.5
-	local trailRootY = bladeStartY + dimensions.Blade.Y * geometry.TrailRootBladeFraction
-	local trailTipY = bladeEndY - dimensions.Blade.Y * geometry.TrailTipInsetBladeFraction
-	local model = Instance.new("Model")
-	model.Name = "TrainingKatana"
-	model:SetAttribute("BLIKK_WeaponDefinition", "TrainingKatana")
-	model:SetAttribute("BLIKK_PresentationOnly", true)
-	local handle = makePart(model, "Handle", dimensions.Handle, Color3.fromRGB(25, 25, 29), Enum.Material.Metal)
-	local grip = makePart(model, "Grip", dimensions.Grip, Color3.fromRGB(53, 42, 61), Enum.Material.Fabric, CFrame.new(0, geometry.GripCenterYStuds, 0))
-	local guard = makePart(model, "Guard", dimensions.Guard, Color3.fromRGB(92, 66, 115), Enum.Material.Metal, CFrame.new(0, guardCenterY, 0))
-	local blade = makePart(model, "Blade", dimensions.Blade, Color3.fromRGB(92, 98, 108), Enum.Material.Metal, CFrame.new(0, bladeCenterY, 0))
-	local edge = makePart(model, "BladeEdge", dimensions.BladeEdge, Color3.fromRGB(229, 226, 213), Enum.Material.SmoothPlastic, CFrame.new(geometry.EdgeOffsetXStuds, bladeCenterY, 0))
-	local pommel = makePart(model, "Pommel", dimensions.Pommel, Color3.fromRGB(106, 71, 135), Enum.Material.Metal, CFrame.new(0, pommelCenterY, 0))
-	for _, part in { grip, guard, blade, edge, pommel } do weld(handle, part) end
-	local trailStart = Instance.new("Attachment")
-	trailStart.Name = "TrailAttachmentStart"
-	trailStart.Position = Vector3.new(0, trailRootY, 0)
-	trailStart.Parent = handle
-	local trailEnd = Instance.new("Attachment")
-	trailEnd.Name = "TrailAttachmentEnd"
-	trailEnd.Position = Vector3.new(0, trailTipY, 0)
-	trailEnd.Parent = handle
-	local bladeTrail = Instance.new("Trail")
-	bladeTrail.Name = "BladeTrail"
-	bladeTrail.Attachment0 = trailStart
-	bladeTrail.Attachment1 = trailEnd
-	bladeTrail.Color = ColorSequence.new(Color3.fromRGB(224, 218, 230), Color3.fromRGB(118, 63, 166))
-	bladeTrail.LightEmission = 0.25
-	bladeTrail.Enabled = false
-	bladeTrail.Parent = handle
-	model.PrimaryPart = handle
-	return model, bladeTrail
+	return TrainingKatanaPresentation.Build(SessionSettings:Get("EffectsQuality") ~= "LOW")
 end
 
 local function attachWeaponTo(model, targetCharacter, targetHumanoid, existingGrip, mode, dependencyDeadline)
@@ -144,11 +86,11 @@ local function attachWeaponTo(model, targetCharacter, targetHumanoid, existingGr
 	local targetPartName = if targetHumanoid and targetHumanoid.RigType == Enum.HumanoidRigType.R6
 		then fallbackPartName
 		else attachment.PartName
-	local bodyPart = targetCharacter:FindFirstChild(targetPartName)
-		or targetCharacter:WaitForChild(
-			targetPartName,
-			math.max(0, (dependencyDeadline or (os.clock() + CHARACTER_PART_WAIT_SECONDS)) - os.clock())
-		)
+	local bodyPart = CharacterDependency.WaitForChildBefore(
+		targetCharacter,
+		targetPartName,
+		dependencyDeadline or (os.clock() + CHARACTER_PART_WAIT_SECONDS)
+	)
 	if not bodyPart or not bodyPart:IsA("BasePart") then return false, existingGrip end
 	local handle = model.PrimaryPart
 	if not handle then return false, existingGrip end
@@ -386,53 +328,67 @@ local function bindCharacter(nextCharacter)
 	characterGeneration += 1
 	local bindCharacterGeneration = characterGeneration
 	pendingCharacter = nextCharacter
+	if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 	interrupt("Interrupted")
 	disconnectCharacterConnections()
 	if weaponModel then weaponModel:Destroy() end
 	gripJoint = nil
 	character, humanoid, weaponModel, trail = nil, nil, nil, nil
-	local dependencyDeadline = os.clock() + CHARACTER_PART_WAIT_SECONDS
-	local nextHumanoid = nextCharacter:FindFirstChild("Humanoid")
-		or nextCharacter:WaitForChild("Humanoid", math.max(0, dependencyDeadline - os.clock()))
-	if bindCharacterGeneration ~= characterGeneration or nextCharacter ~= player.Character
-		or not nextHumanoid or not nextHumanoid:IsA("Humanoid") then
-		if bindCharacterGeneration == characterGeneration then pendingCharacter = nil end
-		if bindCharacterGeneration == characterGeneration and nextCharacter == player.Character then
-			warn("[BLIKK MELEE] Character bind timed out waiting for Humanoid.")
-		end
-		return
-	end
-	local nextWeaponModel, nextTrail = buildTrainingKatana()
-	nextWeaponModel.Parent = nextCharacter
-	local attached, nextGrip = attachWeaponTo(
-		nextWeaponModel,
+	cancelDependencyWatch = CharacterDependency.ObserveHumanoidAndRoot(
 		nextCharacter,
-		nextHumanoid,
-		nil,
-		if isMeleeActive() then "Equipped" else "Holstered",
-		dependencyDeadline
-	)
-	if not attached or bindCharacterGeneration ~= characterGeneration
-		or nextCharacter ~= player.Character or nextWeaponModel.Parent ~= nextCharacter then
-		if nextWeaponModel.Parent then nextWeaponModel:Destroy() end
-		if bindCharacterGeneration == characterGeneration then pendingCharacter = nil end
-		return
-	end
-	pendingCharacter = nil
-	character, humanoid = nextCharacter, nextHumanoid
-	weaponModel, trail, gripJoint = nextWeaponModel, nextTrail, nextGrip
-	setState(if isMeleeActive() then "MeleeIdle" else "Holstered")
-	setVisualState(if isMeleeActive() then "GroundIdle" else "Holstered")
-	character:SetAttribute("BLIKK_ClientMeleeReady", true)
-	table.insert(connections, humanoid.Died:Connect(function()
-		if bindCharacterGeneration == characterGeneration then interrupt("Interrupted") end
-	end))
-	table.insert(connections, humanoid.StateChanged:Connect(function(_, nextHumanoidState)
-		if bindCharacterGeneration ~= characterGeneration or character ~= nextCharacter then return end
-		if nextHumanoidState == Enum.HumanoidStateType.Landed or nextHumanoidState == Enum.HumanoidStateType.Running then
-			if isMeleeActive() and state ~= "Slashing" and state ~= "Blocking" then setState("MeleeIdle") end
+		MultiplayerConfig.CharacterDependencyTimeoutSeconds,
+		function(nextHumanoid)
+			if bindCharacterGeneration ~= characterGeneration or pendingCharacter ~= nextCharacter
+				or nextCharacter ~= player.Character then return end
+			local nextWeaponModel, nextTrail = buildTrainingKatana()
+			nextWeaponModel.Parent = nextCharacter
+			local attached, nextGrip = attachWeaponTo(
+				nextWeaponModel,
+				nextCharacter,
+				nextHumanoid,
+				nil,
+				if isMeleeActive() then "Equipped" else "Holstered",
+				os.clock() + CHARACTER_PART_WAIT_SECONDS
+			)
+			if not attached or bindCharacterGeneration ~= characterGeneration
+				or nextCharacter ~= player.Character or nextWeaponModel.Parent ~= nextCharacter then
+				if nextWeaponModel.Parent then nextWeaponModel:Destroy() end
+				if bindCharacterGeneration == characterGeneration then pendingCharacter = nil end
+				return
+			end
+			pendingCharacter = nil
+			character, humanoid = nextCharacter, nextHumanoid
+			weaponModel, trail, gripJoint = nextWeaponModel, nextTrail, nextGrip
+			setState(if isMeleeActive() then "MeleeIdle" else "Holstered")
+			setVisualState(if isMeleeActive() then "GroundIdle" else "Holstered")
+			character:SetAttribute("BLIKK_ClientMeleeReady", true)
+			table.insert(connections, humanoid.Died:Connect(function()
+				if bindCharacterGeneration == characterGeneration then interrupt("Interrupted") end
+			end))
+			table.insert(connections, humanoid.StateChanged:Connect(function(_, nextHumanoidState)
+				if bindCharacterGeneration ~= characterGeneration or character ~= nextCharacter then return end
+				if nextHumanoidState == Enum.HumanoidStateType.Landed
+					or nextHumanoidState == Enum.HumanoidStateType.Running then
+					if isMeleeActive() and state ~= "Slashing" and state ~= "Blocking" then
+						setState("MeleeIdle")
+					end
+				end
+			end))
+		end,
+		function()
+			if bindCharacterGeneration == characterGeneration and nextCharacter == player.Character then
+				warn("[BLIKK MELEE] Character dependencies remain incomplete; continuing to observe the current character.")
+			end
+		end,
+		function(nextHumanoid)
+			return if nextHumanoid.RigType == Enum.HumanoidRigType.R6
+				then { "Right Arm", "Torso" }
+				else {
+					Config.TrainingKatana.EquippedAttachment.PartName,
+					Config.TrainingKatana.HolsteredAttachment.PartName,
+				}
 		end
-	end))
+	)
 end
 
 function Controller:GetState() return state end
@@ -513,6 +469,7 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 		if pendingCharacter == removingCharacter then
 			characterGeneration += 1
 			pendingCharacter = nil
+			if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 		end
 		if character == removingCharacter then
 			characterGeneration += 1

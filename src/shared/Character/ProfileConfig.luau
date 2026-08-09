@@ -11,6 +11,26 @@ local ProfileConfig = {
 	StarterBoots = { "COMBAT BLACK", "COMBAT GREY", "COMBAT OXIDE" },
 	RandomIdleMinimumSeconds = 8,
 	RandomIdleMaximumSeconds = 20,
+	PreviewTiming = {
+		RequestTimeoutSeconds = 12,
+		ViewportSizeTimeoutSeconds = 1,
+	},
+	PreviewInspection = {
+		DefaultYawDegrees = 0,
+		DefaultCameraDistanceStuds = 16,
+		DragDegreesPerPixel = 0.45,
+		ZoomStepStuds = 0.8,
+		MinimumCameraDistanceStuds = 5,
+		MaximumCameraDistanceStuds = 22,
+		AutomaticRotationSpeedDegreesPerSecond = 6.875,
+	},
+	PreviewAnimation = {
+		TrustedIdleAnimationIds = {
+			R15 = 507766388,
+			R6 = 180435571,
+		},
+		InitialFadeSeconds = 0.1,
+	},
 	PreviewBounds = {
 		DeveloperPrimitiveFallbackEnabled = false,
 		StabilizationTimeoutSeconds = 0.35,

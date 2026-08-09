@@ -1,5 +1,15 @@
 local SettingsConfig = {
 	KeyboardSliderCommitDelaySeconds = 0.18,
+	Chat = {
+		MaximumStoredMessages = 80,
+		CollapsedVisibleMessages = 4,
+		MessagePaddingPixels = 3,
+		AutoFollowThresholdPixels = 6,
+		CollapsedWidthPixels = 350,
+		CollapsedHeightPixels = 118,
+		ExpandedWidthPixels = 430,
+		ExpandedHeightPixels = 245,
+	},
 
 	AudioDefaults = {
 		MasterVolume = 1,

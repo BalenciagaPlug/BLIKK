@@ -9,6 +9,7 @@ local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 local PoseCoordinator = require(script.Parent.Parent.Character.PoseCoordinator)
 local Shared = ReplicatedStorage:FindFirstChild("Shared")
 assert(Shared, "Shared must be acquired by the client composition root before dash presentation")
+local CharacterDependency = require(Shared.Character.CharacterDependency)
 local MovementConfig = require(Shared.Movement.MovementConfig)
 local MultiplayerConfig = require(Shared.Multiplayer.MultiplayerConfig)
 local RenderQualityConfig = require(Shared.Settings.RenderQualityConfig)
@@ -27,6 +28,8 @@ local ownedStreakParts = {}
 local isInitialised = false
 local characterGeneration = 0
 local boundCharacter = nil
+local characterBindingTarget = nil
+local cancelDependencyWatch = nil
 local dashSound = nil
 
 local function renderValue(key)
@@ -198,27 +201,42 @@ function Controller:Init(movementEngine, _cameraController)
 	local function bindCharacter(character)
 		characterGeneration += 1
 		local bindGeneration = characterGeneration
+		characterBindingTarget = character
+		if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 		self:Interrupt()
 		if humanoidStateConnection then humanoidStateConnection:Disconnect() end
 		humanoidStateConnection = nil
 		boundCharacter = nil
-		local humanoid = character:WaitForChild("Humanoid", MultiplayerConfig.CharacterDependencyTimeoutSeconds)
-		if bindGeneration ~= characterGeneration or player.Character ~= character
-			or not humanoid or not humanoid:IsA("Humanoid") then return end
-		boundCharacter = character
-		bindDashSound(character:FindFirstChild("HumanoidRootPart"))
-		humanoidStateConnection = humanoid.StateChanged:Connect(function(_, nextState)
-			if bindGeneration ~= characterGeneration or boundCharacter ~= character then return end
-			if nextState == Enum.HumanoidStateType.Landed or nextState == Enum.HumanoidStateType.Running then
-				airReady = false
-				if not activeAction then resetJoints() end
+		cancelDependencyWatch = CharacterDependency.ObserveHumanoidAndRoot(
+			character,
+			MultiplayerConfig.CharacterDependencyTimeoutSeconds,
+			function(humanoid, rootPart)
+				if bindGeneration ~= characterGeneration or characterBindingTarget ~= character
+					or player.Character ~= character then return end
+				boundCharacter = character
+				bindDashSound(rootPart)
+				humanoidStateConnection = humanoid.StateChanged:Connect(function(_, nextState)
+					if bindGeneration ~= characterGeneration or boundCharacter ~= character then return end
+					if nextState == Enum.HumanoidStateType.Landed
+						or nextState == Enum.HumanoidStateType.Running then
+						airReady = false
+						if not activeAction then resetJoints() end
+					end
+				end)
+			end,
+			function()
+				if bindGeneration == characterGeneration and player.Character == character then
+					warn("[BLIKK DASH] Character dependencies remain incomplete; continuing to observe the current character.")
+				end
 			end
-		end)
+		)
 	end
 	player.CharacterAdded:Connect(bindCharacter)
 	player.CharacterRemoving:Connect(function(character)
-		if character ~= boundCharacter then return end
+		if character ~= characterBindingTarget then return end
 		characterGeneration += 1
+		characterBindingTarget = nil
+		if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 		boundCharacter = nil
 		self:Interrupt()
 		destroyDashSound()

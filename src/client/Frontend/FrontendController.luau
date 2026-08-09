@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LoadingScreenConfig = require(ReplicatedStorage.Shared.UI.LoadingScreenConfig)
 
 local CharacterCreationController = require(script.Parent.CharacterCreationController)
+local CharacterPreviewController = require(script.Parent.CharacterPreviewController)
 local CharacterProfilesController = require(script.Parent.CharacterProfilesController)
 local ClanController = require(script.Parent.ClanController)
 local MultiplayerBrowserController = require(script.Parent.MultiplayerBrowserController)
@@ -25,6 +26,7 @@ local matchPreparationControllerReference = nil
 local musicControllerReference = nil
 
 local function setFrontendActive(isActive)
+	if not isActive then CharacterPreviewController:EndFrontendSession() end
 	frontendGui.Enabled = isActive
 	gameplayCameraReference:SetGameplayActive(not isActive)
 	settingsControllerReference:SetFrontendActive(isActive)
@@ -88,7 +90,7 @@ function FrontendController:Init(
 		isInGameplay = true
 		NavigationController:Suspend()
 		setFrontendActive(false)
-		chatController:SetContext("Training")
+		chatController:SetContext("Training", "MOVEMENT_LAB")
 	end
 
 	local function enterMultiplayerGameplay(matchSnapshot)
@@ -96,14 +98,21 @@ function FrontendController:Init(
 		isInGameplay = true
 		NavigationController:Suspend()
 		setFrontendActive(false)
-		chatController:SetContext(if matchSnapshot.ModeId == "Training" then "Training" else "Match")
+		chatController:SetContext(
+			if matchSnapshot.ModeId == "Training" then "Training" else "Match",
+			matchSnapshot.RoomId
+		)
 		return true
 	end
 
-	local function showMultiplayerRoomLobby()
+	local function showMultiplayerRoomLobby(roomSnapshot)
 		isInGameplay = false
 		setFrontendActive(true)
-		chatController:SetContext("Lobby")
+		chatController:SetContext(
+			"Lobby",
+			roomSnapshot and roomSnapshot.RoomId,
+			roomSnapshot and roomSnapshot.ChatChannelName
+		)
 		NavigationController:GoTo("Multiplayer")
 	end
 
@@ -146,12 +155,19 @@ function FrontendController:Init(
 		function() settingsController:OpenFromFrontend() end,
 		function() NavigationController:GoTo("Multiplayer") end,
 		function() NavigationController:GoTo("Clans") end,
-		inputManager
+		function() NavigationController:GoTo("Profiles") end
 	))
 	settingsController:SetReturnToMenuCallback(function() self:ReturnToOperationsHub() end)
 	settingsController:SetFrontendActive(true)
 	NavigationController.Changed.Event:Connect(function(route)
-		if not isInGameplay then chatController:SetContext(if route == "Multiplayer" then "Lobby" else "Hidden") end
+		if isInGameplay then return end
+		if route == "Multiplayer" then
+			if not multiplayerPageReference:HasCurrentRoom() then
+				chatController:SetContext("Lobby", "LOBBY_BROWSER")
+			end
+		else
+			chatController:SetContext("Hidden")
+		end
 	end)
 	NavigationController:GoTo("Splash")
 end

@@ -38,6 +38,7 @@ local heldTokensByAction = {}
 local dispatchSequence = 0
 local wheelPulseGeneration = 0
 local activeWheelPulses = {}
+local mouseWheelBlockers = {}
 local fixedMenuTokens = {
 	["KeyCode.Up"] = true,
 	["KeyCode.Down"] = true,
@@ -282,7 +283,9 @@ function InputManager:Init()
 	end)
 
 	UserInputService.InputChanged:Connect(function(input, gameProcessed)
-		if isBindingCaptureActive or isTextInputActive or gameProcessed or input.UserInputType ~= Enum.UserInputType.MouseWheel then
+		if isBindingCaptureActive or isTextInputActive or gameProcessed
+			or next(mouseWheelBlockers) ~= nil
+			or input.UserInputType ~= Enum.UserInputType.MouseWheel then
 			return
 		end
 
@@ -339,6 +342,15 @@ function InputManager:SetGameplayBlocked(owner, blocked)
 		gameplayBlockers[owner] = nil
 	end
 	refreshGameplayEnabled()
+end
+
+function InputManager:SetMouseWheelBlocked(owner, blocked)
+	assert(type(owner) == "string" and owner ~= "", "Mouse-wheel blocker owner must be a non-empty string")
+	if blocked == true then
+		mouseWheelBlockers[owner] = true
+	else
+		mouseWheelBlockers[owner] = nil
+	end
 end
 
 function InputManager:SetBindingCaptureActive(isActive)

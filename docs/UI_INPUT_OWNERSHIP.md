@@ -65,6 +65,12 @@ its existing filtered-send behavior, empty Return close, and empty Backspace
 close. A Return that commits a Settings numeric field therefore commits once,
 keeps Settings open, and cannot open Chat.
 
+While the pointer is over the retained Chat message frame, that frame owns
+mouse-wheel input. It scrolls the bounded Chat history and blocks only semantic
+mouse-wheel dispatch, so the same pulse cannot also switch a gameplay weapon.
+Leaving or hiding Chat releases that narrow owner without flushing unrelated
+held gameplay input.
+
 ## Loading-screen transition ownership
 
 The active loading screen is not a passive presentation-only system. It owns a

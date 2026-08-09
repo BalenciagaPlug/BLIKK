@@ -2,6 +2,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
+local CharacterDependency = require(ReplicatedStorage.Shared.Character.CharacterDependency)
 local Config = require(ReplicatedStorage.Shared.Maps.DistrictZero.DistrictZeroConfig)
 local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
 
@@ -121,10 +122,9 @@ local function placeCharacter(player, character, deadline, context, modeId)
 	if not character or character ~= player.Character then return false, "STALE_CHARACTER" end
 	local expiresAt = deadline or (os.clock() + MultiplayerConfig.CharacterDependencyTimeoutSeconds)
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
-		or character:WaitForChild("Humanoid", math.max(0, expiresAt - os.clock()))
+		or CharacterDependency.WaitForChildBefore(character, "Humanoid", expiresAt)
 	if character ~= player.Character then return false, "STALE_CHARACTER" end
-	local root = character:FindFirstChild("HumanoidRootPart")
-		or character:WaitForChild("HumanoidRootPart", math.max(0, expiresAt - os.clock()))
+	local root = CharacterDependency.WaitForChildBefore(character, "HumanoidRootPart", expiresAt)
 	if character ~= player.Character then return false, "STALE_CHARACTER" end
 	if not humanoid or not humanoid:IsA("Humanoid") or not root or not root:IsA("BasePart") then
 		return false, "CHARACTER_INCOMPLETE"
