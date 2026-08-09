@@ -413,7 +413,9 @@ local function updateWeapon(fighterController, firearmController)
 		ammoTrack.Visible = true
 		ammoLabel.Visible = true
 		if status then
-			ammoLabel.Text = string.format("%d / %d", status.Chambered, status.Reserve)
+			ammoLabel.Text = if status.UnlimitedReserve
+				then string.format("%d / ∞", status.Chambered)
+				else string.format("%d / %d", status.Chambered, status.Reserve)
 			ammoTrack.Size = UDim2.fromOffset(218 * status.Chambered / 5, 13)
 			ammoTrack.BackgroundColor3 = if status.Chambered == 0 then colors.Blood else colors.Text
 			dataStateLabel.Text = if status.Chambered == 0 and status.State == "Ready"

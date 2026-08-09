@@ -11,6 +11,7 @@ local DistrictZeroSpawnService = require(script.Maps.DistrictZeroSpawnService)
 local ClanService = require(script.Clans.ClanService)
 local MatchService = require(script.Match.MatchService)
 local FirearmService = require(script.Combat.FirearmService)
+local PracticeDummyService = require(script.Combat.PracticeDummyService)
 local ReplayService = require(script.Replay.ReplayService)
 local ReportingService = require(script.Reporting.ReportingService)
 local RoomService = require(script.Rooms.RoomService)
@@ -29,7 +30,8 @@ MatchService:Init(
 	ReplayService,
 	CharacterLifecycleService
 )
-FirearmService:Init(RemoteRegistry, MatchService)
+PracticeDummyService:Init(RoomService, MatchService)
+FirearmService:Init(RemoteRegistry, MatchService, RoomService, PracticeDummyService)
 RoomService:SetMatchService(MatchService)
 CharacterLifecycleService:SetMovementLabEligibilityCallback(function(player)
 	if RoomService:GetRoom(player) then return false, "PLAYER_IN_ROOM" end
@@ -47,4 +49,7 @@ end, debug.traceback)
 
 if not didBuild then
 	warn("[BLIKK STARTUP] District Zero construction failed:\n" .. tostring(buildError))
+else
+	DistrictZeroSpawnService:OnMapRebuilt()
+	PracticeDummyService:OnMapRebuilt()
 end

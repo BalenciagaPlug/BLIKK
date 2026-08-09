@@ -509,7 +509,7 @@ local function createCameraPage(parent)
 end
 
 local function createSoundPage(parent)
-	createSectionHeader(parent, "SOUND", "BLIKK-OWNED SOUND GROUPS // SESSION ONLY")
+	createSectionHeader(parent, "SOUND", "BLIKK-OWNED SOUND GROUPS // ACCOUNT PERSISTENT")
 
 	for index, definition in soundSliders do
 		createSlider(parent, definition, index, SessionSettings, SettingsConfig.AudioRanges)

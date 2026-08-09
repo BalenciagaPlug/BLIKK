@@ -23,14 +23,13 @@ local settingsControllerReference = nil
 local chatControllerReference = nil
 local multiplayerPageReference = nil
 local matchPreparationControllerReference = nil
-local musicControllerReference = nil
+local movementLabFrontendAttempt = nil
 
 local function setFrontendActive(isActive)
 	if not isActive then CharacterPreviewController:EndFrontendSession() end
 	frontendGui.Enabled = isActive
 	gameplayCameraReference:SetGameplayActive(not isActive)
 	settingsControllerReference:SetFrontendActive(isActive)
-	musicControllerReference:SetFrontendActive(isActive)
 end
 
 function FrontendController:ReturnToOperationsHub()
@@ -42,6 +41,7 @@ function FrontendController:ReturnToOperationsHub()
 	if matchPreparationControllerReference then
 		matchPreparationControllerReference:ExitMovementLab()
 	end
+	movementLabFrontendAttempt = nil
 	isInGameplay = false
 	setFrontendActive(true)
 	chatControllerReference:SetContext("Hidden")
@@ -65,7 +65,6 @@ function FrontendController:Init(
 	settingsControllerReference = settingsController
 	chatControllerReference = chatController
 	matchPreparationControllerReference = matchPreparationController
-	musicControllerReference = musicController
 	inputManager:SetGameplayEnabled(false)
 	gameplayCamera:SetInterfaceOpen(true)
 
@@ -80,24 +79,32 @@ function FrontendController:Init(
 
 	local function enterMovementLab()
 		if isInGameplay then return end
-		if not matchPreparationController:BeginMovementLab() then
+		local began, attemptGeneration = matchPreparationController:BeginMovementLab()
+		if not began then
 			if not hasWarnedMissingSpawnRemote then
 				hasWarnedMissingSpawnRemote = true
 				warn("[BLIKK FRONTEND] Movement Lab is unavailable because its spawn remote did not initialise.")
 			end
 			return
 		end
+		movementLabFrontendAttempt = attemptGeneration
 		isInGameplay = true
 		NavigationController:Suspend()
 		setFrontendActive(false)
+		musicController:SetContext("Gameplay", "MovementLab")
 		chatController:SetContext("Training", "MOVEMENT_LAB")
 	end
 
 	local function enterMultiplayerGameplay(matchSnapshot)
 		if isInGameplay then return true end
 		isInGameplay = true
+		movementLabFrontendAttempt = nil
 		NavigationController:Suspend()
 		setFrontendActive(false)
+		musicController:SetContext(
+			"Gameplay",
+			matchSnapshot.MatchId or matchSnapshot.RoomId or "Multiplayer"
+		)
 		chatController:SetContext(
 			if matchSnapshot.ModeId == "Training" then "Training" else "Match",
 			matchSnapshot.RoomId
@@ -107,6 +114,7 @@ function FrontendController:Init(
 
 	local function showMultiplayerRoomLobby(roomSnapshot)
 		isInGameplay = false
+		movementLabFrontendAttempt = nil
 		setFrontendActive(true)
 		chatController:SetContext(
 			"Lobby",
@@ -118,6 +126,7 @@ function FrontendController:Init(
 
 	local function returnToHubAfterRoomLeave()
 		isInGameplay = false
+		movementLabFrontendAttempt = nil
 		setFrontendActive(true)
 		chatController:SetContext("Hidden")
 		NavigationController:GoTo("OperationsHub", CharacterProfilesController:GetSelectedProfile())
@@ -135,13 +144,20 @@ function FrontendController:Init(
 		ShowRoomLobby = showMultiplayerRoomLobby,
 		ReturnToHub = returnToHubAfterRoomLeave,
 	})
-	matchPreparationController.TransitionFailed.Event:Connect(function(context)
+	matchPreparationController.TransitionFailed.Event:Connect(function(
+		context,
+		_,
+		_,
+		failedAttemptGeneration
+	)
 		if context ~= "MovementLab" then return end
+		if failedAttemptGeneration ~= movementLabFrontendAttempt then return end
 		task.delay(
 			LoadingScreenConfig.Timing.FailureDisplaySeconds
 				+ LoadingScreenConfig.Timing.DismissFadeSeconds,
 			function()
-				if isInGameplay and not multiplayerPageReference:HasCurrentRoom() then
+				if isInGameplay and failedAttemptGeneration == movementLabFrontendAttempt
+					and not multiplayerPageReference:HasCurrentRoom() then
 					FrontendController:ReturnToOperationsHub()
 				end
 			end

@@ -4,6 +4,7 @@ local Workspace = game:GetService("Workspace")
 
 local CharacterDependency = require(ReplicatedStorage.Shared.Character.CharacterDependency)
 local FighterVitalsConfig = require(ReplicatedStorage.Shared.Combat.FighterVitalsConfig)
+local DistrictZeroConfig = require(ReplicatedStorage.Shared.Maps.DistrictZero.DistrictZeroConfig)
 local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
 local RateLimiter = require(script.Parent.Parent.Networking.RateLimiter)
 
@@ -68,11 +69,17 @@ local function setLifecycleAttributes(player, character, identity, isReleased)
 	end
 end
 
-local function fireClientUpdate(player, status, identity, code, character)
+local function fireClientUpdate(player, status, identity, code, character, explicitAttemptGeneration)
 	if not lifecycleUpdatedRemote or player.Parent ~= Players then return end
+	local state = states[player]
+	local attemptGeneration = explicitAttemptGeneration
+	if not attemptGeneration and identity and identity.Context == "MovementLab" and state then
+		attemptGeneration = state.MovementLabAttemptsBySpawnGeneration[identity.SpawnGeneration]
+	end
 	lifecycleUpdatedRemote:FireClient(player, {
 		Status = status,
 		Identity = identity,
+		MovementLabAttemptGeneration = attemptGeneration,
 		Code = code,
 		Character = character,
 		ServerTime = Workspace:GetServerTimeNow(),
@@ -127,6 +134,7 @@ local function failRequest(player, state, request, code, character)
 	local failedCharacter = character or request.ObservedCharacter
 	if failedCharacter then destroyCurrentCharacter(player, failedCharacter) end
 	spawnService:ClearSpawnProtection(player)
+	spawnService:ClearReservation(player, request.Identity.SpawnGeneration)
 	setLifecycleAttributes(player, nil, nil, false)
 	CharacterLifecycleService.CharacterFailed:Fire(player, request.Identity, code)
 	fireClientUpdate(player, "Failed", request.Identity, code, failedCharacter)
@@ -141,6 +149,7 @@ local function scheduleMovementLabRespawn(player, state, current)
 				Context = "MovementLab",
 				MatchGeneration = 0,
 				Round = 0,
+				ClientAttemptGeneration = state.CurrentMovementLabAttemptGeneration,
 			})
 		end
 	end)
@@ -249,7 +258,9 @@ local function prepareRequest(player, state, request)
 
 	local placementResult = nil
 	local placementCode = "SPAWN_UNAVAILABLE"
+	local placementAttempts = 0
 	repeat
+		placementAttempts += 1
 		if not isLatestRequest(state, request) or loadedCharacter ~= player.Character then
 			return false, "STALE_REQUEST", loadedCharacter
 		end
@@ -261,7 +272,8 @@ local function prepareRequest(player, state, request)
 			loadedCharacter,
 			placementDeadline,
 			request.Identity.Context,
-			request.ModeId
+			request.ModeId,
+			request.Identity.SpawnGeneration
 		)
 		request.LastPlacementDurationSeconds = os.clock() - placementStartedAt
 		if not callSucceeded then
@@ -280,7 +292,8 @@ local function prepareRequest(player, state, request)
 			break
 		end
 		placementCode = code or "SPAWN_UNAVAILABLE"
-		if placementCode ~= "SPAWN_UNAVAILABLE" or os.clock() >= placementDeadline then break end
+		if placementCode ~= "SPAWN_UNAVAILABLE" or os.clock() >= placementDeadline
+			or placementAttempts >= DistrictZeroConfig.SpawnSafety.MaximumPlacementRetries then break end
 		task.wait(math.min(
 			MultiplayerConfig.CharacterLoadRetryBaseDelaySeconds,
 			math.max(0, placementDeadline - os.clock())
@@ -401,6 +414,10 @@ local function bindPlayer(player)
 		CharacterRemovingConnection = nil,
 		LastMovementLabRequestAt = -math.huge,
 		MovementLabReadyIdentity = nil,
+		CurrentMovementLabAttemptGeneration = nil,
+		LastMovementLabAttemptGeneration = 0,
+		MovementLabAttemptsBySpawnGeneration = {},
+		MovementLabAttemptOrder = {},
 		TerminalCode = nil,
 		TerminalRequest = nil,
 	}
@@ -494,17 +511,41 @@ function CharacterLifecycleService:Init(remoteRegistry, placementService)
 	lifecycleUpdatedRemote = remoteRegistry.CharacterLifecycleUpdated
 	assert(spawnService and type(spawnService.PlaceCharacter) == "function", "Character lifecycle requires placement")
 
-	remoteRegistry.RequestMovementLabSpawn.OnServerEvent:Connect(function(player, operation)
+	remoteRegistry.RequestMovementLabSpawn.OnServerEvent:Connect(function(player, payload)
 		local state = bindPlayer(player)
-		if operation == "Exit" then
+		if type(payload) ~= "table" or type(payload.Operation) ~= "string" then return end
+		local attemptGeneration = payload.AttemptGeneration
+		if not isInteger(attemptGeneration) or attemptGeneration < 1
+			or attemptGeneration > 2147483647 then return end
+		if payload.Operation == "Exit" then
 			local identity = state.LatestIdentity or (state.Current and state.Current.Identity)
-			if identity and identity.Context == "MovementLab" then
+			local expectedSpawnGeneration = payload.SpawnGeneration
+			if expectedSpawnGeneration ~= nil and (not isInteger(expectedSpawnGeneration)
+				or expectedSpawnGeneration < 1) then return end
+			if identity and identity.Context == "MovementLab"
+				and state.CurrentMovementLabAttemptGeneration == attemptGeneration
+				and (expectedSpawnGeneration == nil
+					or identity.SpawnGeneration == expectedSpawnGeneration) then
 				self:CancelPlayer(player, "MOVEMENT_LAB_EXIT")
 			end
 			return
 		end
+		if payload.Operation ~= "Begin" or attemptGeneration <= state.LastMovementLabAttemptGeneration then
+			return
+		end
+		state.LastMovementLabAttemptGeneration = attemptGeneration
 		local now = os.clock()
-		if now - state.LastMovementLabRequestAt < MultiplayerConfig.MovementLabRequestCooldownSeconds then return end
+		if now - state.LastMovementLabRequestAt < MultiplayerConfig.MovementLabRequestCooldownSeconds then
+			fireClientUpdate(
+				player,
+				"Rejected",
+				nil,
+				"MOVEMENT_LAB_REQUEST_COOLDOWN",
+				player.Character,
+				attemptGeneration
+			)
+			return
+		end
 		state.LastMovementLabRequestAt = now
 		local allowed = false
 		local code = "MOVEMENT_LAB_UNAVAILABLE"
@@ -514,14 +555,31 @@ function CharacterLifecycleService:Init(remoteRegistry, placementService)
 			if succeeded and type(reason) == "string" then code = reason end
 		end
 		if not allowed then
-			fireClientUpdate(player, "Rejected", nil, code, player.Character)
+			fireClientUpdate(player, "Rejected", nil, code, player.Character, attemptGeneration)
 			return
 		end
-		self:RequestCharacter(player, {
+		local existingIdentity = state.LatestIdentity or (state.Current and state.Current.Identity)
+		if existingIdentity and existingIdentity.Context == "MovementLab" then
+			self:CancelPlayer(player, "MOVEMENT_LAB_SUPERSEDED")
+		end
+		state.CurrentMovementLabAttemptGeneration = attemptGeneration
+		local identity, requestCode = self:RequestCharacter(player, {
 			Context = "MovementLab",
 			MatchGeneration = 0,
 			Round = 0,
+			ClientAttemptGeneration = attemptGeneration,
 		})
+		if not identity then
+			state.CurrentMovementLabAttemptGeneration = nil
+			fireClientUpdate(
+				player,
+				"Rejected",
+				nil,
+				requestCode,
+				player.Character,
+				attemptGeneration
+			)
+		end
 	end)
 
 	remoteRegistry.MatchReady.OnServerEvent:Connect(function(player, payload)
@@ -555,6 +613,7 @@ function CharacterLifecycleService:Init(remoteRegistry, placementService)
 		if state.CharacterAddedConnection then state.CharacterAddedConnection:Disconnect() end
 		if state.CharacterRemovingConnection then state.CharacterRemovingConnection:Disconnect() end
 		RateLimiter.Clear(readinessLimiter, player)
+		spawnService:ClearReservation(player)
 		states[player] = nil
 	end)
 	for _, player in Players:GetPlayers() do bindPlayer(player) end
@@ -597,7 +656,17 @@ function CharacterLifecycleService:RequestCharacter(player, request)
 	state.Pending = {
 		Identity = identity,
 		ObservedCharacter = nil,
+		ClientAttemptGeneration = request.ClientAttemptGeneration,
 	}
+	if identity.Context == "MovementLab" and isInteger(request.ClientAttemptGeneration) then
+		state.MovementLabAttemptsBySpawnGeneration[identity.SpawnGeneration] =
+			request.ClientAttemptGeneration
+		table.insert(state.MovementLabAttemptOrder, identity.SpawnGeneration)
+		while #state.MovementLabAttemptOrder > MultiplayerConfig.MaximumPreparationDiagnostics do
+			local expiredSpawnGeneration = table.remove(state.MovementLabAttemptOrder, 1)
+			state.MovementLabAttemptsBySpawnGeneration[expiredSpawnGeneration] = nil
+		end
+	end
 	if state.Current and state.Current.Character == player.Character then
 		local previousCurrent = state.Current
 		self:HoldCharacter(player, previousCurrent.Identity, "SUPERSEDED")
@@ -605,6 +674,7 @@ function CharacterLifecycleService:RequestCharacter(player, request)
 		disconnectDeath(state)
 	end
 	spawnService:ClearSpawnProtection(player)
+	spawnService:ClearReservation(player)
 	fireClientUpdate(player, "Preparing", identity, nil, player.Character)
 	startWorker(player, state)
 	return identity, "QUEUED"
@@ -669,12 +739,16 @@ function CharacterLifecycleService:CancelPlayer(player, reason)
 	state.IsCancelling = true
 	disconnectDeath(state)
 	spawnService:ClearSpawnProtection(player)
+	spawnService:ClearReservation(player)
 	local character = state.Current and state.Current.Character or player.Character
 	state.Current = nil
 	if character then destroyCurrentCharacter(player, character) end
 	state.IsCancelling = false
 	setLifecycleAttributes(player, nil, nil, false)
 	if identity then fireClientUpdate(player, "Cancelled", identity, reason or "CANCELLED", character) end
+	if identity and identity.Context == "MovementLab" then
+		state.CurrentMovementLabAttemptGeneration = nil
+	end
 	return true
 end
 

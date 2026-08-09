@@ -37,16 +37,40 @@ Route metadata marks difficulty, future-only techniques, recovery drops, combat 
 
 ## Safe Spawning
 
-Blueprint spawns A, B, and C are placed at Garage West, Parking Southwest, and Service Southeast.
-`DistrictZeroSpawnService` selects the server-owned Training, Duel, free-for-all, or ALPHA/OMEGA
-pool, then ranks candidates using distance from living players, line-of-sight pressure, recent use,
-per-pool rotation, and per-player immediate-repeat history. It exposes the committed ID through
-`BLIKK_LastSpawnId` for Studio inspection and places an already accepted character exactly once. It does not watch
-`CharacterAdded`, set `RespawnLocation`, or request a character. Joining, reset/death respawn, round
-restart, safe join in progress, and Movement Lab re-entry all reach it through the sole server
-`CharacterLifecycleService`, which clears velocity and holds the root until the applicable release.
-OMEGA currently has only `SPAWN_C`; anti-repeat is therefore unavailable for that pool until an
-additional map-authored safe point is approved.
+District Zero authors eight ground spawns against the current building footprints and arena boundary:
+
+| ID | Position | Facing | District and clearance rationale |
+| --- | --- | --- | --- |
+| `SPAWN_A` | `(-238, 3, -150)` | `(1, 0, 0.25)` | Northwest boundary lane, west of Construction/Garage and south of the north wall. |
+| `SPAWN_B` | `(-236, 3, 221)` | `(1, 0, -0.2)` | Southwest boundary lane, west of the Parking Lot footprint. |
+| `SPAWN_C` | `(232, 3, 221)` | `(-1, 0, -0.2)` | Southeast boundary lane, east of Service Yard. |
+| `SPAWN_D` | `(220, 3, -170)` | `(-1, 0, 0.25)` | Northeast lane, east of Apartments B and north of Billboard. |
+| `SPAWN_E` | `(-235, 3, 20)` | `(1, 0, 0)` | West-central lane, west of Market and Apartment C. |
+| `SPAWN_F` | `(225, 3, 35)` | `(-1, 0, 0)` | East-central lane, east of Transit and south of Billboard. |
+| `SPAWN_G` | `(-18, 3, -240)` | `(0, 0, 1)` | North-central boundary lane between the northern apartment footprints. |
+| `SPAWN_H` | `(0, 3, 135)` | `(0, 0, -1)` | South-central open route between Court and the Canal opening. |
+
+Training and free-for-all use all eight. ALPHA uses A, B, E, and G; OMEGA uses C, D, F, and H.
+Duel has six separated alternatives. `DistrictZeroSpawnService` hard-excludes any candidate within
+14 studs of a living player or active three-second reservation. If no hard-safe spawn exists it
+returns `SPAWN_UNAVAILABLE`; the lifecycle may retry at most six times within its existing bounded
+placement deadline and never falls back to an occupied point.
+
+Selection reserves the chosen ID before placement and clears that bounded reservation on commit,
+failure, cancellation, player removal, map rebuild, or teardown. Among hard-safe candidates, scoring
+uses opponent distance, line-of-sight pressure, global recent use, and a three-ID personal history.
+A server-owned `Random` chooses among near-equal top scores. The committed ID remains visible through
+`BLIKK_LastSpawnId`. The service still does not watch `CharacterAdded`, set `RespawnLocation`, or
+request a character; all character creation remains in `CharacterLifecycleService`.
+
+## Shared Clock dummy bay
+
+One map-generation-owned `BLIKK_PracticeDummy_CLOCK` stands at the Clock Tower south wall, derived
+from `ClockTower.Center`, `ClockTower.Size`, and a configured three-stud stand-off. It faces world
+`+Z` beneath the `CLOCK // DISTRICT ZERO` sign. Bounded fallbacks move four or eight studs along the
+same wall only. Ground, slope, body clearance, actual wall contact distance, and Clock Tower
+intersection are validated before the avatar enters Workspace. Player spawn, death, re-entry, and
+room membership do not rebuild it.
 
 ## Runtime Contract
 

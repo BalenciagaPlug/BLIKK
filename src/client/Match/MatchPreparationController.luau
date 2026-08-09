@@ -32,7 +32,17 @@ local acknowledged = {}
 local acknowledgedOrder = {}
 local releasedKeys = {}
 local releasedKeyOrder = {}
+local movementLabState = "Frontend"
+local movementLabAttemptGeneration = 0
+local movementLabIdentity = nil
+local movementLabIntentionalExitAttempt = nil
+local movementLabClosedAttempt = nil
 local isInitialised = false
+
+local function finiteInteger(value)
+	return type(value) == "number" and value == value and value > -math.huge
+		and value < math.huge and value % 1 == 0
+end
 
 local function identitiesMatch(left, right)
 	return type(left) == "table"
@@ -93,13 +103,19 @@ local function beginLoading(context, key)
 	return loadingController:Begin(context, key)
 end
 
-local function failLoading(identity, code, awaitAuthoritativeState)
+local function failLoading(identity, code, awaitAuthoritativeState, movementLabAttempt)
 	readinessGeneration += 1
 	readinessKeyInFlight = nil
 	local failureContext = identity and identity.Context or "Unknown"
 	if failureContext == "Unknown" and type(activeLoadingKey) == "string"
 		and activeLoadingKey:match("^MovementLab") then
 		failureContext = "MovementLab"
+	end
+	if failureContext == "MovementLab" then
+		movementLabAttempt = movementLabAttempt or movementLabAttemptGeneration
+		movementLabState = "Frontend"
+		movementLabIdentity = nil
+		movementLabClosedAttempt = movementLabAttempt
 	end
 	local key = identity and identityKey(identity) or activeLoadingKey
 	if key and loadingController:IsVisible() then
@@ -112,7 +128,8 @@ local function failLoading(identity, code, awaitAuthoritativeState)
 	MatchPreparationController.TransitionFailed:Fire(
 		failureContext,
 		code or "PREPARATION_FAILED",
-		awaitAuthoritativeState == true
+		awaitAuthoritativeState == true,
+		movementLabAttempt
 	)
 end
 
@@ -209,18 +226,42 @@ end
 local function handleLifecycleUpdate(update)
 	if type(update) ~= "table" then return end
 	local identity = update.Identity
+	local updateAttempt = update.MovementLabAttemptGeneration
+	local isMovementLabUpdate = updateAttempt ~= nil
+		or type(identity) == "table" and identity.Context == "MovementLab"
+	if isMovementLabUpdate then
+		if not finiteInteger(updateAttempt) or updateAttempt ~= movementLabAttemptGeneration then
+			return
+		end
+		if updateAttempt == movementLabIntentionalExitAttempt
+			or updateAttempt == movementLabClosedAttempt then return end
+	end
 	if update.Status == "Preparing" and type(identity) == "table" then
+		if isMovementLabUpdate then
+			movementLabState = "Entering"
+			movementLabIdentity = identity
+		end
 		beginLoading(contextForIdentity(identity), identityKey(identity))
 	elseif update.Status == "Prepared" and type(identity) == "table" then
+		if isMovementLabUpdate then movementLabIdentity = identity end
 		awaitRequiredReadiness(identity)
 	elseif update.Status == "Failed" or update.Status == "Rejected"
 		or update.Status == "Cancelled" then
-		failLoading(identity, update.Code or update.Status)
+		if isMovementLabUpdate then
+			if movementLabState == "Frontend" then return end
+			movementLabState = "Frontend"
+			movementLabIdentity = nil
+		end
+		failLoading(identity, update.Code or update.Status, false, updateAttempt)
 	elseif update.Status == "Died" and identity and identity.Context == "MovementLab" then
+		movementLabState = "Entering"
+		movementLabIdentity = nil
 		readinessGeneration += 1
 		beginLoading("Respawn", "MovementLab:Respawn")
 		loadingController:SetStatus("MovementLab:Respawn", "FIGHTER DOWN", "PREPARING A CLEAN RESPAWN //")
 	elseif update.Status == "Released" and identity and identity.Context == "MovementLab" then
+		movementLabState = "Active"
+		movementLabIdentity = identity
 		local key = identityKey(identity)
 		if activeLoadingKey == key then loadingController:Cancel(key) end
 		activeLoadingKey = nil
@@ -254,23 +295,42 @@ function MatchPreparationController:Init(loadingControllerValue)
 end
 
 function MatchPreparationController:BeginMovementLab()
-	if not isInitialised then return false end
+	if not isInitialised or movementLabState ~= "Frontend" then return false end
+	movementLabAttemptGeneration += 1
+	local attemptGeneration = movementLabAttemptGeneration
+	movementLabState = "Entering"
+	movementLabIdentity = nil
+	movementLabClosedAttempt = nil
 	readinessGeneration += 1
 	readinessKeyInFlight = nil
 	activeMatch = nil
 	beginLoading("MovementLab", "MovementLab:Request")
 	loadingController:SetStatus("MovementLab:Request", "REQUESTING FIGHTER", "WAITING FOR SERVER SPAWN AUTHORITY //")
-	movementLabRemote:FireServer()
-	return true
+	movementLabRemote:FireServer({
+		Operation = "Begin",
+		AttemptGeneration = attemptGeneration,
+	})
+	return true, attemptGeneration
 end
 
 function MatchPreparationController:ExitMovementLab()
-	if not isInitialised or activeMatch then return false end
+	if not isInitialised or activeMatch or movementLabState == "Frontend" then return false end
+	local attemptGeneration = movementLabAttemptGeneration
+	local identity = movementLabIdentity
+	movementLabState = "Exiting"
+	movementLabIntentionalExitAttempt = attemptGeneration
+	movementLabClosedAttempt = attemptGeneration
 	readinessGeneration += 1
 	readinessKeyInFlight = nil
 	if activeLoadingKey then loadingController:Cancel(activeLoadingKey) end
 	activeLoadingKey = nil
-	movementLabRemote:FireServer("Exit")
+	movementLabRemote:FireServer({
+		Operation = "Exit",
+		AttemptGeneration = attemptGeneration,
+		SpawnGeneration = identity and identity.SpawnGeneration or nil,
+	})
+	movementLabState = "Frontend"
+	movementLabIdentity = nil
 	return true
 end
 

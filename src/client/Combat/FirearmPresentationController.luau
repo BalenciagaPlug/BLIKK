@@ -4,9 +4,11 @@ local RunService = game:GetService("RunService")
 
 local PoseCoordinator = require(script.Parent.Parent.Character.PoseCoordinator)
 local FirearmAimRig = require(script.Parent.FirearmAimRig)
+local FirearmShotEffects = require(script.Parent.FirearmShotEffects)
 local CharacterDependency = require(ReplicatedStorage.Shared.Character.CharacterDependency)
 local Config = require(ReplicatedStorage.Shared.Combat.FirearmPresentationConfig)
 local CombatConfig = require(ReplicatedStorage.Shared.Combat.FirearmCombatConfig)
+local FeedbackConfig = require(ReplicatedStorage.Shared.Combat.FirearmShotFeedbackConfig)
 local FighterSlots = require(ReplicatedStorage.Shared.Character.FighterSlots)
 local MovementConfig = require(ReplicatedStorage.Shared.Movement.MovementConfig)
 local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
@@ -21,6 +23,7 @@ local inputManager
 local gameplayCamera
 local movementEngineController
 local firearmIntent
+local shotEffects
 local character
 local humanoid
 local rootPart
@@ -36,6 +39,7 @@ local gameplayEnabled = true
 local inputSuppressed = false
 local isCommittingSwitch = false
 local shotSequence = 0
+local lastServerSequence = 0
 local warnedFallback = false
 local warnedReloadReconciliation = false
 local warnedAimRigFailure = false
@@ -45,6 +49,13 @@ local aimRig = nil
 local aimRigFailedGeneration = nil
 local lastGameplayAim = nil
 local aimExclusions = {}
+local VALID_RESULT_OPERATIONS = {
+	Equip = true,
+	Fire = true,
+	ReloadAccepted = true,
+	ReloadCommitted = true,
+	ReloadRejected = true,
+}
 
 local function destroyAimRig()
 	if aimRig then aimRig:Destroy(); aimRig = nil end
@@ -188,6 +199,9 @@ local function attachSlot(slot, equipped)
 	if not slot.Model or not slot.Model.PrimaryPart then return false end
 	if slot.Grip then slot.Grip:Destroy(); slot.Grip = nil end
 	if not equipped then
+		slot.MuzzleEffect:Disable()
+		slot.RecoilStartedAt = nil
+		slot.RecoilSerial += 1
 		slot.Hinge.Transform = CFrame.identity
 		for _, joint in slot.ShellJoints do joint.Transform = CFrame.identity end
 		for _, muzzle in slot.Muzzles do
@@ -232,7 +246,13 @@ local function chamberCount(slot)
 end
 
 local function publish(slot)
-	Controller.StateChanged:Fire(slot.Id, slot.State, chamberCount(slot), slot.Reserve)
+	Controller.StateChanged:Fire(
+		slot.Id,
+		slot.State,
+		chamberCount(slot),
+		slot.Reserve,
+		slot.UnlimitedReserve
+	)
 end
 
 local function stateRetainsAimOwnership(state)
@@ -280,6 +300,9 @@ end
 local function cancelSlotAction(slot, reason)
 	local wasReloading = string.sub(slot.State, 1, 6) == "Reload"
 	slot.Token += 1
+	slot.MuzzleEffect:Disable()
+	slot.RecoilStartedAt = nil
+	slot.RecoilSerial += 1
 	slot.Hinge.Transform = CFrame.identity
 	for _, joint in slot.ShellJoints do joint.Transform = CFrame.identity end
 	for _, muzzle in slot.Muzzles do
@@ -298,6 +321,19 @@ local function callbackIsCurrent(slot, characterGeneration, actionSwitchGenerati
 		and slot.Token == token
 		and slot.Model
 		and player.Character == character
+end
+
+local function recoilEnvelope(elapsedSeconds)
+	if elapsedSeconds < 0 then return 0 end
+	local recoil = FeedbackConfig.Recoil
+	if elapsedSeconds < recoil.KickSeconds then
+		return elapsedSeconds / recoil.KickSeconds
+	end
+	local afterKick = elapsedSeconds - recoil.KickSeconds
+	if afterKick < recoil.HoldSeconds then return 1 end
+	local returnElapsed = afterKick - recoil.HoldSeconds
+	if returnElapsed >= recoil.ReturnSeconds then return 0 end
+	return 1 - returnElapsed / recoil.ReturnSeconds
 end
 
 local function commitSwitch(slotId, requestGeneration, characterGeneration)
@@ -389,66 +425,81 @@ local function fireActive()
 	if not aim or not muzzleAttachment or not muzzleAttachment:IsA("Attachment") then return false end
 	local muzzleDirection = aim.AimPoint - muzzleAttachment.WorldPosition
 	if muzzleDirection.Magnitude < 0.001 then return false end
+	local preferredBarrel = slot.LastBarrel % Config.ChamberCapacity + 1
+	local barrel = nil
+	for offset = 0, Config.ChamberCapacity - 1 do
+		local candidate = (preferredBarrel - 1 + offset) % Config.ChamberCapacity + 1
+		if slot.Barrels[candidate] then barrel = candidate; break end
+	end
+	if not barrel then return false end
 	local acceptedAt = os.clock()
 	shotSequence += 1
-	firearmIntent:FireServer({
-		Operation = "Fire",
-		Slot = slot.Id,
-		Sequence = shotSequence,
-		AimDirection = muzzleDirection.Unit,
-		ClientTimestamp = acceptedAt,
-	})
+	local sequence = shotSequence
 	slot.LastFireAt = acceptedAt
 	slot.Token += 1
 	local token = slot.Token
-	local preferredBarrel = slot.LastBarrel % Config.ChamberCapacity + 1
-	local barrel = if slot.Barrels[preferredBarrel]
-		then preferredBarrel
-		else preferredBarrel % Config.ChamberCapacity + 1
-	if not slot.Barrels[barrel] then return false end
+	slot.RecoilStartedAt = acceptedAt
+	slot.RecoilSerial += 1
+	local recoilSerial = slot.RecoilSerial
+	local spawnGeneration = player:GetAttribute("BLIKK_SpawnGeneration")
+	if type(spawnGeneration) == "number" then
+		shotEffects:RememberLocalOrigin(sequence, spawnGeneration, muzzleAttachment.WorldPosition)
+	end
+	local characterGeneration = generation
+	local actionSwitchGeneration = switchGeneration
+	slot.MuzzleEffect:Trigger(function()
+		return callbackIsCurrent(slot, characterGeneration, actionSwitchGeneration, token)
+			and slot.RecoilSerial == recoilSerial and slot.IsRendered
+	end)
+	firearmIntent:FireServer({
+		Operation = "Fire",
+		Slot = slot.Id,
+		Sequence = sequence,
+		AimDirection = muzzleDirection.Unit,
+		ClientTimestamp = acceptedAt,
+	})
 	slot.Barrels[barrel] = false
 	slot.LastBarrel = barrel
 	slot.NextFireAt = acceptedAt + Config.SameWeaponFireIntervalSeconds
 	updateShells(slot)
 	setState(slot, "Firing")
 	Controller.SemanticEvent:Fire("FireAccepted", acceptedAt, { Slot = slot.Id, Barrel = barrel })
-	local characterGeneration = generation
-	local actionSwitchGeneration = switchGeneration
 	task.delay(Config.FireAnticipationSeconds, function()
 		if not callbackIsCurrent(slot, characterGeneration, actionSwitchGeneration, token) then return end
-		local muzzle = slot.Muzzles[barrel]
-		muzzle.Transparency = 0.05
-		task.delay(Config.MuzzleFlashSeconds, function()
-			if not callbackIsCurrent(slot, characterGeneration, actionSwitchGeneration, token)
-				or not muzzle.Parent then return end
-			muzzle.Color = Color3.fromRGB(142, 146, 150)
-			muzzle.Transparency = 0.62
-			task.delay(Config.SmokeSeconds, function()
-				if callbackIsCurrent(slot, characterGeneration, actionSwitchGeneration, token)
-					and muzzle.Parent then
-					muzzle.Color = Color3.fromRGB(255, 188, 82)
-					muzzle.Transparency = 1
-				end
-			end)
-		end)
 		setState(slot, "Recovering")
 	end)
-	task.delay(Config.FireAnticipationSeconds + Config.FireRecoilSeconds + Config.FireRecoverySeconds, function()
+	task.delay(Config.FireAnticipationSeconds + Config.FireActionSeconds + Config.FireRecoverySeconds, function()
 		if callbackIsCurrent(slot, characterGeneration, actionSwitchGeneration, token)
 			and activeSlot == slot.Id then setState(slot, "Ready") end
 	end)
+	if FeedbackConfig.DiagnosticsEnabled then
+		task.delay(FeedbackConfig.Recoil.TotalDurationSeconds, function()
+			if not callbackIsCurrent(slot, characterGeneration, actionSwitchGeneration, token)
+				or slot.RecoilSerial ~= recoilSerial then return end
+			print(string.format(
+				"[BLIKK RECOIL DIAGNOSTIC] Sequence=%d StartedAt=%.6f CompletedAt=%.6f",
+				sequence,
+				acceptedAt,
+				os.clock()
+			))
+		end)
+	end
 	return true
 end
 
 local function reloadActive()
 	local slot = slots[activeSlot]
 	if pendingSwitch or not gameplayEnabled or inputSuppressed or not slot or slot.State ~= "Ready"
-		or chamberCount(slot) >= Config.ChamberCapacity or slot.Reserve <= 0 then return false end
+		or chamberCount(slot) >= Config.ChamberCapacity
+		or (not slot.UnlimitedReserve and slot.Reserve <= 0) then return false end
 	slot.Token += 1
 	local token = slot.Token
 	local missingBarrels = {}
 	for index = 1, Config.ChamberCapacity do
-		if not slot.Barrels[index] and #missingBarrels < slot.Reserve then table.insert(missingBarrels, index) end
+		if not slot.Barrels[index]
+			and (slot.UnlimitedReserve or #missingBarrels < slot.Reserve) then
+			table.insert(missingBarrels, index)
+		end
 	end
 	local characterGeneration = generation
 	local actionSwitchGeneration = switchGeneration
@@ -560,20 +611,29 @@ local function updatePose()
 		poses.RightShoulder *= CFrame.Angles(math.rad(-pitch * 0.55), 0, 0)
 		poses.LeftShoulder *= CFrame.Angles(math.rad(-pitch * 0.55), 0, 0)
 	end
-	local recoilAlpha = 0
-	if slot.State == "Firing" or slot.State == "Recovering" then
-		recoilAlpha = math.clamp(1 - (os.clock() - slot.StateStartedAt) / Config.FireRecoilSeconds, 0, 1)
-		poses.Waist *= CFrame.Angles(math.rad(5 * recoilAlpha), 0, 0)
-		poses.RightShoulder *= CFrame.Angles(math.rad(12 * recoilAlpha), 0, 0)
+	local recoilElapsed = if slot.RecoilStartedAt then os.clock() - slot.RecoilStartedAt else math.huge
+	local recoilAlpha = recoilEnvelope(recoilElapsed)
+	if recoilAlpha > 0 then
+		poses.Waist *= CFrame.Angles(math.rad(FeedbackConfig.Recoil.PitchDegrees * 0.5 * recoilAlpha), 0, 0)
+		poses.RightShoulder *= CFrame.Angles(math.rad(FeedbackConfig.Recoil.PitchDegrees * recoilAlpha), 0, 0)
 		priority = Config.ActionPriority
-		local pumpAlpha = math.clamp((os.clock() - slot.StateStartedAt) / Config.FireRecoverySeconds, 0, 1)
-		slot.Hinge.Transform = CFrame.new(0, 0, 0.30 * math.sin(pumpAlpha * math.pi))
-	elseif string.sub(slot.State, 1, 6) == "Reload" then
+	end
+	if string.sub(slot.State, 1, 6) == "Reload" then
 		poses.RightShoulder = CFrame.Angles(math.rad(-48), math.rad(-18), math.rad(25))
 		poses.LeftShoulder = CFrame.Angles(math.rad(-78), math.rad(20), math.rad(-32))
 		priority = Config.ActionPriority
 	else
-		slot.Hinge.Transform = CFrame.identity
+		local pumpElapsed = recoilElapsed - FeedbackConfig.Recoil.PumpDelaySeconds
+		if pumpElapsed >= 0 and pumpElapsed < FeedbackConfig.Recoil.PumpCycleSeconds then
+			local pumpAlpha = pumpElapsed / FeedbackConfig.Recoil.PumpCycleSeconds
+			slot.Hinge.Transform = CFrame.new(
+				0,
+				0,
+				FeedbackConfig.Recoil.PumpTravelStuds * math.sin(pumpAlpha * math.pi)
+			)
+		else
+			slot.Hinge.Transform = CFrame.identity
+		end
 	end
 	if aimRig then
 		local shouldSolve = not tumble
@@ -618,6 +678,7 @@ end
 
 local function destroyCharacterPresentation()
 	generation += 1
+	lastServerSequence = 0
 	aimRigFailedGeneration = nil
 	lastGameplayAim = nil
 	switchGeneration += 1
@@ -626,7 +687,11 @@ local function destroyCharacterPresentation()
 	endTumble()
 	PoseCoordinator:Release("Firearm")
 	if deathConnection then deathConnection:Disconnect(); deathConnection = nil end
-	for _, slot in slots do if slot.Model then slot.Model:Destroy() end end
+	if shotEffects then shotEffects:ClearLocalShooter() end
+	for _, slot in slots do
+		if slot.MuzzleEffect then slot.MuzzleEffect:Destroy() end
+		if slot.Model then slot.Model:Destroy() end
+	end
 	table.clear(slots)
 	character, humanoid, rootPart = nil, nil, nil
 end
@@ -649,11 +714,14 @@ local function bindCharacter(nextCharacter)
 					Id = slotId, Model = model, Hinge = hinge, Muzzles = muzzles, Shells = shells,
 					ShellJoints = shellJoints,
 					Grip = nil,
+					MuzzleEffect = FirearmShotEffects.CreateWeaponMuzzleEffect(model, muzzles[1]),
 					IsRendered = false,
 					State = "Idle",
 					StateStartedAt = os.clock(),
 					Barrels = table.create(Config.ChamberCapacity, true),
-					Reserve = Config.StartingReserve, NextFireAt = 0, LastFireAt = nil, LastBarrel = 0, Token = 0,
+					Reserve = Config.StartingReserve, UnlimitedReserve = false,
+					NextFireAt = 0, LastFireAt = nil,
+					LastBarrel = 0, Token = 0, RecoilStartedAt = nil, RecoilSerial = 0,
 				}
 				slots[slotId] = slot
 				if not attachSlot(slot, false) then
@@ -701,7 +769,13 @@ end
 function Controller:GetActiveStatus()
 	local slot = slots[activeSlot]
 	if not slot then return nil end
-	return { Slot = slot.Id, State = slot.State, Chambered = chamberCount(slot), Reserve = slot.Reserve }
+	return {
+		Slot = slot.Id,
+		State = slot.State,
+		Chambered = chamberCount(slot),
+		Reserve = slot.Reserve,
+		UnlimitedReserve = slot.UnlimitedReserve,
+	}
 end
 
 function Controller:Init(inputManagerValue, fighterControllerValue, movementEngine, gameplayCameraValue)
@@ -714,22 +788,57 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 	local remotes = ReplicatedStorage:WaitForChild("BLIKKRemotes", MultiplayerConfig.RemoteLookupTimeoutSeconds)
 	firearmIntent = remotes and remotes:WaitForChild("FirearmIntent", MultiplayerConfig.RemoteLookupTimeoutSeconds)
 	local firearmResult = remotes and remotes:WaitForChild("FirearmResult", MultiplayerConfig.RemoteLookupTimeoutSeconds)
-	if not firearmIntent or not firearmResult then error("[BLIKK FIREARM] Combat remotes unavailable", 0) end
+	local firearmShot = remotes and remotes:WaitForChild("FirearmShot", MultiplayerConfig.RemoteLookupTimeoutSeconds)
+	if not firearmIntent or not firearmResult or not firearmShot then
+		error("[BLIKK FIREARM] Combat remotes unavailable", 0)
+	end
+	shotEffects = FirearmShotEffects.Create(firearmShot)
+	script.Destroying:Connect(function()
+		if shotEffects then shotEffects:Destroy(); shotEffects = nil end
+	end)
 	firearmResult.OnClientEvent:Connect(function(payload)
 		if type(payload) ~= "table" then return end
+		if VALID_RESULT_OPERATIONS[payload.Operation] ~= true
+			or type(payload.Sequence) ~= "number" or payload.Sequence ~= payload.Sequence
+			or payload.Sequence <= -math.huge or payload.Sequence >= math.huge
+			or payload.Sequence % 1 ~= 0 or payload.Sequence < lastServerSequence then return end
 		local slot = slots[payload.Slot]
-		if not slot or type(payload.Magazine) ~= "number" or type(payload.Reserve) ~= "number" then
-			if payload.Operation == "Reload" and not warnedReloadReconciliation then
+		local spawnGeneration = player:GetAttribute("BLIKK_SpawnGeneration")
+		if payload.SpawnGeneration ~= spawnGeneration then return end
+		if not slot or type(payload.Magazine) ~= "number" or payload.Magazine % 1 ~= 0
+			or payload.Magazine < 0 or payload.Magazine > Config.ChamberCapacity
+			or type(payload.Reserve) ~= "number" or payload.Reserve % 1 ~= 0
+			or payload.Reserve < 0 or payload.Reserve > CombatConfig.StartingReserve
+			or type(payload.UnlimitedReserve) ~= "boolean" then
+			if string.sub(tostring(payload.Operation), 1, 6) == "Reload"
+				and not warnedReloadReconciliation then
 				warnedReloadReconciliation = true
 				warn("[BLIKK FIREARM:RELOAD_RECONCILIATION_FAILURE] Ignored malformed or stale server state.")
 			end
 			return
 		end
+		lastServerSequence = math.max(lastServerSequence, payload.Sequence)
 		for index = 1, Config.ChamberCapacity do slot.Barrels[index] = index <= payload.Magazine end
 		slot.Reserve = payload.Reserve
+		slot.UnlimitedReserve = payload.UnlimitedReserve
 		updateShells(slot)
-		if payload.Operation == "Reload" then
-			Controller.SemanticEvent:Fire("ReloadCommitted", os.clock(), { Slot = slot.Id, Count = 1 })
+		if payload.Operation == "ReloadCommitted" and payload.Accepted == true then
+			if type(payload.Transferred) ~= "number" or payload.Transferred % 1 ~= 0
+				or payload.Transferred < 1 or payload.Transferred > Config.ChamberCapacity then
+				if not warnedReloadReconciliation then
+					warnedReloadReconciliation = true
+					warn("[BLIKK FIREARM:RELOAD_RECONCILIATION_FAILURE] Ignored invalid transfer count.")
+				end
+				return
+			end
+			Controller.SemanticEvent:Fire("ReloadCommitted", os.clock(), {
+				Slot = slot.Id,
+				Count = payload.Transferred,
+			})
+		elseif payload.Operation == "ReloadRejected"
+			and string.sub(slot.State, 1, 6) == "Reload" then
+			cancelSlotAction(slot, "ServerRejected")
+			if activeSlot == slot.Id then setState(slot, "Ready") end
 		end
 		publish(slot)
 	end)

@@ -6,10 +6,13 @@ local maps = {
 		SupportedModes = { "Training", "Deathmatch", "TeamDeathmatchExtreme", "Elimination" },
 		MinimumPlayers = 1,
 		MaximumPlayers = 16,
-		FreeForAllSpawnIds = { "SPAWN_A", "SPAWN_B", "SPAWN_C" },
+		FreeForAllSpawnIds = {
+			"SPAWN_A", "SPAWN_B", "SPAWN_C", "SPAWN_D",
+			"SPAWN_E", "SPAWN_F", "SPAWN_G", "SPAWN_H",
+		},
 		TeamSpawnIds = {
-			ALPHA = { "SPAWN_A", "SPAWN_B" },
-			OMEGA = { "SPAWN_C" },
+			ALPHA = { "SPAWN_A", "SPAWN_B", "SPAWN_E", "SPAWN_G" },
+			OMEGA = { "SPAWN_C", "SPAWN_D", "SPAWN_F", "SPAWN_H" },
 		},
 	},
 }

@@ -141,7 +141,8 @@ Its server bindable events are:
 
 `CharacterLifecycleUpdated` is a reliable `RemoteEvent` sent only to the
 owning player. Its payload contains `Status`, `Identity`, `Code`, `Character`,
-and `ServerTime`. Implemented statuses include `Preparing`, `Prepared`,
+`ServerTime`, and the bounded `MovementLabAttemptGeneration` correlation when
+the update belongs to a Movement Lab attempt. Implemented statuses include `Preparing`, `Prepared`,
 `Held`, `Released`, `Died`, `Failed`, `Rejected`, `Cancelled`, and `Recovered`.
 
 ## Placement ownership
@@ -151,13 +152,21 @@ Given the exact current character, it:
 
 - waits only within the caller's finite deadline;
 - filters team spawns when `BLIKK_TeamId` is `ALPHA` or `OMEGA`;
-- scores candidate spawns using living-player distance, visibility, recent use,
-  and deterministic rotation preference;
+- hard-excludes candidates within the configured occupancy radius of a living
+  player or active reservation;
+- reserves a selected spawn immediately for the exact player and spawn
+  generation before placement;
+- scores hard-safe candidates using living-player distance, visibility, global
+  recent use, and a bounded personal history, then randomizes only among
+  similarly safe top candidates;
 - zeros root velocity and pivots the character once, `3.5` studs above the
   selected spawn; and
 - returns the resolved humanoid, root, and spawn to the lifecycle authority.
 
-`SPAWN_UNAVAILABLE` may be retried until the lifecycle placement deadline. A
+`SPAWN_UNAVAILABLE` may be retried up to the configured six attempts and only
+within the lifecycle placement deadline. It never falls back to an occupied
+spawn. Reservations clear on placement, failure, cancellation, removal, map
+rebuild, and teardown. A
 successful placement is committed once for the accepted character generation.
 Stale characters, incomplete rigs, or placement exceptions fail instead of
 being repositioned later by a second owner.
@@ -302,7 +311,7 @@ explicit, finite sentinel owned by that map.
 | Join in progress outside Elimination | During `Fighting`, start individual preparation immediately. During shared preparation, mark the player pending and start individual preparation after the shared release. | Individual future release time; never added retroactively to an already armed shared set. |
 | Elimination join in progress | Player remains `WaitingForRound` and spectating. | Entry occurs through the next shared round generation. If competitive resolution was inactive and the arriving roster restores a valid distribution, the server starts a fresh round. |
 | Elimination death | No mid-round respawn while competitive resolution is active. Death contributes to round resolution. | Winner advances the series or all participants enter `PostRound`. In a non-competitive solo warm-up, the configured one-second fallback uses individual respawn. |
-| Movement Lab | Individual lifecycle request with match generation and round `0`; the client marker budget is `12` seconds and the server lifecycle budget is `15` seconds. | Releases immediately after exact readiness. A readiness timeout cancels rather than silently releasing an incomplete fighter. Death requests a clean new Movement Lab spawn generation, and exit cancels the character. |
+| Movement Lab | Individual lifecycle request with match generation and round `0`; the client marker budget is `12` seconds and the server lifecycle budget is `15` seconds. Every frontend attempt has a monotonic client attempt generation echoed with lifecycle updates. | Releases immediately after exact readiness. A readiness timeout cancels rather than silently releasing an incomplete fighter. Death requests a clean new spawn generation within the same attempt. Exit carries the current attempt plus expected spawn generation, so a stale exit cannot cancel a newer entry. |
 
 At a shared timeout, players without both server and client readiness are
 cancelled and moved to spectating. A non-competitive match may proceed with at
@@ -389,6 +398,10 @@ cancellation.
 - A failed or timed-out individual preparation affects only that participant.
 - Player and task generations prevent old delayed callbacks from restoring a
   superseded loading screen or releasing a stale character.
+- Movement Lab frontend states are `Frontend`, `Entering`, `Active`, and
+  `Exiting`. A delayed failure return captures its exact attempt generation and
+  becomes inert as soon as another attempt owns the frontend. Intentional exit
+  cancellation is not presented as preparation failure.
 
 Match snapshots expose these bounded counters:
 

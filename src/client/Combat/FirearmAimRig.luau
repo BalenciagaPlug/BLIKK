@@ -2,6 +2,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage.Shared.Combat.FirearmPresentationConfig)
+local FeedbackConfig = require(ReplicatedStorage.Shared.Combat.FirearmShotFeedbackConfig)
 
 local FirearmAimRig = {}
 local Rig = {}
@@ -417,13 +418,13 @@ function Rig:Update(model, grip, aimDirection, recoilAlpha)
 	-- Presentation pitch comes only from the camera direction in root space. Neither
 	-- weapon geometry nor the preceding IK result can feed back into this basis.
 	local localDirection = self.RootPart.CFrame:VectorToObjectSpace(aimDirection.Unit)
-	local pitchDegrees = math.deg(math.asin(math.clamp(localDirection.Y, -1, 1)))
-		+ Config.AimIK.RecoilPitchDegrees * math.clamp(recoilAlpha, 0, 1)
-	pitchDegrees = math.clamp(
-		pitchDegrees,
+	local basePitchDegrees = math.clamp(
+		math.deg(math.asin(math.clamp(localDirection.Y, -1, 1))),
 		Config.AimPitchMinimumDegrees,
 		Config.AimPitchMaximumDegrees
 	)
+	local recoil = math.clamp(recoilAlpha, 0, 1)
+	local pitchDegrees = basePitchDegrees + FeedbackConfig.Recoil.PitchDegrees * recoil
 	local rootRotation = self.RootPart.CFrame.Rotation
 	local aimPivotWorld = CFrame.new(self.RightShoulder.WorldPosition) * rootRotation
 	local neutralReceiverFromAimPivot = CFrame.new(
@@ -440,6 +441,7 @@ function Rig:Update(model, grip, aimDirection, recoilAlpha)
 	local upHint = self.RootPart.CFrame.UpVector
 	local right = forward:Cross(upHint).Unit
 	local correctedUp = right:Cross(forward).Unit
+	stockWorldPosition -= forward * FeedbackConfig.Recoil.BackwardTravelStuds * recoil
 	local desiredStockWorld = CFrame.fromMatrix(stockWorldPosition, right, correctedUp, -forward)
 	local receiverWorld = desiredStockWorld
 		* stockReference.CFrame:Inverse()

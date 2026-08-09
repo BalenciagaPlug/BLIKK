@@ -8,8 +8,10 @@ local PlayerPreferencesConfig = require(
 )
 
 local Controller = {}
+Controller.PreferencesApplied = Instance.new("BindableEvent")
 
 local accountController = nil
+local hasConfirmedPreferences = false
 local isInitialised = false
 
 local function applySettings(settings)
@@ -24,6 +26,8 @@ local function applySettings(settings)
 			SessionSettings:Set(key, value)
 		end
 	end
+	hasConfirmedPreferences = true
+	Controller.PreferencesApplied:Fire()
 end
 
 local function mutate(operation, payload)
@@ -58,6 +62,10 @@ end
 
 function Controller:SetPreference(key, value)
 	return mutate("SetPreference", { Key = key, Value = value })
+end
+
+function Controller:HasConfirmedPreferences()
+	return hasConfirmedPreferences
 end
 
 function Controller:ResetPreferenceGroup(group)
