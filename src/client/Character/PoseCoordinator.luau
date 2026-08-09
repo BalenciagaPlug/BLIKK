@@ -95,6 +95,18 @@ local function bindCharacter(character)
 		end
 		table.sort(discovered)
 		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if #discovered == 0 then
+			-- Upgraded rigs retain their native AnimationConstraint presentation. This
+			-- read-only capability check must not register those joints for pose claims.
+			if character:FindFirstChildWhichIsA("AnimationConstraint", true) then return end
+			warn(string.format(
+				"[BLIKK POSE] No supported Motor6D or upgraded AnimationConstraint "
+					.. "pose joint graph found. RigType=%s Missing=%s",
+				humanoid and humanoid.RigType.Name or "Unknown",
+				table.concat(missing, ",")
+			))
+			return
+		end
 		warn(string.format(
 			"[BLIKK POSE] Partial pose capability. RigType=%s Discovered=%s Missing=%s",
 			humanoid and humanoid.RigType.Name or "Unknown",

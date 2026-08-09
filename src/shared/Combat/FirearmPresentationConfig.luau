@@ -1,5 +1,8 @@
 local Combat = require(script.Parent.FirearmCombatConfig)
 
+local RIGHT_HAND_GRIP = CFrame.new(0, -0.38, 0.24)
+	* CFrame.Angles(math.rad(92), 0, 0)
+
 local FirearmPresentationConfig = {
 	DiagnosticsEnabled = false,
 	ApprovedCustomModelName = "",
@@ -23,6 +26,33 @@ local FirearmPresentationConfig = {
 	AimPitchMinimumDegrees = -55,
 	AimPitchMaximumDegrees = 55,
 	AimBlend = 0.42,
+	GeometryToCanonical = CFrame.identity,
+	OrientationValidation = {
+		MinimumForwardDot = 0.98,
+		MinimumUpDot = 0.95,
+		PitchSamplesDegrees = { -55, -35, 0, 35, 55 },
+	},
+	Diagnostics = {
+		MarkerSizeStuds = 0.12,
+		AxisThicknessStuds = 0.04,
+		AxisLengthStuds = 0.75,
+	},
+	AimIK = {
+		Weight = 1,
+		SmoothTimeSeconds = 0,
+		RightArmPriority = 10,
+		LeftArmPriority = 20,
+		RecoilPitchDegrees = 12,
+		NeutralReceiverInwardShoulderWidths = 0.18,
+		NeutralReceiverDownTorsoHeights = 0.18,
+		NeutralReceiverForwardArmReaches = 0.35,
+		RightElbowPoleOutwardShoulderWidths = 0.55,
+		RightElbowPoleDownTorsoHeights = 0.32,
+		RightElbowPoleRearwardArmReaches = 0.08,
+		LeftElbowPoleOutwardShoulderWidths = 0.50,
+		LeftElbowPoleDownTorsoHeights = 0.42,
+		LeftElbowPoleForwardArmReaches = 0.10,
+	},
 	TumblePriority = 50,
 	ActionPriority = 40,
 	IdlePriority = 20,
@@ -42,6 +72,7 @@ local FirearmPresentationConfig = {
 		Port = Vector3.new(0.04, 0.22, 0.38),
 		Sight = Vector3.new(0.08, 0.10, 0.10),
 		Shell = Vector3.new(0.12, 0.12, 0.36),
+		MuzzleFlash = Vector3.new(0.30, 0.30, 0.18),
 	},
 	Offsets = {
 		Stock = CFrame.new(0, 0.02, 1.02) * CFrame.Angles(math.rad(-7), 0, 0),
@@ -55,15 +86,28 @@ local FirearmPresentationConfig = {
 		Muzzle = CFrame.new(0, 0.03, -2.52),
 	},
 	Attachments = {
-		Muzzle = Vector3.new(0, 0.03, -2.60),
-		Foregrip = Vector3.new(0, -0.05, -1.25),
-		RightHandGrip = Vector3.new(0, -0.38, 0.24),
-	},
-	EquippedOffset = CFrame.new(0, -0.20, -0.30) * CFrame.Angles(math.rad(-92), 0, math.rad(180)),
-	HolsteredOffsets = {
-		Primary1 = CFrame.new(-0.52, 0.12, 0.55) * CFrame.Angles(math.rad(8), math.rad(8), math.rad(152)),
-		Primary2 = CFrame.new(0.52, 0.12, 0.55) * CFrame.Angles(math.rad(8), math.rad(-8), math.rad(-152)),
+		RightHandGrip = RIGHT_HAND_GRIP,
 	},
 }
+
+local rearStockCenter = FirearmPresentationConfig.Offsets.Stock
+	* CFrame.new(0, 0, FirearmPresentationConfig.Geometry.Stock.Z * 0.5)
+local muzzleTip = FirearmPresentationConfig.Offsets.Muzzle
+	* CFrame.new(0, 0, -FirearmPresentationConfig.Geometry.MuzzleFlash.Z * 0.5)
+local attachments = FirearmPresentationConfig.Attachments
+attachments.MuzzleReference = CFrame.new(muzzleTip.Position)
+attachments.Muzzle = attachments.MuzzleReference
+attachments.Foregrip = CFrame.new(FirearmPresentationConfig.Offsets.Pump.Position)
+attachments.WeaponTopReference = CFrame.new(
+	0,
+	FirearmPresentationConfig.Geometry.Receiver.Y * 0.5,
+	0
+)
+attachments.WeaponBottomReference = CFrame.new(
+	0,
+	-FirearmPresentationConfig.Geometry.Receiver.Y * 0.5,
+	0
+)
+FirearmPresentationConfig.Attachments.StockReference = CFrame.new(rearStockCenter.Position)
 
 return FirearmPresentationConfig

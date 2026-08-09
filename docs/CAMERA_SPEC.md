@@ -38,6 +38,12 @@ It is always mathematically centred.
 
 It never moves because of recoil, dash, animations or effects.
 
+An equipped local firearm automatically follows the existing centered crosshair ray. There is no aim
+button or aim-down-sights camera mode. Arm IK consumes the camera result for presentation only and
+does not write camera position, rotation, sensitivity, field of view, or crosshair placement.
+Developer free-look supplies no new firearm aim samples; the last valid gun pose remains frozen while
+the inspection camera orbits and resumes centered-crosshair tracking as soon as free-look ends.
+
 Only future optional accessibility settings may modify appearance.
 
 ---

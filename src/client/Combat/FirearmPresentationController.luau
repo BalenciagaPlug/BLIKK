@@ -3,6 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local PoseCoordinator = require(script.Parent.Parent.Character.PoseCoordinator)
+local FirearmAimRig = require(script.Parent.FirearmAimRig)
 local CharacterDependency = require(ReplicatedStorage.Shared.Character.CharacterDependency)
 local Config = require(ReplicatedStorage.Shared.Combat.FirearmPresentationConfig)
 local CombatConfig = require(ReplicatedStorage.Shared.Combat.FirearmCombatConfig)
@@ -22,6 +23,7 @@ local movementEngineController
 local firearmIntent
 local character
 local humanoid
+local rootPart
 local slots = {}
 local activeSlot = "Melee"
 local generation = 0
@@ -36,8 +38,23 @@ local isCommittingSwitch = false
 local shotSequence = 0
 local warnedFallback = false
 local warnedReloadReconciliation = false
+local warnedAimRigFailure = false
 local tumble = nil
 local isInitialised = false
+local aimRig = nil
+local aimRigFailedGeneration = nil
+local lastGameplayAim = nil
+local aimExclusions = {}
+
+local function destroyAimRig()
+	if aimRig then aimRig:Destroy(); aimRig = nil end
+end
+
+local function warnAimRigFailure(reason)
+	if warnedAimRigFailure then return end
+	warnedAimRigFailure = true
+	warn("[BLIKK FIREARM AIM] Arm IK unavailable; firearm gameplay remains active: " .. tostring(reason))
+end
 
 local function makePart(parent, name, size, color, material, cframe)
 	local part = Instance.new("Part")
@@ -89,18 +106,29 @@ local function buildBreakshot(slotId)
 	hinge.C0 = offsets.Pump
 	hinge.Parent = receiver
 	local muzzles = {}
-	local muzzle = makePart(model, "MuzzleFlash", Vector3.new(0.30, 0.30, 0.18), Color3.fromRGB(255, 188, 82), Enum.Material.Neon, offsets.Muzzle)
+	local muzzle = makePart(
+		model,
+		"MuzzleFlash",
+		dimensions.MuzzleFlash,
+		Color3.fromRGB(255, 188, 82),
+		Enum.Material.Neon,
+		offsets.Muzzle
+	)
 	muzzle.Transparency = 1
 	weld(receiver, muzzle)
 	for index = 1, Config.ChamberCapacity do muzzles[index] = muzzle end
-	for name, position in {
+	for name, transform in {
 		MuzzleAttachment = Config.Attachments.Muzzle,
+		MuzzleReference = Config.Attachments.MuzzleReference,
 		ForegripAttachment = Config.Attachments.Foregrip,
 		RightHandGripAttachment = Config.Attachments.RightHandGrip,
+		StockReference = Config.Attachments.StockReference,
+		WeaponTopReference = Config.Attachments.WeaponTopReference,
+		WeaponBottomReference = Config.Attachments.WeaponBottomReference,
 	} do
 		local attachment = Instance.new("Attachment")
 		attachment.Name = name
-		attachment.Position = position
+		attachment.CFrame = transform
 		attachment.Parent = receiver
 	end
 	local shells = {}
@@ -128,6 +156,12 @@ local function buildWeapon(slotId)
 		local muzzle = source and source:FindFirstChild("MuzzleFlash", true)
 		if source and source:IsA("Model") and source.PrimaryPart
 			and source.PrimaryPart:FindFirstChild("MuzzleAttachment")
+			and source.PrimaryPart:FindFirstChild("MuzzleReference")
+			and source.PrimaryPart:FindFirstChild("ForegripAttachment")
+			and source.PrimaryPart:FindFirstChild("RightHandGripAttachment")
+			and source.PrimaryPart:FindFirstChild("StockReference")
+			and source.PrimaryPart:FindFirstChild("WeaponTopReference")
+			and source.PrimaryPart:FindFirstChild("WeaponBottomReference")
 			and pump and pump:IsA("Motor6D") and muzzle and muzzle:IsA("BasePart") then
 			local clone = source:Clone()
 			clone.Name = "BLIKK_B8_" .. slotId
@@ -151,17 +185,37 @@ local function buildWeapon(slotId)
 end
 
 local function attachSlot(slot, equipped)
-	if not character or not slot.Model or not slot.Model.PrimaryPart then return false end
-	local bodyPart = character:FindFirstChild(if equipped then "RightHand" else "UpperTorso")
-	if not bodyPart or not bodyPart:IsA("BasePart") then return false end
-	if slot.Grip then slot.Grip:Destroy() end
+	if not slot.Model or not slot.Model.PrimaryPart then return false end
+	if slot.Grip then slot.Grip:Destroy(); slot.Grip = nil end
+	if not equipped then
+		slot.Hinge.Transform = CFrame.identity
+		for _, joint in slot.ShellJoints do joint.Transform = CFrame.identity end
+		for _, muzzle in slot.Muzzles do
+			muzzle.Color = Color3.fromRGB(255, 188, 82)
+			muzzle.Transparency = 1
+		end
+		slot.Model.Parent = nil
+		slot.IsRendered = false
+		return true
+	end
+	if not character then return false end
+	local isR6 = humanoid and humanoid.RigType == Enum.HumanoidRigType.R6
+	local bodyPart = character:FindFirstChild(if isR6 then "Right Arm" else "RightHand")
+	local rightHandGrip = slot.Model.PrimaryPart:FindFirstChild("RightHandGripAttachment")
+	if not bodyPart or not bodyPart:IsA("BasePart")
+		or not rightHandGrip or not rightHandGrip:IsA("Attachment") then return false end
 	local grip = Instance.new("Motor6D")
 	grip.Name = "BLIKK_BreakshotGrip_" .. slot.Id
 	grip.Part0 = bodyPart
 	grip.Part1 = slot.Model.PrimaryPart
-	grip.C0 = if equipped then Config.EquippedOffset else Config.HolsteredOffsets[slot.Id]
+	grip.C0 = rightHandGrip.CFrame:Inverse()
+	grip.C1 = CFrame.identity
+	grip.Transform = CFrame.identity
 	grip.Parent = slot.Model.PrimaryPart
 	slot.Grip = grip
+	slot.Model:PivotTo(bodyPart.CFrame * grip.C0 * grip.C1:Inverse())
+	slot.Model.Parent = character
+	slot.IsRendered = true
 	return true
 end
 
@@ -181,10 +235,46 @@ local function publish(slot)
 	Controller.StateChanged:Fire(slot.Id, slot.State, chamberCount(slot), slot.Reserve)
 end
 
+local function stateRetainsAimOwnership(state)
+	return state == "Ready" or state == "Firing" or state == "Recovering"
+		or string.sub(state, 1, 6) == "Reload"
+end
+
+local function refreshAimRigOwnership()
+	local slot = slots[activeSlot]
+	local isReleased = character and character:GetAttribute("BLIKK_GameplayReleased") == true
+		and player:GetAttribute("BLIKK_GameplayReleased") == true
+	local shouldOwn = gameplayEnabled and not inputSuppressed and not pendingSwitch
+		and isReleased and character and humanoid and rootPart and slot
+		and slot.IsRendered and slot.Model.Parent == character and slot.Grip
+		and stateRetainsAimOwnership(slot.State)
+	if not shouldOwn then
+		destroyAimRig()
+		return
+	end
+	if aimRig or aimRigFailedGeneration == generation then return end
+	local nextAimRig, reason = FirearmAimRig.Create(character, humanoid, rootPart)
+	if not nextAimRig then
+		aimRigFailedGeneration = generation
+		warnAimRigFailure(reason)
+		return
+	end
+	aimRig = nextAimRig
+end
+
+local function readFreshGameplayAim(slot)
+	if not gameplayCamera or not gameplayCamera:IsGameplayActive() then return nil end
+	aimExclusions[1] = slot.Model
+	local aim = gameplayCamera:GetCrosshairAim(CombatConfig.MaximumRangeStuds, aimExclusions)
+	if aim then lastGameplayAim = aim end
+	return aim
+end
+
 local function setState(slot, nextState)
 	slot.State = nextState
 	slot.StateStartedAt = os.clock()
 	publish(slot)
+	refreshAimRigOwnership()
 end
 
 local function cancelSlotAction(slot, reason)
@@ -206,7 +296,7 @@ local function callbackIsCurrent(slot, characterGeneration, actionSwitchGenerati
 		and switchGeneration == actionSwitchGeneration
 		and slots[slot.Id] == slot
 		and slot.Token == token
-		and slot.Model and slot.Model.Parent == character
+		and slot.Model
 		and player.Character == character
 end
 
@@ -234,6 +324,7 @@ local function commitSwitch(slotId, requestGeneration, characterGeneration)
 		end)
 	end
 	activeSlot = slotId
+	refreshAimRigOwnership()
 	isCommittingSwitch = true
 	fighterController:SetActiveWeaponSlot(slotId)
 	isCommittingSwitch = false
@@ -241,7 +332,11 @@ local function commitSwitch(slotId, requestGeneration, characterGeneration)
 	local slot = slots[slotId]
 	if not slot then PoseCoordinator:Release("Firearm"); return end
 	cancelSlotAction(slot, "Equip")
-	attachSlot(slot, true)
+	if not attachSlot(slot, true) then
+		setState(slot, "Interrupted")
+		warnAimRigFailure("the equipped firearm hand attachment is unavailable")
+		return
+	end
 	setState(slot, "Equipping")
 	Controller.SemanticEvent:Fire("WeaponEquipped", os.clock(), { Slot = slot.Id })
 	local token = slot.Token
@@ -267,6 +362,7 @@ local function requestSwitch(slotId)
 	local requestGeneration = switchGeneration
 	local characterGeneration = generation
 	pendingSwitch = { Slot = slotId, Generation = requestGeneration }
+	refreshAimRigOwnership()
 	local previous = slots[activeSlot]
 	if previous then cancelSlotAction(previous, "WeaponSwitchPending") end
 	local previousToken = previous and previous.Token
@@ -276,7 +372,7 @@ local function requestSwitch(slotId)
 	end
 	task.delay(delaySeconds, function()
 		if previous and (slots[previous.Id] ~= previous or previous.Token ~= previousToken
-			or not previous.Model or previous.Model.Parent ~= character) then return end
+			or not previous.Model) then return end
 		commitSwitch(slotId, requestGeneration, characterGeneration)
 	end)
 	return true
@@ -285,12 +381,11 @@ end
 local function fireActive()
 	local slot = slots[activeSlot]
 	if pendingSwitch or not gameplayEnabled or inputSuppressed or not slot or slot.State ~= "Ready"
+		or not slot.IsRendered or slot.Model.Parent ~= character
 		or chamberCount(slot) <= 0 or os.clock() < slot.NextFireAt then return false end
+	if not gameplayCamera or not gameplayCamera:IsGameplayActive() then return false end
 	local muzzleAttachment = slot.Model.PrimaryPart:FindFirstChild("MuzzleAttachment")
-	local aim = gameplayCamera and gameplayCamera:GetCrosshairAim(
-		CombatConfig.MaximumRangeStuds,
-		{ slot.Model }
-	)
+	local aim = readFreshGameplayAim(slot)
 	if not aim or not muzzleAttachment or not muzzleAttachment:IsA("Attachment") then return false end
 	local muzzleDirection = aim.AimPoint - muzzleAttachment.WorldPosition
 	if muzzleDirection.Magnitude < 0.001 then return false end
@@ -424,11 +519,14 @@ end
 
 local function updatePose()
 	local slot = slots[activeSlot]
-	if not slot or not character or not humanoid or humanoid.Health <= 0 then
+	if not slot or not character or not humanoid or humanoid.Health <= 0
+		or not slot.IsRendered or slot.Model.Parent ~= character or not slot.Grip then
+		destroyAimRig()
 		PoseCoordinator:Release("Firearm")
 		endTumble()
 		return
 	end
+	refreshAimRigOwnership()
 	local poses = {
 		Waist = CFrame.Angles(math.rad(-3), math.rad(4), 0),
 		RightShoulder = CFrame.Angles(math.rad(-72), math.rad(-8), math.rad(18)),
@@ -450,7 +548,8 @@ local function updatePose()
 		poses.RightShoulder *= CFrame.Angles(math.rad(-4), 0, 0)
 		poses.LeftShoulder *= CFrame.Angles(math.rad(-4), 0, 0)
 	end
-	local aim = gameplayCamera and gameplayCamera:GetCrosshairAim(CombatConfig.MaximumRangeStuds, { slot.Model })
+	local freshAim = readFreshGameplayAim(slot)
+	local aim = freshAim or lastGameplayAim
 	if aim then
 		local pitch = math.clamp(
 			math.deg(math.asin(math.clamp(aim.Direction.Y, -1, 1))),
@@ -461,8 +560,9 @@ local function updatePose()
 		poses.RightShoulder *= CFrame.Angles(math.rad(-pitch * 0.55), 0, 0)
 		poses.LeftShoulder *= CFrame.Angles(math.rad(-pitch * 0.55), 0, 0)
 	end
+	local recoilAlpha = 0
 	if slot.State == "Firing" or slot.State == "Recovering" then
-		local recoilAlpha = math.clamp(1 - (os.clock() - slot.StateStartedAt) / Config.FireRecoilSeconds, 0, 1)
+		recoilAlpha = math.clamp(1 - (os.clock() - slot.StateStartedAt) / Config.FireRecoilSeconds, 0, 1)
 		poses.Waist *= CFrame.Angles(math.rad(5 * recoilAlpha), 0, 0)
 		poses.RightShoulder *= CFrame.Angles(math.rad(12 * recoilAlpha), 0, 0)
 		priority = Config.ActionPriority
@@ -474,6 +574,27 @@ local function updatePose()
 		priority = Config.ActionPriority
 	else
 		slot.Hinge.Transform = CFrame.identity
+	end
+	if aimRig then
+		local shouldSolve = not tumble
+			and (slot.State == "Ready" or slot.State == "Firing" or slot.State == "Recovering")
+		if shouldSolve then
+			local updated, reason = true, nil
+			if freshAim then
+				updated, reason = aimRig:Update(slot.Model, slot.Grip, freshAim.Direction, recoilAlpha)
+			elseif aimRig:HasPose() then
+				aimRig:SetEnabled(true)
+			else
+				updated, reason = aimRig:Update(slot.Model, slot.Grip, rootPart.CFrame.LookVector, 0)
+			end
+			if not updated then
+				destroyAimRig()
+				aimRigFailedGeneration = generation
+				warnAimRigFailure(reason)
+			end
+		else
+			aimRig:SetEnabled(false)
+		end
 	end
 	PoseCoordinator:Submit("Firearm", priority, poses, 0.35)
 
@@ -497,14 +618,17 @@ end
 
 local function destroyCharacterPresentation()
 	generation += 1
+	aimRigFailedGeneration = nil
+	lastGameplayAim = nil
 	switchGeneration += 1
 	pendingSwitch = nil
+	destroyAimRig()
 	endTumble()
 	PoseCoordinator:Release("Firearm")
 	if deathConnection then deathConnection:Disconnect(); deathConnection = nil end
 	for _, slot in slots do if slot.Model then slot.Model:Destroy() end end
 	table.clear(slots)
-	character, humanoid = nil, nil
+	character, humanoid, rootPart = nil, nil, nil
 end
 
 local function bindCharacter(nextCharacter)
@@ -515,25 +639,27 @@ local function bindCharacter(nextCharacter)
 	cancelDependencyWatch = CharacterDependency.ObserveHumanoidAndRoot(
 		nextCharacter,
 		MultiplayerConfig.CharacterDependencyTimeoutSeconds,
-		function(nextHumanoid)
+		function(nextHumanoid, nextRootPart)
 			if bindGeneration ~= generation or characterBindingTarget ~= nextCharacter
 				or player.Character ~= nextCharacter then return end
-			character, humanoid = nextCharacter, nextHumanoid
+			character, humanoid, rootPart = nextCharacter, nextHumanoid, nextRootPart
 			for _, slotId in { "Primary1", "Primary2" } do
 				local model, hinge, muzzles, shells, shellJoints = buildWeapon(slotId)
-				model.Parent = nextCharacter
 				local slot = {
 					Id = slotId, Model = model, Hinge = hinge, Muzzles = muzzles, Shells = shells,
 					ShellJoints = shellJoints,
 					Grip = nil,
+					IsRendered = false,
 					State = "Idle",
 					StateStartedAt = os.clock(),
 					Barrels = table.create(Config.ChamberCapacity, true),
 					Reserve = Config.StartingReserve, NextFireAt = 0, LastFireAt = nil, LastBarrel = 0, Token = 0,
 				}
 				slots[slotId] = slot
-				if not attachSlot(slot, fighterController:GetFighter().ActiveWeaponSlot == slotId) then
+				if not attachSlot(slot, false) then
 					warn("[BLIKK FIREARM] Character weapon attachment parts were unavailable.")
+					for _, builtSlot in slots do builtSlot.Model:Destroy() end
+					table.clear(slots)
 					return
 				end
 				updateShells(slot)
@@ -556,7 +682,19 @@ local function bindCharacter(nextCharacter)
 				warn("[BLIKK FIREARM] Character dependencies remain incomplete; continuing to observe the current character.")
 			end
 		end,
-		{ "RightHand", "UpperTorso" }
+		function(observedHumanoid)
+			if observedHumanoid.RigType == Enum.HumanoidRigType.R6 then
+				return { "Right Arm", "Torso" }
+			end
+			return {
+				"RightHand",
+				"RightUpperArm",
+				"RightLowerArm",
+				"LeftHand",
+				"LeftUpperArm",
+				"UpperTorso",
+			}
+		end
 	)
 end
 
@@ -624,7 +762,11 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 		if not enabled then
 			switchGeneration += 1
 			pendingSwitch = nil
-			for _, slot in slots do cancelSlotAction(slot, "GameplayDisabled") end
+			lastGameplayAim = nil
+			for _, slot in slots do
+				cancelSlotAction(slot, "GameplayDisabled")
+				attachSlot(slot, false)
+			end
 			endTumble()
 		elseif not inputSuppressed then
 			for slotId, slot in slots do
