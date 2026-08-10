@@ -11,6 +11,7 @@ local PracticeDummyConfig = {
 		AvatarUserId = "AvatarUserId",
 		Generation = "DummyGeneration",
 		IsActive = "BLIKK_PracticeDummyActive",
+		IsRecovering = "BLIKK_PracticeDummyRecovering",
 	},
 	Placement = {
 		WallStandOffStuds = 3,
@@ -27,8 +28,22 @@ local PracticeDummyConfig = {
 		ClearanceMaximumParts = 32,
 	},
 	Vitals = {
-		ResetAfterInactivitySeconds = 3,
-		LethalRecoverySeconds = 1,
+		LethalRecoverySeconds = 1.35,
+	},
+	RecoveryPresentation = {
+		Enabled = true,
+		TotalLifetimeSeconds = 1.25,
+		RingCount = 3,
+		SegmentsPerRing = 12,
+		RingStaggerSeconds = 0.14,
+		RingTravelSeconds = 0.82,
+		InitialRadiusStuds = 1.15,
+		FinalRadiusStuds = 2.35,
+		InitialHeightStuds = -2.1,
+		RiseStuds = 4.4,
+		LineThicknessStuds = 0.09,
+		PrimaryColor = Color3.fromRGB(96, 255, 150),
+		SecondaryColor = Color3.fromRGB(58, 199, 255),
 	},
 	AvatarConstructionTimeoutSeconds = 12,
 	Animation = {

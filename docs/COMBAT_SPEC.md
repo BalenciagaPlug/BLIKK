@@ -99,9 +99,17 @@ damage, ammunition, cooldown completion, or ray origin. Valid attackers are regi
 spread generator uses one server-owned seed to produce exactly twelve unit directions uniformly over
 the circular 4.5-degree cone; there is no guaranteed centre pellet.
 
+The same registration API has a separate Movement Lab branch. It accepts player-versus-player damage
+only when both characters are current, released Movement Lab identities, neither player belongs to a
+room or match, and the victim is not spawn protected. It never creates match score, winner, replay,
+or progression attribution. A lethal result uses the normal character-death event, waits the
+Deathmatch `3`-second respawn delay, prepares a fresh `100 AP / 100 HP` life, and applies the same
+`1.5`-second spawn protection on release. Firing a damaging shot clears the attacker's protection.
+
 Each accepted shot publishes a dedicated bounded presentation payload containing shooter user ID,
 spawn generation, sequence, equipped firearm slot, server-derived origin, and exactly twelve finite
-server ray endpoints. It is sent only to the shooter and members of the same active room/match. The
+server ray endpoints. It is sent only to the shooter and members of the same active room/match, or to
+the currently released roomless Movement Lab cohort for a Movement Lab shot. The
 shooter may replace the replicated origin with a short-lived cached rendered-muzzle origin for visual
 streak alignment, but never changes the authoritative endpoints. Rejected shots publish no authoritative
 streak or endpoint presentation.
@@ -135,21 +143,39 @@ hitbox, melee controller, attack behavior, score identity, match membership, or 
 Dummy damage uses the same authoritative AP-first resolver as fighters but never calls player-only
 match attribution, awards a kill, or changes match statistics.
 
+The dummy begins each cycle at exactly `100 AP / 100 HP`. A server-confirmed lethal result immediately
+marks that generation inactive, leaves the anchored R15 rig upright with `BreakJointsOnDeath` and the
+Dead state disabled, stops its idle presentation, and changes the readout to `RECOVERING`. The shooter uses
+the already-validated result position to play one dedicated spatial `PracticeDummyDeath` cue through
+the local effects mix. The server starts three compact green/cyan segmented scan rings that expand and
+rise through the upright target; after `1.35` seconds it atomically restores `100 AP / 100 HP`,
+re-enables the target, clears the recovering state, and resumes the trusted idle. All scan geometry is
+destroyed by `1.25` seconds or earlier on map/service teardown. Nonlethal AP/HP damage remains exactly
+where the authoritative resolver left it, regardless of inactivity, until a later shot completes the
+lethal cycle. No ragdoll, kill award, match elimination, player death observer, or persistent object
+is created.
+
 Shooter feedback is presentation-only. One aggregated number is projected from each confirmed target's
 average pellet impact, and one reusable crosshair hitmarker is refreshed for any applied damage. Both
 use bounded pre-created UI ownership. AP feedback is blue, HP feedback is green, mixed damage preserves
-both component colors, and elimination may use a red accent. A single reusable confirmed-hit Sound is
-retriggered once only when the accepted shot's server result contains positive total applied damage;
-it never triggers per pellet, per target, on misses, or from prediction. A second reusable Sound
-triggers only from a shooter-private server reload-accepted acknowledgement. Audio never participates
-in hit, reload, or damage authority.
+both component colors, and elimination may use a red accent. The shared sound-effect owner retriggers
+one non-positional firearm confirmation only when the accepted shot's server result contains positive
+total applied damage; it never triggers per pellet, per target, on misses, or from prediction. The
+approved reload cue triggers only from a shooter-private server reload-accepted acknowledgement.
+An eliminated practice-dummy record additionally triggers one louder 18-to-130-stud spatial death cue
+at its validated average impact position. Audio never participates in hit, reload, dummy recovery, or
+damage authority.
 
 Shot streaks are cosmetic Beams from an eight-shot, ninety-six-pellet pool owned by one client effects
 controller and updated through one connection. The pool reclaims a complete oldest shot on wrap,
 never creates per-shot attachments, and applies no collision or damage. Impact presentation is limited
 to endpoints until the server supplies validated normals and hit categories. Local muzzle flash,
 light, sparks, and smoke are reusable weapon-owned objects triggered immediately on a locally valid
-shot; remote flashes use the accepted server origin.
+shot; remote flashes use the accepted server origin. The same pool owns one positional remote-shot
+Sound per shot group. Local accepted fire plays once through the reusable non-spatial owner; the
+local shooter's replicated payload is explicitly excluded from remote audio. Rejected and malformed
+payloads produce no remote report. Empty-fire feedback is limited to an equipped, ready B-8 under
+active gameplay camera ownership and is rate-limited independently of fire authority.
 
 While a local firearm is equipped and ready, firearm aim is automatic: there is no aim button and no
 aim-down-sights mode. The existing centered crosshair ray supplies local presentation intent. A
@@ -199,12 +225,19 @@ start/commit/cancel, slash, block, and tumble start/end. The technique controlle
 history for future sequence definitions but does not award Slash Shot, Reload Shot, Half Step, or
 Reload Half Step.
 
+An accepted Katana slash may schedule a presentation-only air cut at the configured active-window
+boundary. Generation and state checks cancel it if the slash is superseded before that point; this
+does not alter melee timing or cancel eligibility. The separate melee confirmation semantic key has
+no caller until a future authoritative melee result exists. Slash input, animation overlap, trails,
+and local raycasts must never synthesize that outcome.
+
 Weapon selection uses one presentation transaction for `1`, `Q`, `E`, and both wheel directions.
 The latest valid request wins, blocks old-weapon fire while pending, and commits the fighter slot,
 visible weapon, HUD, input target, and semantic transition together. Each B-8 keeps independent
 magazine and reserve state. Delayed firearm work validates character and switch generations, slot identity,
 slot token, and model lifetime. Input suppression restores the selected firearm to `Ready` and
 non-rendered firearms to `Idle` without changing ammunition, cooldowns, or emitting fabricated actions.
+The handling cue follows the committed `ActiveWeaponSlot` change, never the speculative request.
 
 An accepted B-8 reload commits once at the configured opening-plus-insertion point. The server computes
 the missing magazine amount, transfers the minimum of that amount and finite reserve, performs one

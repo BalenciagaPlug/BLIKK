@@ -3,6 +3,8 @@ local SettingsConfig = require(script.Parent.SettingsConfig)
 
 local PlayerPreferencesConfig = {}
 
+PlayerPreferencesConfig.MaximumPersistedPreferenceEntries = 64
+
 PlayerPreferencesConfig.Definitions = {
 	FieldOfViewDegrees = { Owner = "Camera", Type = "number", Default = CameraConfig.FieldOfViewDegrees, Range = CameraConfig.SettingsRanges.FieldOfViewDegrees },
 	CameraDistanceStuds = { Owner = "Camera", Type = "number", Default = CameraConfig.CameraDistanceStuds, Range = CameraConfig.SettingsRanges.CameraDistanceStuds },
@@ -12,7 +14,8 @@ PlayerPreferencesConfig.Definitions = {
 	InvertY = { Owner = "Camera", Type = "boolean", Default = CameraConfig.InvertY },
 	MasterVolume = { Owner = "Session", Type = "number", Default = SettingsConfig.AudioDefaults.MasterVolume, Range = SettingsConfig.AudioRanges.MasterVolume },
 	MusicVolume = { Owner = "Session", Type = "number", Default = SettingsConfig.AudioDefaults.MusicVolume, Range = SettingsConfig.AudioRanges.MusicVolume },
-	SoundEffectsVolume = { Owner = "Session", Type = "number", Default = SettingsConfig.AudioDefaults.SoundEffectsVolume, Range = SettingsConfig.AudioRanges.SoundEffectsVolume },
+	SoundEffectsVolume = { Owner = "Session", Type = "number", Default = SettingsConfig.AudioDefaults.SoundEffectsVolume, Range = SettingsConfig.AudioRanges.SoundEffectsVolume, LegacyMaximum = 2 },
+	UISoundVolume = { Owner = "Session", Type = "number", Default = SettingsConfig.AudioDefaults.UISoundVolume, Range = SettingsConfig.AudioRanges.UISoundVolume, LegacyMaximum = 2 },
 	MusicMuted = { Owner = "Session", Type = "boolean", Default = SettingsConfig.AudioDefaults.MusicMuted },
 	UIScale = { Owner = "Session", Type = "number", Default = SettingsConfig.ExtrasDefaults.UIScale, Range = SettingsConfig.ExtrasRanges.UIScale },
 	HudScale = { Owner = "Session", Type = "number", Default = SettingsConfig.ExtrasDefaults.HudScale, Range = SettingsConfig.ExtrasRanges.HudScale },
@@ -57,7 +60,11 @@ function PlayerPreferencesConfig.ValidatePreference(key, value)
 	if definition.Type == "number" then
 		if value ~= value or value <= -math.huge or value >= math.huge then return nil end
 		local range = definition.Range
-		if value < range.Minimum or value > range.Maximum then return nil end
+		if value < range.Minimum then return nil end
+		if value > range.Maximum then
+			if not definition.LegacyMaximum or value > definition.LegacyMaximum then return nil end
+			return range.Maximum
+		end
 		if value == definition.Default then return value end
 		local steps = math.floor((value - range.Minimum) / range.Step + 0.5)
 		return math.clamp(range.Minimum + steps * range.Step, range.Minimum, range.Maximum)
@@ -71,6 +78,7 @@ function PlayerPreferencesConfig.NormalizePreferences(source)
 	local normalized = PlayerPreferencesConfig.DefaultPreferences()
 	local diagnostics = {
 		AddedMissingPreferenceDefaultCount = 0,
+		MigratedPreferenceCount = 0,
 		ReplacedInvalidPreferenceCount = 0,
 		RemovedUnknownPreferenceCount = 0,
 	}
@@ -83,16 +91,27 @@ function PlayerPreferencesConfig.NormalizePreferences(source)
 	local count = 0
 	for key, value in source do
 		count += 1
+		local definition = PlayerPreferencesConfig.Definitions[key]
 		local validated = PlayerPreferencesConfig.ValidatePreference(key, value)
-		if not PlayerPreferencesConfig.Definitions[key] then
+		if not definition then
 			diagnostics.RemovedUnknownPreferenceCount += 1
 		elseif validated ~= nil then
 			normalized[key] = validated
-			if validated ~= value then diagnostics.ReplacedInvalidPreferenceCount += 1 end
+			if validated ~= value then
+				if definition.LegacyMaximum and type(value) == "number"
+					and value > definition.Range.Maximum and value <= definition.LegacyMaximum then
+					diagnostics.MigratedPreferenceCount += 1
+				else
+					diagnostics.ReplacedInvalidPreferenceCount += 1
+				end
+			end
 		else
 			diagnostics.ReplacedInvalidPreferenceCount += 1
 		end
-		if count > 32 then diagnostics.RemovedUnknownPreferenceCount += 1; break end
+		if count > PlayerPreferencesConfig.MaximumPersistedPreferenceEntries then
+			diagnostics.RemovedUnknownPreferenceCount += 1
+			break
+		end
 	end
 	for key in PlayerPreferencesConfig.Definitions do
 		if source[key] == nil then diagnostics.AddedMissingPreferenceDefaultCount += 1 end

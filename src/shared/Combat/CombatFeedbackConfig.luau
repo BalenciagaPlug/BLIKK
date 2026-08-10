@@ -35,28 +35,6 @@ local CombatFeedbackConfig = {
 		LineThicknessPixels = 2,
 		CenterGapPixels = 6,
 	},
-	Sounds = {
-		FolderName = "BLIKKCombatFeedback",
-		SoundGroupName = "BLIKK_SoundEffects",
-		ConfirmedHit = {
-			Key = "ConfirmedHit",
-			Name = "BLIKKConfirmedHitSound",
-			SoundId = "rbxassetid://1044630916",
-			Enabled = true,
-			Volume = 0.45,
-			PlaybackSpeed = 1,
-			RestartOnRetrigger = true,
-		},
-		ReloadInitiated = {
-			Key = "B8ReloadInitiated",
-			Name = "BLIKKReloadInitiatedSound",
-			SoundId = "rbxassetid://8145744063",
-			Enabled = true,
-			Volume = 0.55,
-			PlaybackSpeed = 1,
-			RestartOnRetrigger = true,
-		},
-	},
 	ScreenGui = {
 		Name = "BLIKKCombatFeedback",
 		DisplayOrder = 11,

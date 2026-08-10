@@ -126,8 +126,7 @@ function Controller:Init(inputManager, gameplayCamera)
 		end
 		local spectatorPhase = own and own.PreparationPhase
 		local shouldSpectate = own and own.IsSpectating and (
-			spectatorPhase == "Dead"
-			or spectatorPhase == "WaitingForRound"
+			spectatorPhase == "WaitingForRound"
 			or spectatorPhase == "TimedOut"
 			or spectatorPhase == "Failed"
 		)

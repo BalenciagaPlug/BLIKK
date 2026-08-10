@@ -1,6 +1,7 @@
 local modes = {
 	Training = {
 		Id = "Training", DisplayName = "TRAINING", TeamMode = false, Competitive = false,
+		ExperienceRewardsEnabled = true,
 		StartMinimumPlayers = 1, CompetitiveMinimumPlayers = 1,
 		MaximumPlayers = 16, TimeLimitSeconds = 0, ScoreLimit = 0,
 		RespawnEnabled = true, RespawnDelaySeconds = 1, SpawnProtectionSeconds = 1.5,
@@ -8,6 +9,7 @@ local modes = {
 	},
 	Deathmatch = {
 		Id = "Deathmatch", DisplayName = "DEATHMATCH", TeamMode = false, Competitive = true,
+		ExperienceRewardsEnabled = true,
 		StartMinimumPlayers = 1, CompetitiveMinimumPlayers = 2,
 		MaximumPlayers = 16, TimeLimitSeconds = 600, ScoreLimit = 20,
 		RespawnEnabled = true, RespawnDelaySeconds = 3, SpawnProtectionSeconds = 1.5,
@@ -15,6 +17,7 @@ local modes = {
 	},
 	TeamDeathmatchExtreme = {
 		Id = "TeamDeathmatchExtreme", DisplayName = "TEAM DEATHMATCH EXTREME", TeamMode = true,
+		ExperienceRewardsEnabled = true,
 		Competitive = true, StartMinimumPlayers = 1,
 		CompetitiveMinimumPlayers = 2, MaximumPlayers = 16, TimeLimitSeconds = 720,
 		ScoreLimit = 30, RespawnEnabled = true, RespawnDelaySeconds = 3,
@@ -23,6 +26,7 @@ local modes = {
 	},
 	Elimination = {
 		Id = "Elimination", DisplayName = "ELIMINATION", TeamMode = true, Competitive = true,
+		ExperienceRewardsEnabled = true,
 		StartMinimumPlayers = 1, CompetitiveMinimumPlayers = 2,
 		MaximumPlayers = 16, TimeLimitSeconds = 0, ScoreLimit = 0,
 		RespawnEnabled = false, RespawnDelaySeconds = 0, SpawnProtectionSeconds = 1.5,

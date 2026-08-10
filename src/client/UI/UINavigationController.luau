@@ -8,6 +8,7 @@ local UIStyle = require(script.Parent.UIStyle)
 local UINavigationController = {}
 
 UINavigationController.MenuOwnershipChanged = Instance.new("BindableEvent")
+UINavigationController.AudioEvent = Instance.new("BindableEvent")
 
 local ACTION_NAME = "BLIKKFixedUINavigation"
 local ACTION_PRIORITY = Enum.ContextActionPriority.High.Value + 100
@@ -25,6 +26,17 @@ local selectionImageObject = nil
 local listSelectionImageObject = nil
 local isRepairingSelection = false
 local globalConnections = {}
+
+local VALID_AUDIO_ROLES = {
+	Activate = true,
+	Confirm = true,
+	Back = true,
+	Denied = true,
+	Navigate = true,
+	Silent = true,
+	SliderStep = true,
+}
+local AUDIO_DUPLICATE_WINDOW_SECONDS = 0.04
 
 local directionProperties = {
 	Up = "NextSelectionUp",
@@ -60,6 +72,18 @@ local function isControlValid(scope, record)
 	if not object.Interactable then return false end
 	if object:IsA("GuiButton") and not object.Active then return false end
 	return true
+end
+
+local function emitAudio(role, record)
+	if role == "Silent" or not VALID_AUDIO_ROLES[role] then return end
+	local now = os.clock()
+	if record and record.LastAudioRole == role
+		and now - record.LastAudioAt < AUDIO_DUPLICATE_WINDOW_SECONDS then return end
+	if record then
+		record.LastAudioRole = role
+		record.LastAudioAt = now
+	end
+	UINavigationController.AudioEvent:Fire(role, record and record.Object or nil)
 end
 
 local function findRecord(scope, object)
@@ -105,13 +129,17 @@ local function notifySelectionFocused(scope, record)
 	record.OnFocused()
 end
 
-local function setSelected(scope, object)
+local function setSelected(scope, object, playNavigationAudio)
 	if scope ~= topScope() then return false end
 	local record = findRecord(scope, object)
 	if not record or not isControlValid(scope, record) then return false end
+	local previousObject = GuiService.SelectedObject
 	rememberSelection(scope, record)
 	GuiService.SelectedObject = object
-	if GuiService.SelectedObject == object then notifySelectionFocused(scope, record) end
+	if GuiService.SelectedObject == object then
+		notifySelectionFocused(scope, record)
+		if playNavigationAudio and previousObject ~= object then emitAudio("Navigate", record) end
+	end
 	return true
 end
 
@@ -239,6 +267,8 @@ local function unregisterControl(scope, object)
 	if record.ManagesFocusVisual and object.SelectionImageObject == listSelectionImageObject then
 		object.SelectionImageObject = record.PreviousSelectionImageObject
 	end
+	for _, connection in record.Connections do connection:Disconnect() end
+	table.clear(record.Connections)
 	if scope.LastSelected == object or GuiService.SelectedObject == object then
 		scope.LastSelectionIdentity = getSelectionIdentity(record)
 	end
@@ -267,6 +297,9 @@ local function registerControl(scope, object, options)
 		"ChooseOnFocus controls require an OnFocused callback")
 	assert(options.IsFocusVisualVisible == nil or type(options.IsFocusVisualVisible) == "function",
 		"IsFocusVisualVisible must be a function")
+	assert(options.AudioRole == nil or VALID_AUDIO_ROLES[options.AudioRole], "Unknown UI audio role")
+	assert(options.AdjustAudioRole == nil or VALID_AUDIO_ROLES[options.AdjustAudioRole],
+		"Unknown UI adjustment audio role")
 	local managesFocusVisual = choosesOnFocus or options.IsFocusVisualVisible ~= nil
 	local record = {
 		Object = object,
@@ -279,6 +312,11 @@ local function registerControl(scope, object, options)
 		IsFocusVisualVisible = options.IsFocusVisualVisible,
 		ManagesFocusVisual = managesFocusVisual,
 		PreviousSelectionImageObject = nil,
+		AudioRole = options.AudioRole or "Activate",
+		AdjustAudioRole = options.AdjustAudioRole or "Navigate",
+		LastAudioRole = nil,
+		LastAudioAt = -math.huge,
+		Connections = {},
 	}
 	object.Selectable = true
 	if not object:IsA("GuiButton") and not object:IsA("TextBox") then object.Active = true end
@@ -289,20 +327,29 @@ local function registerControl(scope, object, options)
 	table.insert(scope.Controls, record)
 	scope.ControlByObject[object] = record
 
-	object.MouseEnter:Connect(function()
+	table.insert(record.Connections, object.MouseEnter:Connect(function()
 		if not choosesOnFocus and scope.IsActive and scope == topScope() then
-			setSelected(scope, object)
+			setSelected(scope, object, true)
 		end
-	end)
-	object.InputBegan:Connect(function(input)
+	end))
+	table.insert(record.Connections, object.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then
 			if scope.IsActive and scope == topScope() then setSelected(scope, object) end
 		end
-	end)
-	object.Destroying:Connect(function()
+	end))
+	if object:IsA("GuiButton") then
+		table.insert(record.Connections, object.Activated:Connect(function()
+			-- The application callback was connected before registration and may navigate away.
+			-- A control still owned by this scope was valid when Roblox delivered Activated.
+			if scope.ControlByObject[object] == record then
+				emitAudio(record.AudioRole, record)
+			end
+		end))
+	end
+	table.insert(record.Connections, object.Destroying:Connect(function()
 		unregisterControl(scope, object)
-	end)
+	end))
 	return record
 end
 
@@ -343,15 +390,8 @@ local function destroyScope(scope)
 	if scopesById[scope.Id] ~= scope then return end
 	setScopeActive(scope, false)
 	scopesById[scope.Id] = nil
-	for _, record in scope.Controls do
-		if record.ManagesFocusVisual
-			and record.Object.Parent
-			and record.Object.SelectionImageObject == listSelectionImageObject then
-			record.Object.SelectionImageObject = record.PreviousSelectionImageObject
-		end
-	end
+	while scope.Controls[1] do unregisterControl(scope, scope.Controls[1].Object) end
 	table.clear(scope.ControlByObject)
-	table.clear(scope.Controls)
 end
 
 local function moveSelection(scope, direction)
@@ -365,6 +405,7 @@ local function moveSelection(scope, direction)
 	if not record then return end
 
 	if record.Adjust and record.Adjust(direction) then
+		emitAudio(record.AdjustAudioRole, record)
 		task.defer(function()
 			if scope == topScope() then refreshScope(scope, record.Object) end
 		end)
@@ -372,7 +413,7 @@ local function moveSelection(scope, direction)
 	end
 
 	local nextObject = current[directionProperties[direction]]
-	if nextObject then setSelected(scope, nextObject) end
+	if nextObject then setSelected(scope, nextObject, true) end
 end
 
 local function activateSelection(scope)
@@ -385,7 +426,8 @@ local function activateSelection(scope)
 	if not record then return end
 
 	if record.Activate then
-		record.Activate()
+		local result = record.Activate()
+		emitAudio(if result == false then "Denied" else record.AudioRole, record)
 	elseif record.Object:IsA("TextBox") then
 		record.Object:CaptureFocus()
 	end
@@ -418,7 +460,10 @@ local function handleNavigationAction(_, inputState, inputObject)
 	elseif keyCode == Enum.KeyCode.Return or keyCode == Enum.KeyCode.KeypadEnter then
 		activateSelection(scope)
 	elseif keyCode == Enum.KeyCode.Backspace then
-		if scope.Back then scope.Back() end
+		if scope.Back then
+			local result = scope.Back()
+			emitAudio(if result == false then "Denied" else "Back", nil)
+		end
 	end
 
 	return Enum.ContextActionResult.Sink
@@ -503,6 +548,8 @@ function UINavigationController:Init(gameplayInputManager)
 		table.clear(globalConnections)
 		for _, scope in scopesById do
 			for _, record in scope.Controls do
+				for _, connection in record.Connections do connection:Disconnect() end
+				table.clear(record.Connections)
 				if record.ManagesFocusVisual
 					and record.Object.Parent
 					and record.Object.SelectionImageObject == listSelectionImageObject then
@@ -517,6 +564,7 @@ function UINavigationController:Init(gameplayInputManager)
 		end
 		if selectionImageObject then selectionImageObject:Destroy() end
 		if listSelectionImageObject then listSelectionImageObject:Destroy() end
+		UINavigationController.AudioEvent:Destroy()
 	end))
 end
 
@@ -585,6 +633,15 @@ end
 
 function UINavigationController:CanOpenChat()
 	return #activeScopes == 0 and UserInputService:GetFocusedTextBox() == nil
+end
+
+function UINavigationController:EmitAudioEvent(role, object)
+	if not VALID_AUDIO_ROLES[role] then return false end
+	local scope = topScope()
+	local record = object and scope and findRecord(scope, object) or nil
+	if object and (not record or not isControlValid(scope, record)) then return false end
+	emitAudio(role, record)
+	return true
 end
 
 return UINavigationController

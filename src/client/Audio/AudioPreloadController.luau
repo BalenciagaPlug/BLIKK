@@ -4,7 +4,8 @@ local SoundService = game:GetService("SoundService")
 
 local PlayerPreferencesController = require(script.Parent.Parent.Settings.PlayerPreferencesController)
 local MusicConfig = require(ReplicatedStorage.Shared.Audio.MusicConfig)
-local CombatFeedbackConfig = require(ReplicatedStorage.Shared.Combat.CombatFeedbackConfig)
+local SoundEffectsConfig = require(ReplicatedStorage.Shared.Audio.SoundEffectsConfig)
+local MovementConfig = require(ReplicatedStorage.Shared.Movement.MovementConfig)
 
 local AudioPreloadController = {}
 AudioPreloadController.StatusChanged = Instance.new("BindableEvent")
@@ -53,8 +54,15 @@ local function initializeDefinitions()
 	register(MusicConfig.Tracks.CharacterSelection, "Frontend")
 	register(MusicConfig.Tracks.OperationsHub, "Frontend")
 	for _, track in MusicConfig.Tracks.DuelPlaylist do register(track, "Duel") end
-	register(CombatFeedbackConfig.Sounds.ConfirmedHit, "SoundEffect")
-	register(CombatFeedbackConfig.Sounds.ReloadInitiated, "SoundEffect")
+	for _, key in SoundEffectsConfig.PreloadOrder do
+		register(SoundEffectsConfig.Sounds[key], "SoundEffect")
+	end
+	local dash = MovementConfig.Dash.Presentation
+	register({
+		Key = "Dash",
+		SoundId = dash.SoundId,
+		Enabled = dash.Enabled and dash.SoundId ~= "",
+	}, "SoundEffect")
 end
 
 local function setStatusForSoundId(soundId, status, durationSeconds)
@@ -67,7 +75,7 @@ local function setStatusForSoundId(soundId, status, durationSeconds)
 end
 
 local function diagnose(key, status, durationSeconds)
-	if not MusicConfig.DiagnosticsEnabled and not CombatFeedbackConfig.DiagnosticsEnabled then return end
+	if not MusicConfig.DiagnosticsEnabled and not SoundEffectsConfig.DiagnosticsEnabled then return end
 	print(string.format(
 		"[BLIKK AUDIO PRELOAD] %s %s in %.3f seconds",
 		key,
@@ -200,9 +208,11 @@ local function beginPreloading()
 		return
 	end
 	local musicGroup = SoundService:FindFirstChild(MusicConfig.SoundGroupName)
-	local effectsGroup = SoundService:FindFirstChild(CombatFeedbackConfig.Sounds.SoundGroupName)
+	local effectsGroup = SoundService:FindFirstChild(SoundEffectsConfig.SoundGroupName)
+	local uiGroup = SoundService:FindFirstChild(SoundEffectsConfig.UISoundGroupName)
 	if not musicGroup or not musicGroup:IsA("SoundGroup")
-		or not effectsGroup or not effectsGroup:IsA("SoundGroup") then return end
+		or not effectsGroup or not effectsGroup:IsA("SoundGroup")
+		or not uiGroup or not uiGroup:IsA("SoundGroup") then return end
 	hasStarted = true
 	local route = navigationController and navigationController:GetCurrentRoute() or nil
 	local mainMenuFirst = route == "OperationsHub" or route == "Multiplayer" or route == "Clans"
@@ -212,10 +222,8 @@ local function beginPreloading()
 		{ firstFrontend },
 		{ secondFrontend },
 		enabledDuelKeys(),
-		{
-			CombatFeedbackConfig.Sounds.ConfirmedHit.Key,
-			CombatFeedbackConfig.Sounds.ReloadInitiated.Key,
-		},
+		SoundEffectsConfig.PreloadOrder,
+		{ "Dash" },
 	}
 	preloadThread = task.spawn(function()
 		for batchIndex, keys in batches do

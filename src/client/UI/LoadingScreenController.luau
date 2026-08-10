@@ -2,7 +2,6 @@ local ContentProvider = game:GetService("ContentProvider")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
@@ -40,7 +39,6 @@ local fightRevealConnection = nil
 local pulseTween = nil
 local activeTweens = {}
 local tweenConnections = {}
-local fightSound = nil
 local hasWarnedLegacyInput = false
 local hasWarnedLegacyCamera = false
 local hasWarnedPreloadTimeout = false
@@ -119,13 +117,6 @@ local function cancelFightArm()
 		releaseWakeThread = nil
 	end
 	disconnectReleaseWatch()
-end
-
-local function stopFightSound()
-	if not fightSound then return end
-	fightSound:Stop()
-	fightSound:Destroy()
-	fightSound = nil
 end
 
 local function setNavigationBlocked(blocked)
@@ -330,7 +321,6 @@ local function dismiss(identity, fadeSeconds)
 	local generation = activeGeneration
 	cancelFightArm()
 	isFightPresented = false
-	stopFightSound()
 	cancelAllTweens()
 	local duration = fadeSeconds or LoadingScreenConfig.Timing.DismissFadeSeconds
 	playTween(
@@ -349,23 +339,6 @@ local function dismiss(identity, fadeSeconds)
 		finaliseHidden(generation)
 	end)
 	return true
-end
-
-local function playFightSound()
-	local soundAssetId = LoadingScreenConfig.Fight.SoundAssetId
-	if type(soundAssetId) ~= "string"
-		or not soundAssetId:match("^rbxassetid://%d+$") then return end
-
-	stopFightSound()
-	local sound = Instance.new("Sound")
-	sound.Name = "BLIKKFight"
-	sound.SoundId = soundAssetId
-	sound.Volume = LoadingScreenConfig.Fight.SoundVolume
-	local soundGroup = SoundService:FindFirstChild("BLIKK_SoundEffects")
-	if soundGroup and soundGroup:IsA("SoundGroup") then sound.SoundGroup = soundGroup end
-	sound.Parent = SoundService
-	fightSound = sound
-	sound:Play()
 end
 
 local function presentFight(generation, armToken, identity, releaseAtServerTime)
@@ -396,7 +369,6 @@ local function presentFight(generation, armToken, identity, releaseAtServerTime)
 		LoadingScreenView.SetFightVisible(view, true)
 		view.FightGroup.GroupTransparency = 1
 		view.FightScale.Scale = 0.82
-		playFightSound()
 
 		playTween(
 			view.FightGroup,
@@ -436,7 +408,6 @@ local function presentFight(generation, armToken, identity, releaseAtServerTime)
 		)
 		task.delay(LoadingScreenConfig.Timing.FightExitSeconds, function()
 			if generation ~= activeGeneration or identity ~= activeIdentity then return end
-			stopFightSound()
 			finaliseHidden(generation)
 		end)
 	end)
@@ -484,7 +455,6 @@ function LoadingScreenController:Init(
 		activeGeneration += 1
 		cancelFightArm()
 		cancelAllTweens()
-		stopFightSound()
 		setGameplayOwnership(false)
 		if loadingScope then loadingScope:Destroy(); loadingScope = nil end
 		if view and view.Gui then view.Gui:Destroy() end
@@ -509,7 +479,6 @@ function LoadingScreenController:Begin(contextName, identity)
 	cancelFightArm()
 	isFightPresented = false
 	isDismissing = false
-	stopFightSound()
 	cancelAllTweens()
 	LoadingScreenView.Reset(view, LoadingScreenConfig, contextName)
 	view.Gui:SetAttribute("BLIKK_LoadingContext", contextName)
@@ -584,7 +553,6 @@ function LoadingScreenController:Fail(identity, message, retainOwnership)
 	cancelFightArm()
 	isFightPresented = false
 	isDismissing = false
-	stopFightSound()
 	cancelAllTweens()
 	LoadingScreenView.SetArtworkAvailable(view, false)
 	LoadingScreenView.SetFightVisible(view, false)

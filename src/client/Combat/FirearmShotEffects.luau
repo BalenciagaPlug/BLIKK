@@ -177,7 +177,7 @@ local function createPellet(folder, groupIndex, pelletIndex)
 	}
 end
 
-local function createGroup(folder, groupIndex)
+local function createGroup(folder, groupIndex, soundEffectsController)
 	local groupFolder = Instance.new("Folder")
 	groupFolder.Name = "Shot" .. groupIndex
 	groupFolder.Parent = folder
@@ -200,6 +200,10 @@ local function createGroup(folder, groupIndex)
 	light.Shadows = false
 	light.Enabled = false
 	light.Parent = flashAttachment
+	local shotSound = Instance.new("Sound")
+	shotSound.Name = "RemoteB8Shot"
+	soundEffectsController:PreparePooledSound("B8Shot", shotSound)
+	shotSound.Parent = flash
 	local pellets = table.create(CombatConfig.PelletsPerShot)
 	for pelletIndex = 1, CombatConfig.PelletsPerShot do
 		pellets[pelletIndex] = createPellet(groupFolder, groupIndex, pelletIndex)
@@ -216,6 +220,7 @@ local function createGroup(folder, groupIndex)
 		Pellets = pellets,
 		Flash = flash,
 		Light = light,
+		ShotSound = shotSound,
 		Sparks = makeSparkEmitter(flashAttachment),
 		Smoke = makeSmokeEmitter(flashAttachment),
 		FlashEndsAt = 0,
@@ -226,6 +231,7 @@ end
 
 local function deactivateGroup(group)
 	group.Active = false
+	group.ShotSound:Stop()
 	group.Light.Enabled = false
 	group.Flash.Transparency = 1
 	group.Sparks:Clear()
@@ -318,6 +324,7 @@ function Effects:_startShot(payload)
 	group.EndsAt = now + longestLifetime
 	if group.ShowsRemoteFlash then
 		group.Flash.CFrame = CFrame.new(origin)
+		self.SoundEffectsController:PlayPooled("B8Shot", group.ShotSound)
 		group.Flash.Transparency = 0.05
 		group.Light.Enabled = true
 		group.Sparks:Emit(FeedbackConfig.Muzzle.SparkCount)
@@ -404,15 +411,16 @@ function Effects:Destroy()
 	table.clear(self.LocalOriginOrder)
 end
 
-function FirearmShotEffects.Create(shotRemote)
+function FirearmShotEffects.Create(shotRemote, soundEffectsController)
 	assert(shotRemote and shotRemote:IsA("RemoteEvent"), "FirearmShotEffects requires FirearmShot")
+	assert(soundEffectsController, "FirearmShotEffects requires SoundEffectsController")
 	local folder = Instance.new("Folder")
 	folder.Name = "BLIKK_FirearmShotEffects"
 	folder:SetAttribute("BLIKK_PresentationOnly", true)
 	folder.Parent = Workspace
 	local groups = table.create(FeedbackConfig.PelletVisual.PoolShotCapacity)
 	for groupIndex = 1, FeedbackConfig.PelletVisual.PoolShotCapacity do
-		groups[groupIndex] = createGroup(folder, groupIndex)
+		groups[groupIndex] = createGroup(folder, groupIndex, soundEffectsController)
 	end
 	local self = setmetatable({
 		Folder = folder,
@@ -420,6 +428,7 @@ function FirearmShotEffects.Create(shotRemote)
 		NextGroupIndex = 1,
 		LocalOrigins = {},
 		LocalOriginOrder = {},
+		SoundEffectsController = soundEffectsController,
 		IsDestroyed = false,
 		RemoteConnection = nil,
 		UpdateConnection = nil,

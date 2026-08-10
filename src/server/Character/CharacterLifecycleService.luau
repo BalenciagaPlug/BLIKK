@@ -5,6 +5,7 @@ local Workspace = game:GetService("Workspace")
 local CharacterDependency = require(ReplicatedStorage.Shared.Character.CharacterDependency)
 local FighterVitalsConfig = require(ReplicatedStorage.Shared.Combat.FighterVitalsConfig)
 local DistrictZeroConfig = require(ReplicatedStorage.Shared.Maps.DistrictZero.DistrictZeroConfig)
+local GameModeRegistry = require(ReplicatedStorage.Shared.Multiplayer.GameModeRegistry)
 local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
 local RateLimiter = require(script.Parent.Parent.Networking.RateLimiter)
 
@@ -20,6 +21,7 @@ local lifecycleUpdatedRemote = nil
 local movementLabEligibilityCallback = nil
 local readinessLimiter = RateLimiter.New()
 local isInitialised = false
+local movementLabCombatRules = GameModeRegistry.Get("Deathmatch")
 
 local function isInteger(value)
 	return type(value) == "number" and value % 1 == 0
@@ -55,17 +57,28 @@ local function setLifecycleAttributes(player, character, identity, isReleased)
 	local context = identity and identity.Context or nil
 	local roomId = identity and identity.RoomId or nil
 	local matchId = identity and identity.MatchId or nil
+	local experienceRewardsEnabled = identity ~= nil
+		and identity.Context ~= "MovementLab"
+		and type(identity.MatchId) == "string"
 	player:SetAttribute("BLIKK_SpawnGeneration", spawnGeneration)
 	player:SetAttribute("BLIKK_CharacterContext", context)
 	player:SetAttribute("BLIKK_CharacterRoomId", roomId)
 	player:SetAttribute("BLIKK_CharacterMatchId", matchId)
 	player:SetAttribute("BLIKK_GameplayReleased", isReleased)
+	player:SetAttribute(
+		"BLIKK_ExperienceRewardsEnabled",
+		experienceRewardsEnabled
+	)
 	if character then
 		character:SetAttribute("BLIKK_SpawnGeneration", spawnGeneration)
 		character:SetAttribute("BLIKK_CharacterContext", context)
 		character:SetAttribute("BLIKK_CharacterRoomId", roomId)
 		character:SetAttribute("BLIKK_CharacterMatchId", matchId)
 		character:SetAttribute("BLIKK_GameplayReleased", isReleased)
+		character:SetAttribute(
+			"BLIKK_ExperienceRewardsEnabled",
+			experienceRewardsEnabled
+		)
 	end
 end
 
@@ -141,7 +154,7 @@ local function failRequest(player, state, request, code, character)
 end
 
 local function scheduleMovementLabRespawn(player, state, current)
-	task.defer(function()
+	task.delay(movementLabCombatRules.RespawnDelaySeconds, function()
 		if state.Disposed or player.Parent ~= Players then return end
 		if state.LatestIdentity and identitiesMatch(state.LatestIdentity, current.Identity)
 			and not state.Active and not state.Pending then
@@ -723,6 +736,9 @@ function CharacterLifecycleService:ReleaseCharacter(player, identity, reason)
 	current.Released = true
 	current.Status = "Released"
 	setLifecycleAttributes(player, current.Character, current.Identity, true)
+	if current.Identity.Context == "MovementLab" then
+		spawnService:SetSpawnProtection(player, movementLabCombatRules.SpawnProtectionSeconds)
+	end
 	fireClientUpdate(player, "Released", current.Identity, reason, current.Character)
 	return true, "RELEASED"
 end

@@ -473,13 +473,21 @@ function Controller:CreatePage(parent, navigation, fighterController)
 	end)
 	bindActivation(play, function()
 		local profile = selectedRowProfile()
-		if not profile then return end
+		if not profile then
+			UINavigationController:EmitAudioEvent("Denied", play)
+			return
+		end
 		local confirmed, message = self:SelectProfile(profile.Id)
-		if not confirmed then status.Text = message; return end
+		if not confirmed then
+			status.Text = message
+			UINavigationController:EmitAudioEvent("Denied", play)
+			return
+		end
 		fighterController:SetBodyType(confirmed.BodyType)
 		self.ProfileSelected:Fire(confirmed)
+		UINavigationController:EmitAudioEvent("Confirm", play)
 		navigation:GoTo("OperationsHub", confirmed)
-	end)
+	end, { AudioRole = "Silent" })
 
 	profileScope = UINavigationController:CreateScope("CharacterProfiles", {
 		Root = page,

@@ -177,6 +177,21 @@ Main Menu
 
 ---
 
+## 10. Death Camera
+
+An authoritative fighter death replaces the respawn loading screen with a live third-person orbit
+around that fighter's body. The local player may rotate the view with normal mouse sensitivity and
+zoom within the configured range. World obstruction still moves the camera inward, and other live
+players remain visible through normal replication; the camera never fades or reveals character
+models through map geometry.
+
+The death camera owns named input and gameplay-camera blockers while active. It preserves the last
+valid body position if Roblox removes the old character during `LoadCharacterAsync`, and it releases
+ownership only when a strictly newer spawn generation has `BLIKK_GameplayReleased = true`. True room
+spectators retain the separate target-cycling camera.
+
+---
+
 ## Definition of Done
 
 A camera feature is complete when it:

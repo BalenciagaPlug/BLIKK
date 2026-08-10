@@ -204,10 +204,12 @@ function Controller:CreatePage(parent, navigation)
 		if not profile then
 			errorLabel.Text = err
 			isSubmitting = false
+			UINavigationController:EmitAudioEvent("Denied", confirm)
 			return
 		end
 		nameBox.Text = ""
 		errorLabel.Text = ""
+		UINavigationController:EmitAudioEvent("Confirm", confirm)
 		navigation:GoTo("Profiles")
 		isSubmitting = false
 	end)
@@ -226,6 +228,8 @@ function Controller:CreatePage(parent, navigation)
 		creationScope:Register(control, {
 			Activate = callback,
 			Adjust = optionAdjusters[control],
+			AudioRole = if control == confirm then "Silent"
+				elseif control == cancel then "Back" else "Activate",
 			IsEnabled = if control == cancel then function() return cancel.Visible end else nil,
 		})
 	end

@@ -77,8 +77,10 @@ The active loading screen is not a passive presentation-only system. It owns a
 topmost `UINavigationController` scope named `LoadingScreen` and adds the named
 owner `LoadingScreen` to both `InputManager` and `GameplayCamera` through
 `SetGameplayBlocked(owner, blocked)`. The visual may cover initial boot, match
-entry, round transition, join in progress, respawn, or Movement Lab entry, but
-it does not replace the normal input, camera, or navigation owners.
+entry, round transition, join in progress, or Movement Lab entry, but it does
+not replace the normal input, camera, or navigation owners. After a released
+fighter dies, the death camera replaces this visual while the exact respawn
+generation prepares.
 
 Named blockers preserve the requested gameplay state independently from the
 effective state. Loading therefore removes only its own blocker when it ends.
@@ -118,6 +120,22 @@ identical arm messages for the same transition remain idempotent.
 Destroying the controller also removes its named blockers and navigation
 scope. Loading cleanup must never clear another owner's blocker, close an
 underlying scope, or blindly restore a captured global enabled flag.
+
+## Death-camera ownership
+
+`DeathCameraController` adds its own `DeathCamera` blockers to `InputManager`
+and `GameplayCamera` as soon as an authoritative released character dies.
+Gameplay actions are flushed and remain blocked, while raw mouse movement and
+wheel input operate the Scriptable corpse orbit. Roblox menu or window-focus
+ownership temporarily releases mouse capture without ending the death camera.
+
+Respawn readiness continues without activating loading artwork or its
+navigation scope. The death camera remains generation-scoped even if
+`LoadCharacterAsync` removes the corpse: it keeps the last valid world target
+and releases only when a strictly newer character reports
+`BLIKK_GameplayReleased = true`. Cancellation, terminal failure, match clear,
+or post-match cleanup removes only the `DeathCamera` blockers. A `Dead` match
+member does not also acquire the target-cycling spectator owner.
 
 ## High-APM input-state recovery
 
@@ -215,6 +233,10 @@ loading, camera, match preparation, or FIGHT presentation:
 11. Repeat loading and FIGHT across multiple rounds, respawns, cancellation,
     and join-in-progress. Confirm there is still one loading GUI, one navigation
     scope, no duplicate input callbacks, and no connection or memory growth.
-12. Fail the loading artwork and leave the FIGHT sound field empty. Confirm the
-    black fallback and silent FIGHT presentation work, while the server remains
-    the only authority that releases the match.
+12. Fail the loading artwork and force the configured FIGHT sound to fail preload. Confirm the black
+    fallback and silent FIGHT presentation work, while the server remains the only authority that
+    releases the match.
+13. Die in Movement Lab and a respawn-enabled match. Confirm the loading screen never covers the
+    world, mouse orbit and wheel zoom remain responsive around the corpse, alive players stay live
+    and visible, gameplay inputs remain blocked, and the normal crosshair camera returns on the
+    first released frame of the newer spawn without an extra click.

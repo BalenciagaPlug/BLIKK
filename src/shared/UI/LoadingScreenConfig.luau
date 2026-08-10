@@ -73,8 +73,6 @@ local LoadingScreenConfig = {
 
 	Fight = {
 		Text = "FIGHT",
-		SoundAssetId = "",
-		SoundVolume = 0.85,
 	},
 }
 

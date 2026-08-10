@@ -22,6 +22,7 @@ local REQUIRED_CHARACTER_MARKERS = {
 
 local player = Players.LocalPlayer
 local loadingController = nil
+local deathCameraController = nil
 local movementLabRemote = nil
 local matchReadyRemote = nil
 local activeMatch = nil
@@ -94,6 +95,15 @@ local function rememberAcknowledgement(key)
 end
 
 local function beginLoading(context, key)
+	if deathCameraController and deathCameraController:IsActive() then
+		if activeLoadingKey ~= key then
+			readinessGeneration += 1
+			readinessKeyInFlight = nil
+		end
+		if loadingController:IsVisible() then loadingController:Cancel(activeLoadingKey) end
+		activeLoadingKey = key
+		return key
+	end
 	if activeLoadingKey == key and loadingController:IsVisible() then return key end
 	if activeLoadingKey ~= key then
 		readinessGeneration += 1
@@ -118,6 +128,12 @@ local function failLoading(identity, code, awaitAuthoritativeState, movementLabA
 		movementLabClosedAttempt = movementLabAttempt
 	end
 	local key = identity and identityKey(identity) or activeLoadingKey
+	if deathCameraController and deathCameraController:IsActive() then
+		deathCameraController:Cancel()
+		if key and not loadingController:IsVisible() then
+			loadingController:Begin(contextForIdentity(identity), key)
+		end
+	end
 	if key and loadingController:IsVisible() then
 		loadingController:Fail(
 			key,
@@ -236,6 +252,10 @@ local function handleLifecycleUpdate(update)
 		if updateAttempt == movementLabIntentionalExitAttempt
 			or updateAttempt == movementLabClosedAttempt then return end
 	end
+	if update.Status == "Died" and type(identity) == "table" then
+		deathCameraController:Begin(identity, update.Character)
+		if loadingController:IsVisible() then loadingController:Cancel(activeLoadingKey) end
+	end
 	if update.Status == "Preparing" and type(identity) == "table" then
 		if isMovementLabUpdate then
 			movementLabState = "Entering"
@@ -257,9 +277,9 @@ local function handleLifecycleUpdate(update)
 		movementLabState = "Entering"
 		movementLabIdentity = nil
 		readinessGeneration += 1
-		beginLoading("Respawn", "MovementLab:Respawn")
-		loadingController:SetStatus("MovementLab:Respawn", "FIGHTER DOWN", "PREPARING A CLEAN RESPAWN //")
+		activeLoadingKey = "MovementLab:Respawn"
 	elseif update.Status == "Released" and identity and identity.Context == "MovementLab" then
+		deathCameraController:End(identity)
 		movementLabState = "Active"
 		movementLabIdentity = identity
 		local key = identityKey(identity)
@@ -271,9 +291,10 @@ local function handleLifecycleUpdate(update)
 	end
 end
 
-function MatchPreparationController:Init(loadingControllerValue)
+function MatchPreparationController:Init(loadingControllerValue, deathCameraControllerValue)
 	if isInitialised then return true end
 	loadingController = loadingControllerValue
+	deathCameraController = deathCameraControllerValue
 	local remotes = ReplicatedStorage:WaitForChild("BLIKKRemotes", Config.RemoteLookupTimeoutSeconds)
 	local lifecycleUpdated = remotes and remotes:WaitForChild(
 		"CharacterLifecycleUpdated",
@@ -343,6 +364,7 @@ function MatchPreparationController:AdoptMatchSnapshot(snapshot)
 		if activeLoadingKey then loadingController:Cancel(activeLoadingKey) end
 		activeLoadingKey = nil
 		activeMatch = nil
+		deathCameraController:Cancel()
 		return true
 	end
 	if type(snapshot.MatchId) ~= "string" or type(snapshot.Generation) ~= "number" then return false end
@@ -378,8 +400,9 @@ function MatchPreparationController:AdoptMatchSnapshot(snapshot)
 		beginLoading(contextForIdentity(identity), key)
 		local releaseAt = stats.ReleaseAtServerTime
 		if type(releaseAt) ~= "number" or releaseAt <= 0 then releaseAt = snapshot.ReleaseAtServerTime end
-		loadingController:ArmFight(key, releaseAt)
+		if not deathCameraController:IsActive() then loadingController:ArmFight(key, releaseAt) end
 	elseif phase == "Fighting" and snapshot.Phase == "Fighting" then
+		deathCameraController:End(identity)
 		if key and rememberRelease(key) then
 			MatchPreparationController.GameplayReleased:Fire("Match", identity, snapshot)
 		end
@@ -388,6 +411,7 @@ function MatchPreparationController:AdoptMatchSnapshot(snapshot)
 		readinessKeyInFlight = nil
 		if activeLoadingKey then loadingController:Cancel(activeLoadingKey) end
 		activeLoadingKey = nil
+		deathCameraController:Cancel()
 	end
 	return true
 end

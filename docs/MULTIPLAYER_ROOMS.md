@@ -17,6 +17,11 @@ phase update cannot overwrite a readiness failure or waiting-for-round policy.
 
 Only DistrictZero is whitelisted. Training, Deathmatch, Team Deathmatch Extreme, and Elimination are defined by GameModeRegistry. MeleeOnly is the only recognized mutator foundation.
 
+Every room mode declares `ExperienceRewardsEnabled = true`; match snapshots and released match
+characters expose that eligibility. Movement Lab characters always expose it as false. This is the
+server-owned reward-policy boundary; the repository still has no XP balance, award amounts, level
+curve, or persisted XP mutation, so those progression economics remain a separate implementation.
+
 Room creation and match start both require one player in every mode. Competitive winner
 resolution is separate: Deathmatch requires two participants, while team modes require at
 least one Alpha and one Omega player. A solo room therefore remains playable without
@@ -34,6 +39,14 @@ that bounded interval, an active admitted member is selected through the normal 
 leader-migration policy so the room cannot remain leaderless forever.
 
 AFK warning, leader migration, normal kick, and spectator kick occur at 180, 240, 300, and 420 seconds. Server-observed movement supplements rate-limited client activity. Studio kicking is off by default. Empty rooms close.
+
+`BLIKK PUBLIC FFA` is a locked system Deathmatch room entered through Quick Play. It uses one durable
+reserved-server identity, one partition-scoped short-lived bootstrap anchor, and the normal room
+membership and match services. The first player actually admitted to a new runtime becomes Room
+Leader, the match starts automatically, joins in progress are enabled, and post-match return
+automatically starts the next Deathmatch while members remain. If the leader leaves, the existing
+active-player, ping, join-order, and UserId migration policy selects the successor. Player-created
+room configuration cannot modify the system room.
 
 Leaving is server-confirmed. It removes the player from the match and room, clears team state,
 stops replay participation, migrates Room Leader when members remain, and closes the room when the

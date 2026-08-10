@@ -34,6 +34,19 @@ local Config = {
 		CommittedTransportAbortDelaySeconds = 30,
 		RetryCount = 3, RetryBaseDelaySeconds = 1, TeleportRetryCount = 3,
 	},
+	PublicDeathmatch = {
+		SystemKind = "PublicDeathmatch",
+		DisplayName = "BLIKK PUBLIC FFA",
+		MapId = "DistrictZero",
+		ModeId = "Deathmatch",
+		MaximumPlayers = 16,
+		SpectatorSlots = 0,
+		ReservationStoreName = "BLIKK_SystemReservationsV1",
+		ReservationStoreKey = "PUBLIC_FFA_RESERVATION_V1",
+		AnchorMapName = "BLIKK_PublicFFAAnchorsV1",
+		AnchorTtlSeconds = 150,
+		BootstrapWaitSeconds = 6,
+	},
 	StudioDebugEliminationsEnabled = false,
 }
 

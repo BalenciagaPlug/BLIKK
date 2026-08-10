@@ -10,6 +10,10 @@ MemoryStore structures:
 - BLIKK_JoinCodesV1: code lookup, 120-second TTL.
 - BLIKK_RoomJoinNoncesV1: one-use authorization, 120-second TTL. This covers the bounded
   pre-commit plus indeterminate committed-call window; atomic consumption still prevents replay.
+- BLIKK_PublicFFAAnchorsV1: partition-scoped Public FFA bootstrap/ownership lease, 150-second TTL.
+
+`BLIKK_SystemReservationsV1` is the durable DataStore containing only the server-owned Public FFA
+reserved access identity. The access code never enters a client payload.
 
 Room servers heartbeat every 25 seconds; listings older than 60 seconds are ignored. Pages contain 25 entries and results are capped at 100. The server emits `BLIKK_RoomDirectoryV1` invalidation messages, but the current subscriber is intentionally a no-op and MemoryStore polling remains the only functional directory reader. Calls are protected and retry at most three times.
 
@@ -48,6 +52,27 @@ servers reject a stale non-joinable listing, and the destination remains authori
 admission.
 
 Studio uses local-room fallback. MemoryStore and reserved servers require published-client testing.
+
+## Always-available Public FFA
+
+The Multiplayer page exposes `QUICK PLAY // PUBLIC FFA`. In production the first request reads or
+atomically establishes the durable reserved-server identity, acquires the short-lived anchor for its
+`DataModel.MatchmakingType` partition, writes the normal secret/listing records, creates a one-use
+join nonce, and teleports through the existing bounded transport owner. Concurrent boot requests
+converge on the same anchor and reservation. The first player actually admitted to a newly started
+runtime becomes host even if an earlier provisional transport disconnected.
+
+The destination heartbeats its current host, job, listing, and secret. Normal Room Leader migration
+updates that same record. When the last member leaves, the running room and ephemeral directory data
+close, but the durable access identity remains. A later Quick Play use of that access code starts a
+new runtime for the first arriving player; Roblox does not keep an empty server process alive.
+
+Roblox owns physical allocation and latency matchmaking. BLIKK cannot request a region, preserve an
+empty instance in the last host's region, or migrate a running instance between regions. The supported
+behavior is to let the first player who starts the next runtime drive Roblox's allocation, then use
+normal in-server host migration while that runtime remains populated. Studio simulates Quick Play as
+one local auto-starting system room; durable reservation, MemoryStore concurrency, teleport, cross-play
+partitioning, and allocation remain published-client acceptance gates.
 
 Directory create and join responses use an explicit transport discriminator:
 
