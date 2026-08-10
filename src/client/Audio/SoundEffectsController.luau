@@ -209,6 +209,16 @@ function SoundEffectsController:BindGameplay(
 		end
 	end))
 	table.insert(connections, meleePresentationController.SemanticEvent.Event:Connect(function(eventName, _, detail)
+		if eventName == "AltFireAccepted" then
+			slashGeneration += 1
+			local playGeneration = slashGeneration
+			task.delay(MeleePresentationConfig.AltFire.SoundCueSeconds, function()
+				if isDestroyed or playGeneration ~= slashGeneration
+					or meleePresentationController:GetState() ~= "AltFiring" then return end
+				self:Play("KatanaSlash", MeleePresentationConfig.AltFire.SoundPlaybackSpeed)
+			end)
+			return
+		end
 		if eventName ~= "SlashAccepted" then return end
 		slashGeneration += 1
 		local playGeneration = slashGeneration

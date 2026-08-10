@@ -12,10 +12,13 @@ local CharacterDependency = require(Shared.Character.CharacterDependency)
 local MultiplayerConfig = require(Shared.Multiplayer.MultiplayerConfig)
 local CameraObstruction = require(script.Parent.CameraObstruction)
 local CameraSettings = require(script.Parent.CameraSettings)
+local MouseLookInput = require(script.Parent.MouseLookInput)
+local MouseLookMath = require(script.Parent.MouseLookMath)
 
 local GameplayCamera = {}
 
 local CAMERA_READY_ATTRIBUTE = "BLIKK_ClientCameraReady"
+local MOUSE_LOOK_OWNER = "GameplayCamera"
 local player = Players.LocalPlayer
 local isInitialised = false
 local hasWindowFocus = true
@@ -41,7 +44,16 @@ local freeLookPitchRadians = 0
 local freeLookDistanceStuds = CameraConfig.DeveloperFreeLook.FallbackDistanceStuds
 local activeCamera = nil
 local obstructionTargetPoints = {}
+local stableAimOrigin = nil
+local stableAimDirection = nil
+local stableAimCamera = nil
 local updateMouseCapture
+
+local function clearStableAim()
+	stableAimOrigin = nil
+	stableAimDirection = nil
+	stableAimCamera = nil
+end
 
 local function createCrosshairLine(name, size, position)
 	local line = Instance.new("Frame")
@@ -121,6 +133,7 @@ end
 local function cancelFreeLook()
 	if not isFreeLookActive then return end
 	isFreeLookActive = false
+	MouseLookInput:Flush(MOUSE_LOOK_OWNER)
 	updateMouseCapture()
 end
 
@@ -139,6 +152,12 @@ updateMouseCapture = function()
 
 	if UserInputService.MouseBehavior ~= mouseBehavior then
 		UserInputService.MouseBehavior = mouseBehavior
+	end
+
+	if shouldCapture then
+		MouseLookInput:Acquire(MOUSE_LOOK_OWNER)
+	else
+		MouseLookInput:Release(MOUSE_LOOK_OWNER)
 	end
 
 	if crosshairGui then
@@ -164,6 +183,7 @@ local function bindCharacter(newCharacter)
 	characterBindGeneration += 1
 	local bindGeneration = characterBindGeneration
 	characterBindingTarget = newCharacter
+	clearStableAim()
 	if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 	newCharacter:SetAttribute(CAMERA_READY_ATTRIBUTE, nil)
 	cancelFreeLook()
@@ -174,6 +194,7 @@ local function bindCharacter(newCharacter)
 	end
 
 	character, humanoid, rootPart = nil, nil, nil
+	updateMouseCapture()
 	cancelDependencyWatch = CharacterDependency.ObserveHumanoidAndRoot(
 		newCharacter,
 		MultiplayerConfig.CharacterDependencyTimeoutSeconds,
@@ -238,7 +259,36 @@ local function beginFreeLook()
 	freeLookYawRadians = math.atan2(unitOffset.X, unitOffset.Z)
 	freeLookPitchRadians = -math.asin(math.clamp(unitOffset.Y, -1, 1))
 	isFreeLookActive = true
+	MouseLookInput:Flush(MOUSE_LOOK_OWNER)
 	updateMouseCapture()
+end
+
+local function applyMouseLookDelta()
+	local delta = MouseLookInput:Consume(MOUSE_LOOK_OWNER)
+	local sensitivity = CameraSettings:Get("MouseSensitivityDegreesPerPixel")
+	local invertY = CameraSettings:Get("InvertY")
+
+	if isFreeLookActive then
+		freeLookYawRadians, freeLookPitchRadians = MouseLookMath.ApplyDelta(
+			freeLookYawRadians,
+			freeLookPitchRadians,
+			delta,
+			sensitivity,
+			invertY,
+			CameraConfig.DeveloperFreeLook.PitchMinDegrees,
+			CameraConfig.DeveloperFreeLook.PitchMaxDegrees
+		)
+	else
+		yawRadians, pitchRadians = MouseLookMath.ApplyDelta(
+			yawRadians,
+			pitchRadians,
+			delta,
+			sensitivity,
+			invertY,
+			CameraConfig.PitchMinDegrees,
+			CameraConfig.PitchMaxDegrees
+		)
+	end
 end
 
 local function getFreeLookCameraFrame(targetPosition)
@@ -274,11 +324,13 @@ local function updateCamera(deltaTime)
 	if currentCamera ~= activeCamera then
 		CameraObstruction.Reset()
 		cancelFreeLook()
+		clearStableAim()
 		activeCamera = currentCamera
 	end
 
 	currentCamera.CameraType = Enum.CameraType.Scriptable
 	currentCamera.FieldOfView = CameraSettings:Get("FieldOfViewDegrees")
+	applyMouseLookDelta()
 
 	local targetPosition
 	local desiredCameraFrame
@@ -312,6 +364,11 @@ local function updateCamera(deltaTime)
 		currentCamera.CFrame = CFrame.lookAt(resolvedPosition, targetPosition)
 	else
 		currentCamera.CFrame = CFrame.new(resolvedPosition) * desiredCameraFrame.Rotation
+		-- Gameplay aim is owned by the controller's input-integrated yaw/pitch,
+		-- never by rendered character poses or a later presentation camera write.
+		stableAimOrigin = resolvedPosition
+		stableAimDirection = desiredCameraFrame.LookVector.Unit
+		stableAimCamera = currentCamera
 		local forward = getFlatCameraBasis()
 		rootPart.CFrame = CFrame.lookAt(rootPart.Position, rootPart.Position + forward)
 	end
@@ -337,6 +394,7 @@ local function refreshGameplayActive()
 	if not nextGameplayActive then
 		cancelFreeLook()
 		CameraObstruction.Reset()
+		clearStableAim()
 		local currentCamera = Workspace.CurrentCamera
 		if currentCamera then currentCamera.CameraType = Enum.CameraType.Custom end
 	end
@@ -349,9 +407,9 @@ end
 
 function GameplayCamera:GetCrosshairAim(maximumRangeStuds, additionalExclusions)
 	local currentCamera = Workspace.CurrentCamera
-	if not currentCamera then return nil end
-	local viewportSize = currentCamera.ViewportSize
-	local ray = currentCamera:ViewportPointToRay(viewportSize.X * 0.5, viewportSize.Y * 0.5)
+	if not currentCamera or currentCamera ~= stableAimCamera
+		or not stableAimOrigin or not stableAimDirection
+		or not isGameplayActive or isFreeLookActive then return nil end
 	local exclusions = { character }
 	for _, instance in additionalExclusions or {} do table.insert(exclusions, instance) end
 	local params = RaycastParams.new()
@@ -359,11 +417,11 @@ function GameplayCamera:GetCrosshairAim(maximumRangeStuds, additionalExclusions)
 	params.FilterDescendantsInstances = exclusions
 	params.IgnoreWater = true
 	local range = math.max(1, maximumRangeStuds)
-	local result = Workspace:Raycast(ray.Origin, ray.Direction.Unit * range, params)
-	local aimPoint = result and result.Position or ray.Origin + ray.Direction.Unit * range
+	local result = Workspace:Raycast(stableAimOrigin, stableAimDirection * range, params)
+	local aimPoint = result and result.Position or stableAimOrigin + stableAimDirection * range
 	return {
-		Origin = ray.Origin,
-		Direction = ray.Direction.Unit,
+		Origin = stableAimOrigin,
+		Direction = stableAimDirection,
 		AimPoint = aimPoint,
 		MaximumRangeStuds = range,
 	}
@@ -419,11 +477,13 @@ function GameplayCamera:Destroy()
 	if character and character.Parent then character:SetAttribute(CAMERA_READY_ATTRIBUTE, nil) end
 	cancelFreeLook()
 	CameraObstruction.Reset()
+	clearStableAim()
 	RunService:UnbindFromRenderStep("BLIKKGameplayCamera")
 	local currentCamera = Workspace.CurrentCamera
 	if currentCamera then currentCamera.CameraType = Enum.CameraType.Custom end
 	UserInputService.MouseBehavior = Enum.MouseBehavior.Default
 	UserInputService.MouseIconEnabled = true
+	MouseLookInput:Release(MOUSE_LOOK_OWNER)
 	if crosshairGui then crosshairGui.Enabled = false end
 end
 
@@ -433,35 +493,8 @@ function GameplayCamera:Init(inputManager)
 	end
 
 	isInitialised = true
+	MouseLookInput:Init()
 	createCrosshair()
-
-	UserInputService.InputChanged:Connect(function(input)
-		if input.UserInputType ~= Enum.UserInputType.MouseMovement or not shouldCaptureMouse() then
-			return
-		end
-
-		if isFreeLookActive then
-			local sensitivity = math.rad(CameraSettings:Get("MouseSensitivityDegreesPerPixel"))
-			local pitchDirection = if CameraSettings:Get("InvertY") then 1 else -1
-			freeLookYawRadians -= input.Delta.X * sensitivity
-			freeLookPitchRadians += input.Delta.Y * sensitivity * pitchDirection
-			freeLookPitchRadians = math.clamp(
-				freeLookPitchRadians,
-				math.rad(CameraConfig.DeveloperFreeLook.PitchMinDegrees),
-				math.rad(CameraConfig.DeveloperFreeLook.PitchMaxDegrees)
-			)
-		else
-			local sensitivity = math.rad(CameraSettings:Get("MouseSensitivityDegreesPerPixel"))
-			local pitchDirection = if CameraSettings:Get("InvertY") then 1 else -1
-			yawRadians -= input.Delta.X * sensitivity
-			pitchRadians += input.Delta.Y * sensitivity * pitchDirection
-			pitchRadians = math.clamp(
-				pitchRadians,
-				math.rad(CameraConfig.PitchMinDegrees),
-				math.rad(CameraConfig.PitchMaxDegrees)
-			)
-		end
-	end)
 
 	UserInputService.WindowFocusReleased:Connect(function()
 		hasWindowFocus = false
@@ -496,12 +529,16 @@ function GameplayCamera:Init(inputManager)
 		if removingCharacter == character then
 			cancelFreeLook()
 			CameraObstruction.Reset()
+			clearStableAim()
 			character, humanoid, rootPart = nil, nil, nil
+			updateMouseCapture()
 		end
 	end)
 	Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
 		CameraObstruction.Reset()
 		cancelFreeLook()
+		clearStableAim()
+		MouseLookInput:Flush(MOUSE_LOOK_OWNER)
 		activeCamera = Workspace.CurrentCamera
 	end)
 

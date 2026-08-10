@@ -11,7 +11,10 @@ local DistrictZeroSpawnService = require(script.Maps.DistrictZeroSpawnService)
 local ClanService = require(script.Clans.ClanService)
 local MatchService = require(script.Match.MatchService)
 local FirearmService = require(script.Combat.FirearmService)
+local MeleeService = require(script.Combat.MeleeService)
+local TechniqueService = require(script.Combat.TechniqueService)
 local PracticeDummyService = require(script.Combat.PracticeDummyService)
+local RecoveryService = require(script.Recovery.RecoveryService)
 local ReplayService = require(script.Replay.ReplayService)
 local ReportingService = require(script.Reporting.ReportingService)
 local RoomService = require(script.Rooms.RoomService)
@@ -31,7 +34,23 @@ MatchService:Init(
 	CharacterLifecycleService
 )
 PracticeDummyService:Init(RoomService, MatchService)
-FirearmService:Init(RemoteRegistry, MatchService, RoomService, PracticeDummyService)
+TechniqueService:Init(RemoteRegistry)
+FirearmService:Init(
+	RemoteRegistry,
+	MatchService,
+	RoomService,
+	PracticeDummyService,
+	TechniqueService
+)
+MeleeService:Init(
+	RemoteRegistry,
+	MatchService,
+	RoomService,
+	PracticeDummyService,
+	FirearmService,
+	TechniqueService
+)
+RecoveryService:Init(RemoteRegistry, MatchService, RoomService, CharacterLifecycleService)
 RoomService:SetMatchService(MatchService)
 CharacterLifecycleService:SetMovementLabEligibilityCallback(function(player)
 	if RoomService:GetRoom(player) then return false, "PLAYER_IN_ROOM" end
@@ -52,4 +71,5 @@ if not didBuild then
 else
 	DistrictZeroSpawnService:OnMapRebuilt()
 	PracticeDummyService:OnMapRebuilt()
+	RecoveryService:OnMapRebuilt()
 end

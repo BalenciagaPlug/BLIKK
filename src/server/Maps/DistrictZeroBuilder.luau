@@ -150,8 +150,8 @@ local function buildGround(parent)
 	end
 	makePart(ground, "DeepSafetyFoundation", Vector3.new(500, 2, 500), CFrame.new(0, -26, 0), Config.Palette.ConcreteDark, Enum.Material.Concrete)
 	for _, data in {
-		{ "NorthBoundary", Vector3.new(500, 28, 2), Vector3.new(0, 14, -250) }, { "SouthBoundary", Vector3.new(500, 28, 2), Vector3.new(0, 14, 250) },
-		{ "WestBoundary", Vector3.new(2, 28, 500), Vector3.new(-250, 14, 0) }, { "EastBoundary", Vector3.new(2, 28, 500), Vector3.new(250, 14, 0) },
+		{ "NorthBoundary", Vector3.new(500, 96, 2), Vector3.new(0, 48, -250) }, { "SouthBoundary", Vector3.new(500, 96, 2), Vector3.new(0, 48, 250) },
+		{ "WestBoundary", Vector3.new(2, 96, 500), Vector3.new(-250, 48, 0) }, { "EastBoundary", Vector3.new(2, 96, 500), Vector3.new(250, 48, 0) },
 	} do makePart(ground, data[1], data[2], CFrame.new(data[3]), Config.Palette.ConcreteDark, Enum.Material.Brick, { Tags = { "BLIKK_WallSurface" } }) end
 	return ground
 end
@@ -169,27 +169,32 @@ local function buildClockTower(parent)
 	local model = makeContainer("Model", parent, "ClockTower")
 	model:SetAttribute("BLIKK_ZoneName", "CLOCK")
 	local center = definition.Center
-	makePart(model, "CivicBase", Vector3.new(66, 34, 64), CFrame.new(center.X, 17, center.Z), Config.Palette.Stone, Enum.Material.Brick, { Tags = { "BLIKK_WallSurface" } })
-	local clockRoof = makePart(model, "ClockRoomRoof", Vector3.new(68, 1, 66), CFrame.new(center.X, 34.5, center.Z), Config.Palette.Roof, Enum.Material.Concrete, { Tags = { "BLIKK_Ledge" }, Attributes = { BLIKK_RoofHeight = 34 } })
+	makePart(model, "CivicBase", Vector3.new(66, 52, 64), CFrame.new(center.X, 26, center.Z), Config.Palette.Stone, Enum.Material.Brick, { Tags = { "BLIKK_WallSurface" } })
+	local clockRoof = makePart(model, "ClockRoomRoof", Vector3.new(68, 1, 66), CFrame.new(center.X, 52.5, center.Z), Config.Palette.Roof, Enum.Material.Concrete, { Tags = { "BLIKK_Ledge" }, Attributes = { BLIKK_RoofHeight = 52 } })
 	kit:Parapet(model, clockRoof.Position + Vector3.new(0, 0.5, 0), Vector3.new(68, 0, 66), 3.5)
-	makePart(model, "BellTower", Vector3.new(28, 34, 28), CFrame.new(center.X, 51, center.Z), Config.Palette.Stone, Enum.Material.Brick, { Tags = { "BLIKK_WallSurface" } })
-	local bellRoof = makePart(model, "BellTowerRoof", Vector3.new(31, 1, 31), CFrame.new(center.X, 68.5, center.Z), Config.Palette.SteelEdge, Enum.Material.Metal, { Tags = { "BLIKK_Ledge" }, Attributes = { BLIKK_RoofHeight = 68 } })
-	makePart(model, "UpperSpire", Vector3.new(14, 23, 14), CFrame.new(center.X, 80.5, center.Z), Config.Palette.Steel, Enum.Material.Metal, { Tags = { "BLIKK_WallSurface" } })
-	makePart(model, "SpirePlatform", Vector3.new(18, 1, 18), CFrame.new(center.X, 92.5, center.Z), Config.Palette.SteelEdge, Enum.Material.Metal, { Tags = { "BLIKK_Ledge" }, Attributes = { BLIKK_RoofHeight = 92 } })
-	local spire = makePart(model, "ClockSpire", Vector3.new(3, 14, 3), CFrame.new(center.X, 99, center.Z), Config.Palette.Purple, Enum.Material.Neon, { CanCollide = false, CanQuery = false, CastShadow = false })
-	spire:SetAttribute("BLIKK_HighestPointStuds", 106)
+	kit:Windows(model, center, Vector2.new(66, 64), 52)
+	makePart(model, "BellTower", Vector3.new(28, 42, 28), CFrame.new(center.X, 73, center.Z), Config.Palette.Stone, Enum.Material.Brick, { Tags = { "BLIKK_WallSurface" } })
+	local bellRoof = makePart(model, "BellTowerRoof", Vector3.new(31, 1, 31), CFrame.new(center.X, 94.5, center.Z), Config.Palette.SteelEdge, Enum.Material.Metal, { Tags = { "BLIKK_Ledge" }, Attributes = { BLIKK_RoofHeight = 94 } })
+	makePart(model, "UpperSpire", Vector3.new(14, 27, 14), CFrame.new(center.X, 108, center.Z), Config.Palette.Steel, Enum.Material.Metal, { Tags = { "BLIKK_WallSurface" } })
+	makePart(model, "SpirePlatform", Vector3.new(18, 1, 18), CFrame.new(center.X, 122, center.Z), Config.Palette.SteelEdge, Enum.Material.Metal, { Tags = { "BLIKK_Ledge" }, Attributes = { BLIKK_RoofHeight = 122 } })
+	local spire = makePart(model, "ClockSpire", Vector3.new(3, 20, 3), CFrame.new(center.X, 132, center.Z), Config.Palette.Purple, Enum.Material.Neon, { CanCollide = false, CanQuery = false, CastShadow = false })
+	spire:SetAttribute("BLIKK_HighestPointStuds", 142)
 	for _, face in { Vector3.new(0, 0, 1), Vector3.new(0, 0, -1), Vector3.new(1, 0, 0), Vector3.new(-1, 0, 0) } do
 		local size = if face.X == 0 then Vector3.new(10, 10, 0.2) else Vector3.new(0.2, 10, 10)
-		makePart(model, "ClockFace", size, CFrame.new(center + Vector3.new(face.X * 14.1, 56, face.Z * 14.1)), Config.Palette.Text, Enum.Material.SmoothPlastic, { CanCollide = false, CanQuery = false, CastShadow = false })
+		makePart(model, "ClockFace", size, CFrame.new(center + Vector3.new(face.X * 14.1, 74, face.Z * 14.1)), Config.Palette.Text, Enum.Material.SmoothPlastic, { CanCollide = false, CanQuery = false, CastShadow = false })
 	end
 	for _, position in { Vector3.new(-57, 0, -113), Vector3.new(21, 0, -113), Vector3.new(-57, 0, -31), Vector3.new(21, 0, -31) } do
 		makePart(model, "CivicPlanter", Vector3.new(16, 2, 12), CFrame.new(position + Vector3.new(0, 1, 0)), Config.Palette.Stone, Enum.Material.Brick)
 		makePart(model, "PlanterColumn", Vector3.new(2, 9, 2), CFrame.new(position + Vector3.new(0, 6.5, 0)), Config.Palette.BrickDark, Enum.Material.Wood, { CanCollide = false, CanQuery = false, CastShadow = false })
 	end
 	kit:Stairs(model, "ClockApproach", center + Vector3.new(-44, 0, 22), Vector3.new(1, 0, 0), 12, 9, 14)
-	local clockLadder = kit:Ladder(model, center + Vector3.new(14.2, 34, 0), 34, 90)
+	local groundLadder = kit:Ladder(model, center + Vector3.new(33.2, 0, 0), 52, 90)
+	groundLadder:SetAttribute("BLIKK_BeginnerRoofAccess", true)
+	local clockLadder = kit:Ladder(model, center + Vector3.new(14.2, 52, 0), 42, 90)
 	clockLadder:SetAttribute("BLIKK_FutureTechnique", "VERTICAL CHAIN")
-	makeSign(model, "ClockCallout", "CLOCK // DISTRICT ZERO", center + Vector3.new(0, 24, 32.2), 180, 27)
+	local spireLadder = kit:Ladder(model, center + Vector3.new(7.2, 94, 0), 28, 90)
+	spireLadder:SetAttribute("BLIKK_BeginnerRoofAccess", true)
+	makeSign(model, "ClockCallout", "CLOCK // DISTRICT ZERO", center + Vector3.new(0, 42, 32.2), 180, 27)
 	setRoute(clockRoof, "MarketRun")
 	setRoute(bellRoof, "MasterRooftopHighway", "ADVANCED CLOCK ASCENT")
 	return model
@@ -220,12 +225,19 @@ local function buildStandardBuildings(parent)
 			kit:Pipe(model, Vector3.new(definition.Center.X + definition.Size.X * 0.5 + 0.3, definition.RoofHeight * 0.5, definition.Center.Z), definition.RoofHeight, false)
 			local ladder = kit:MovementModule(model, "RoofLadder", Vector3.new(definition.Center.X + definition.Size.X * 0.5 + 0.3, 0, definition.Center.Z - 10), { HeightStuds = definition.RoofHeight, Yaw = 90 })
 			ladder:SetAttribute("BLIKK_FutureTechnique", "VERTICAL CHAIN")
+		else
+			local ladder = kit:MovementModule(model, "RoofLadder", Vector3.new(
+				definition.Center.X + definition.Size.X * 0.5 + 0.3,
+				0,
+				definition.Center.Z - math.min(10, definition.Size.Y * 0.2)
+			), { HeightStuds = definition.RoofHeight, Yaw = 90 })
+			ladder:SetAttribute("BLIKK_BeginnerRoofAccess", true)
 		end
 		if name == "ConstructionSite" then
 			model:SetAttribute("BLIKK_PracticePocket", true)
 			kit:AlleyDetail(model, "ConstructionFence", Vector3.new(definition.Center.X, 0, definition.Center.Z + definition.Size.Y * 0.5 + 4), { Length = definition.Size.X })
 			for offset = -30, 30, 15 do kit:StreetFurniture(model, "PowerPole", Vector3.new(definition.Center.X + offset, 0, definition.Center.Z), { HeightStuds = 18 }) end
-			for offset = -30, 30, 20 do kit:MovementModule(model, "Scaffolding", Vector3.new(definition.Center.X + offset, 0, definition.Center.Z + definition.Size.Y * 0.5 + 3), { HeightStuds = 24 }) end
+			for offset = -30, 30, 20 do kit:MovementModule(model, "Scaffolding", Vector3.new(definition.Center.X + offset, 0, definition.Center.Z + definition.Size.Y * 0.5 + 3), { HeightStuds = definition.RoofHeight - 8 }) end
 		end
 		if name == "GeneratorStation" then
 			kit:RooftopDetail(model, "Generator", Vector3.new(definition.Center.X, definition.RoofHeight + 2, definition.Center.Z))
@@ -233,7 +245,7 @@ local function buildStandardBuildings(parent)
 		end
 		if name == "ParkingGarage" then
 			model:SetAttribute("BLIKK_CombatPocket", true)
-			kit:Stairs(model, "GarageRampStep", Vector3.new(-232, 0, -72), Vector3.new(1, 0, 0), 16, 12, 24)
+			kit:Stairs(model, "GarageRampStep", Vector3.new(-232, 0, -72), Vector3.new(1, 0, 0), 30, 12, definition.RoofHeight)
 		end
 		if name == "Billboard" then kit:Railings(model, Vector3.new(definition.Center.X, definition.RoofHeight, definition.Center.Z + definition.Size.Y * 0.5), definition.Size.X, true) end
 	end
@@ -259,7 +271,13 @@ local function buildCourt(parent)
 	makePart(model, "CentreLine", Vector3.new(0.25, 0.1, 52), CFrame.new(definition.Center.X, y + 0.05, definition.Center.Z), Config.Palette.Text, Enum.Material.SmoothPlastic, { CanCollide = false, CanQuery = false, CastShadow = false })
 	makePart(model, "HalfCourtLine", Vector3.new(62, 0.1, 0.25), CFrame.new(definition.Center.X, y + 0.05, definition.Center.Z), Config.Palette.Text, Enum.Material.SmoothPlastic, { CanCollide = false, CanQuery = false, CastShadow = false })
 	for _, z in { definition.Center.Z - 30, definition.Center.Z + 30 } do kit:Railings(model, Vector3.new(definition.Center.X, definition.RoofHeight + 1, z), 72, true) end
-	kit:Stairs(model, "CourtClimb", Vector3.new(-71, 0, 92), Vector3.new(1, 0, 0), 14, 9, definition.RoofHeight)
+	kit:Stairs(model, "CourtClimb", Vector3.new(-71, 0, 92), Vector3.new(1, 0, 0), math.ceil(definition.RoofHeight / 2), 9, definition.RoofHeight)
+	local ladder = kit:MovementModule(model, "RoofLadder", Vector3.new(
+		definition.Center.X + definition.Size.X * 0.5 + 0.3,
+		0,
+		definition.Center.Z
+	), { HeightStuds = definition.RoofHeight, Yaw = 90 })
+	ladder:SetAttribute("BLIKK_BeginnerRoofAccess", true)
 	setRoute(roof, "CourtClimb")
 	return roof
 end
@@ -332,17 +350,17 @@ local function buildRoofConnections(parent, roofs, courtRoof)
 		if size.X > size.Z then kit:Railings(model, center + Vector3.new(0, 0, size.Z * 0.5), size.X, true) else kit:Railings(model, center + Vector3.new(size.X * 0.5, 0, 0), size.Z, false) end
 		return platform
 	end
-	catwalk("AptABridge", Vector3.new(20, 40.5, -190), Vector3.new(72, 1, 7), "ApartmentChain")
-	local generatorLedge = catwalk("GeneratorGapLedge", Vector3.new(160, 35, -86), Vector3.new(10, 1, 7), "GeneratorLoop", "SLASH JUMP GAP")
-	local billboardLedge = catwalk("BillboardGapLedge", Vector3.new(176.5, 35, -86), Vector3.new(12, 1, 7), "GeneratorLoop", "SLASH JUMP GAP")
+	catwalk("AptABridge", Vector3.new(20, 58.5, -190), Vector3.new(72, 1, 7), "ApartmentChain")
+	local generatorLedge = catwalk("GeneratorGapLedge", Vector3.new(160, 53, -86), Vector3.new(10, 1, 7), "GeneratorLoop", "SLASH JUMP GAP")
+	local billboardLedge = catwalk("BillboardGapLedge", Vector3.new(176.5, 53, -86), Vector3.new(12, 1, 7), "GeneratorLoop", "SLASH JUMP GAP")
 	generatorLedge:SetAttribute("BLIKK_RoofGapStuds", 11)
 	billboardLedge:SetAttribute("BLIKK_RoofGapStuds", 11)
-	catwalk("MarketGarageLink", Vector3.new(-127, 34.5, -58), Vector3.new(11, 1, 55), "MarketRun")
-	catwalk("CourtApartmentDLink", Vector3.new(53, 30.5, 102), Vector3.new(20, 1, 7), "CourtClimb")
-	catwalk("SouthHighwayWest", Vector3.new(-106, 33, 166), Vector3.new(12, 1, 48), "MasterRooftopHighway")
-	catwalk("SouthHighwayEast", Vector3.new(74, 25, 172), Vector3.new(12, 1, 35), "MasterRooftopHighway")
-	catwalk("NorthHighwayWest", Vector3.new(-124, 38, -226), Vector3.new(14, 1, 48), "MasterRooftopHighway")
-	catwalk("NorthHighwayEast", Vector3.new(166, 34, -226), Vector3.new(42, 1, 8), "MasterRooftopHighway")
+	catwalk("MarketGarageLink", Vector3.new(-127, 52.5, -58), Vector3.new(11, 1, 55), "MarketRun")
+	catwalk("CourtApartmentDLink", Vector3.new(53, 48.5, 102), Vector3.new(20, 1, 7), "CourtClimb")
+	catwalk("SouthHighwayWest", Vector3.new(-106, 51, 166), Vector3.new(12, 1, 48), "MasterRooftopHighway")
+	catwalk("SouthHighwayEast", Vector3.new(74, 43, 172), Vector3.new(12, 1, 35), "MasterRooftopHighway")
+	catwalk("NorthHighwayWest", Vector3.new(-124, 56, -226), Vector3.new(14, 1, 48), "MasterRooftopHighway")
+	catwalk("NorthHighwayEast", Vector3.new(166, 52, -226), Vector3.new(42, 1, 8), "MasterRooftopHighway")
 	for name, roof in roofs do roof:SetAttribute("BLIKK_RecoveryDrop", name ~= "Billboard") end
 	courtRoof:SetAttribute("BLIKK_CombatPocket", true)
 	return model

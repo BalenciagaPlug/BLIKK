@@ -7,8 +7,10 @@ local StarterLoadout = {
 		Primary2 = "TrainingShotgun",
 	},
 	Equipment = {
-		Equipment1 = "",
-		Equipment2 = "",
+		Equipment1 = "VitalPatch",
+		Equipment2 = "AegisPatch",
+		Equipment3 = "VitalAmp",
+		Equipment4 = "AegisAmp",
 	},
 	Armour = {
 		Head = "",

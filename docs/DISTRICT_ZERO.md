@@ -6,7 +6,7 @@ District Zero is built from the approved DZ-001 construction, DZ-002 movement, a
 
 ## Scale
 
-The playable footprint is 500 by 500 studs on a 25-by-25 grid with 20-stud units. Ground level is 0 studs, the canal reaches -24 studs, the station service level reaches -12 studs, and the Clock Tower spire reaches 106 studs. Standard roof heights range from 24 to 50 studs, with Clock Tower play surfaces at 34, 68, and 92 studs.
+The playable footprint is 500 by 500 studs on a 25-by-25 grid with 20-stud units. Ground level is 0 studs, the canal reaches -24 studs, the station service level reaches -12 studs, and the Clock Tower spire reaches 142 studs. Standard occupied-building roof heights range from 34 to 68 studs, with Clock Tower play surfaces at 52, 94, and 122 studs. The vertical-combat pass adds 18 studs to every standard building while preserving each footprint and route relationship; the landmark receives a larger tiered extension so it remains the district's navigation anchor.
 
 Street widths follow Movement Standards V1: 40–48 studs for main streets, 32–38 for standard streets, 26–30 for minor streets, 20–24 for service roads, 12–18 for alleys, and 9–11 for opposing-wall channels. Roof gaps range from 5-stud easy jumps through 18.125-stud ground-dash equivalents and 21-stud advanced gaps; 22–28-stud gaps remain future routes.
 
@@ -34,6 +34,23 @@ This pass is deliberately incomplete. Building masses, roads, canal walls, the C
 - Alley Connectors use real 12–18-stud passages, including 9–11-stud future Butterfly channels.
 
 Route metadata marks difficulty, future-only techniques, recovery drops, combat pockets, roof height, and movement surfaces without placing public arrows or training platforms.
+
+Every generated `RoofLadder` contains an invisible, collidable `TrussPart` climb volume aligned to
+its visible rails and rungs. Roblox's default Humanoid climbing state owns ascent and animation; the
+volume is explicitly excluded from BLIKK wall-tech sensing. Every standard roof, the Court, and all
+three Clock Tower play surfaces now have a ground or tier-to-tier ladder route. Their rails, rungs,
+and climb volumes derive from the new roof heights. Procedural facade windows continue their 11-stud
+vertical cadence through the added floors. These beginner routes do not change dash, wall-run,
+wall-jump, or K-style timing.
+
+## Recovery control points
+
+District Zero authors four server-owned recovery cores. Market and Generator provide `+100 HP`;
+Station and the Parking Garage roof provide `+100 AP`. Collection clamps to the fighter maximum,
+does not despawn a core when the corresponding resource is already full, and starts a 45-second
+respawn only after a successful recovery. Health and armour use distinct BLIKK colours, glyphs,
+labels, light, and particles. The collector receives a brief screen confirmation while the server
+replicates a short character highlight and particle burst to nearby observers.
 
 ## Safe Spawning
 

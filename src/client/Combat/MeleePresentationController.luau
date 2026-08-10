@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 local PoseCoordinator = require(script.Parent.Parent.Character.PoseCoordinator)
@@ -9,6 +10,9 @@ assert(Shared, "Shared must be acquired by the client composition root before me
 local CharacterDependency = require(Shared.Character.CharacterDependency)
 local GroundSlashAnimationConfig = require(Shared.Combat.GroundSlashAnimationConfig)
 local Config = require(Shared.Combat.MeleePresentationConfig)
+local MeleeCombatConfig = require(Shared.Combat.MeleeCombatConfig)
+local MeleePoseSampler = require(Shared.Combat.MeleePoseSampler)
+local SlashPoseSampler = require(Shared.Combat.SlashPoseSampler)
 local TrainingKatanaPresentation = require(Shared.Combat.TrainingKatanaPresentation)
 local MultiplayerConfig = require(Shared.Multiplayer.MultiplayerConfig)
 
@@ -16,6 +20,37 @@ local Controller = {}
 Controller.StateChanged = Instance.new("BindableEvent")
 Controller.TechniqueHook = Instance.new("BindableEvent")
 Controller.SemanticEvent = Instance.new("BindableEvent")
+Controller.ButterflyAccepted = Instance.new("BindableEvent")
+
+local WEAPON_ARM_POSE_OPTIONS = {
+	SuppressAnimator = {
+		RightShoulder = true,
+		LeftShoulder = true,
+		RightElbow = true,
+		LeftElbow = true,
+		RightWrist = true,
+		LeftWrist = true,
+	},
+	-- The approved ready pose was authored relative to a neutral Animator frame.
+	-- Freeze that reference so locomotion cannot swing the weapon arm, without
+	-- reinterpreting the hard-locked pose numbers as a new absolute silhouette.
+	StableReference = {
+		RightShoulder = true,
+		LeftShoulder = true,
+		RightElbow = true,
+		LeftElbow = true,
+		RightWrist = true,
+		LeftWrist = true,
+	},
+	PriorityOverrides = {
+		RightShoulder = Config.Pose.WeaponArmPriority,
+		LeftShoulder = Config.Pose.WeaponArmPriority,
+		RightElbow = Config.Pose.WeaponArmPriority,
+		LeftElbow = Config.Pose.WeaponArmPriority,
+		RightWrist = Config.Pose.WeaponArmPriority,
+		LeftWrist = Config.Pose.WeaponArmPriority,
+	},
+}
 
 local CHARACTER_PART_WAIT_SECONDS = 3
 
@@ -53,6 +88,12 @@ local playHook
 local playAuthoredHook
 local slashVariant = 1
 local lastSlashAcceptedAt = -math.huge
+local nextSlashAcceptedAt = -math.huge
+local slashSequence = 0
+local blockSequence = 0
+local altSequence = 0
+local meleeIntent
+local guardConfirmed = false
 local visualState = "Holstered"
 local renderStepBound = false
 local isDestroyed = false
@@ -127,6 +168,7 @@ local function attachWeaponTo(model, targetCharacter, targetHumanoid, existingGr
 	nextGrip.Part0 = bodyPart
 	nextGrip.C0 = attachment.Offset
 	nextGrip.C1 = attachment.GripPivot
+	nextGrip.Transform = CFrame.identity
 	return true, nextGrip
 end
 
@@ -290,6 +332,7 @@ playHook = function(nextState, previousState)
 	local hookByState = {
 		Equipping = "KatanaEquip", Unequipping = "KatanaUnequip", MeleeIdle = if isAirborne() then "KatanaAirIdle" else "KatanaIdle",
 		Slashing = if isAirborne() then "KatanaAirSlash" else "KatanaSlash1",
+		AltFiring = "KatanaAltLaunch",
 		Blocking = if isAirborne() then "KatanaAirBlock" else "KatanaBlockEnter",
 	}
 	local hook = hookByState[nextState]
@@ -329,20 +372,32 @@ local function updateWeaponQuality()
 end
 
 local function interrupt(nextState)
+	local cancelledSlashSequence = if state == "Slashing" then slashSequence else nil
+	local releasedBlockSequence = if state == "Blocking" then blockSequence else nil
 	generation += 1
+	guardConfirmed = false
 	blockHeld = false
 	table.clear(heldBlockActions)
 	bufferedBlockAt = nil
 	updateTrail(false)
+	SlashPoseSampler.ResetWeaponArc(gripJoint)
 	stopAuthoredTrack(GroundSlashAnimationConfig.CancelFadeOutSeconds)
 	resetPose()
 	setState(nextState or "Interrupted")
+	if cancelledSlashSequence and meleeIntent then
+		meleeIntent:FireServer({ Operation = "CancelSlash", Sequence = cancelledSlashSequence })
+	end
+	if releasedBlockSequence and meleeIntent then
+		meleeIntent:FireServer({ Operation = "BlockEnd", Sequence = releasedBlockSequence })
+	end
 end
 
 local function enterBlock(cancelledSlash)
+	local airborneCancel = cancelledSlash and isAirborne()
 	bufferedBlockAt = nil
 	updateTrail(false)
 	setState("Blocking")
+	guardConfirmed = false
 	setVisualState(if cancelledSlash
 		then (if isAirborne() then "AirSlashToBlockCancel" else "SlashToBlockCancel")
 		else "BlockEnter")
@@ -351,9 +406,21 @@ local function enterBlock(cancelledSlash)
 		Controller.TechniqueHook:Fire(if cancelledSlash then "AirSlashCancelledToBlock" else "AirBlockAccepted", os.clock())
 	end
 	if cancelledSlash then Controller.TechniqueHook:Fire("SlashCancelledToBlock", os.clock(), isAirborne()) end
+	if airborneCancel then
+		nextSlashAcceptedAt = os.clock() + Config.Slash.RepeatedSequenceLockoutSeconds
+	end
+	blockSequence += 1
+	meleeIntent:FireServer({
+		Operation = "BlockBegin",
+		Sequence = blockSequence,
+		CancelledSlashSequence = if cancelledSlash then slashSequence else nil,
+	})
 	if cancelledSlash then diagnose("SlashCancelledToBlock") end
 	local blockGeneration = generation
-	task.delay(Config.Slash.PostCancelBlockEnterBlendSeconds, function()
+	local enterDelaySeconds = if cancelledSlash
+		then Config.Slash.PostCancelBlockEnterBlendSeconds
+		else Config.Block.EnterPresentationSeconds
+	task.delay(enterDelaySeconds, function()
 		if generation == blockGeneration and state == "Blocking" then
 			setVisualState("BlockHold")
 			playAuthoredHook(if isAirborne() then "KatanaAirBlock" else "KatanaBlockHold", true, Enum.AnimationPriority.Action)
@@ -361,9 +428,28 @@ local function enterBlock(cancelledSlash)
 	end)
 end
 
+local function exitBlock(sendIntent)
+	if state ~= "Blocking" then return end
+	guardConfirmed = false
+	if sendIntent and meleeIntent then
+		meleeIntent:FireServer({ Operation = "BlockEnd", Sequence = blockSequence })
+	end
+	setState("MeleeIdle")
+	setVisualState("BlockExit")
+	local releasedAt = stateStarted
+	playAuthoredHook("KatanaBlockExit", false, Enum.AnimationPriority.Action)
+	task.delay(Config.Block.ExitPresentationSeconds, function()
+		if state == "MeleeIdle" and stateStarted == releasedAt then
+			setVisualState(if isAirborne() then "AirIdle" else "GroundIdle")
+			playHook("MeleeIdle")
+		end
+	end)
+end
+
 local function acceptSlash()
-	if not isMeleeActive() or state == "Slashing" or state == "Equipping" or state == "Unequipping" then return end
+	if not isMeleeActive() or state ~= "MeleeIdle" then return end
 	local acceptedAt = os.clock()
+	if acceptedAt < nextSlashAcceptedAt then return end
 	if acceptedAt - lastSlashAcceptedAt > Config.Slash.SequenceResetSeconds then slashVariant = 1 else slashVariant = 3 - slashVariant end
 	lastSlashAcceptedAt = acceptedAt
 	bufferedBlockAt = nil
@@ -374,14 +460,44 @@ local function acceptSlash()
 		elseif isAirborne() then "AirSlash"
 		else "GroundSlash" .. tostring(slashVariant))
 	Controller.SemanticEvent:Fire("SlashAccepted", acceptedAt, { Airborne = isAirborne(), Variant = slashVariant })
+	slashSequence += 1
+	local currentCamera = Workspace.CurrentCamera
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local aimDirection = Vector3.new(0, 0, -1)
+	local aimOrigin = if root and root:IsA("BasePart") then root.Position else Vector3.zero
+	if currentCamera then
+		aimDirection = currentCamera.CFrame.LookVector
+		aimOrigin = currentCamera.CFrame.Position
+	elseif root and root:IsA("BasePart") then
+		aimDirection = root.CFrame.LookVector
+	end
+	meleeIntent:FireServer({
+		Operation = "Slash",
+		Sequence = slashSequence,
+		Variant = slashVariant,
+		AimOrigin = aimOrigin,
+		AimDirection = aimDirection,
+	})
 	movementEngine:ConfirmSlashAccepted(acceptedAt)
 	Controller.TechniqueHook:Fire("SlashAccepted", acceptedAt, isAirborne())
 	if isAirborne() then Controller.TechniqueHook:Fire("AirSlashAccepted", acceptedAt) end
 	diagnose("SlashAccepted")
 end
 
+local function acceptAltFire()
+	if not isMeleeActive() or isAirborne() or state ~= "MeleeIdle" then return end
+	altSequence += 1
+	bufferedBlockAt = nil
+	updateTrail(false)
+	setState("AltFiring")
+	setVisualState("GroundAltLaunch")
+	Controller.SemanticEvent:Fire("AltFireAccepted", os.clock(), { Airborne = false })
+	meleeIntent:FireServer({ Operation = "AltFire", Sequence = altSequence })
+	diagnose("AltFireAccepted")
+end
+
 local function beginBlock(action)
-	if not isMeleeActive() then return end
+	if not isMeleeActive() or (state ~= "MeleeIdle" and state ~= "Slashing") then return end
 	heldBlockActions[action] = true
 	blockHeld = true
 	if state ~= "Slashing" then enterBlock(false); return end
@@ -418,23 +534,27 @@ local function poseForState(now)
 			if blockHeld and bufferedBlockAt then enterBlock(false) else setState("MeleeIdle"); setVisualState(if airborne then "AirIdle" else "GroundIdle") end
 		end
 	end
+	if state == "Blocking" and now - stateStarted >= Config.Block.MaximumDurationSeconds then
+		blockHeld = false
+		table.clear(heldBlockActions)
+		bufferedBlockAt = nil
+		exitBlock(true)
+	end
+	if state == "AltFiring" and now - stateStarted >= Config.AltFire.TotalDurationSeconds then
+		setState("MeleeIdle")
+		setVisualState(if airborne then "AirIdle" else "GroundIdle")
+	end
 	if state == "Slashing" and authoredGroundSlashActive then return nil end
 	if state == "Holstered" or state == "Interrupted" or state == "Equipping" or state == "Unequipping" then return nil end
-	if dashActive and not airborne and state ~= "Slashing" and state ~= "Blocking" then return nil end
+	if dashActive and not airborne and state ~= "Slashing" and state ~= "Blocking"
+		and state ~= "AltFiring" then return nil end
 	local poses = {}
 	if state == "Slashing" then
-		local elapsed = now - stateStarted
-		local activeStart = Config.Slash.AnticipationSeconds
-		local swingAlpha = math.clamp((elapsed - activeStart) / Config.Slash.ActiveSeconds, 0, 1)
-		poses.Root = CFrame.Angles(0, math.rad(-20 + 58 * swingAlpha), math.rad(-5))
-		poses.Waist = CFrame.Angles(math.rad(-5), math.rad(28 - 70 * swingAlpha), math.rad(8))
-		poses.RightShoulder = CFrame.Angles(math.rad(-72 + 45 * swingAlpha), math.rad(-18), math.rad(48 - 90 * swingAlpha))
-		poses.LeftShoulder = CFrame.Angles(math.rad(-42), math.rad(10), math.rad(-30 + 35 * swingAlpha))
+		poses = SlashPoseSampler.Sample(slashVariant, now - stateStarted)
 	elseif state == "Blocking" then
-		poses.Waist = CFrame.Angles(math.rad(-4), math.rad(-12), math.rad(3))
-		poses.RightShoulder = CFrame.Angles(math.rad(-78), math.rad(-20), math.rad(62))
-		poses.LeftShoulder = CFrame.Angles(math.rad(-58), math.rad(15), math.rad(-38))
-		poses.RightElbow = CFrame.Angles(math.rad(-35), 0, 0)
+		poses = MeleePoseSampler.SampleBlock(now - stateStarted)
+	elseif state == "AltFiring" then
+		poses = MeleePoseSampler.SampleAltFire(now - stateStarted)
 	else
 		for alias, degrees in Config.Pose.EquippedIdle do
 			if wallPresentationActive
@@ -450,7 +570,7 @@ local function poseForState(now)
 			poses[alias] = CFrame.Angles(math.rad(degrees.X), math.rad(degrees.Y), math.rad(degrees.Z))
 		end
 	end
-	if airborne and not dashActive and not wallPresentationActive then
+	if airborne and state == "MeleeIdle" and not dashActive and not wallPresentationActive then
 		poses.Root = poses.Root or CFrame.Angles(math.rad(Config.Pose.AirReadyTorsoDegrees), 0, 0)
 		poses.LeftHip = CFrame.Angles(math.rad(Config.Pose.AirReadyHipDegrees), 0, math.rad(-5))
 		poses.RightHip = CFrame.Angles(math.rad(-Config.Pose.AirReadyHipDegrees * 0.65), 0, math.rad(5))
@@ -459,21 +579,62 @@ local function poseForState(now)
 end
 
 local function applyPose(deltaTime)
-	if not character or not humanoid or humanoid.Health <= 0 then resetPose(); return end
+	if not character or not humanoid or humanoid.Health <= 0 then
+		SlashPoseSampler.ResetWeaponArc(gripJoint)
+		resetPose()
+		return
+	end
 	local now = os.clock()
 	local poses = poseForState(now)
+	local root = character:FindFirstChild("HumanoidRootPart")
+	local blockEnterSeconds = if visualState == "AirSlashToBlockCancel"
+		or visualState == "SlashToBlockCancel"
+		then Config.Slash.PostCancelBlockEnterBlendSeconds
+		else Config.Block.EnterPresentationSeconds
+	if state == "Slashing" then
+		SlashPoseSampler.ApplyWeaponArc(gripJoint, root, slashVariant, now - stateStarted)
+	elseif state == "Blocking" then
+		local weaponPose = Config.Pose.ProceduralBlockWeapon
+		local blockWeaponBlend = math.clamp(
+			(now - stateStarted) / math.max(blockEnterSeconds, 0.001),
+			0,
+			1
+		)
+		SlashPoseSampler.ApplyWeaponDirection(
+			gripJoint,
+			root,
+			weaponPose.Direction,
+			weaponPose.EdgeRollDegrees,
+			blockWeaponBlend
+		)
+	else
+		SlashPoseSampler.ResetWeaponArc(gripJoint)
+	end
 	if not poses then resetPose(); return end
-	local blockBlend = if state == "Blocking" then math.clamp((now - stateStarted) / Config.Slash.PostCancelBlockEnterBlendSeconds, 0, 1) else 1
+	local blockBlend = if state == "Blocking"
+		then math.clamp((now - stateStarted) / blockEnterSeconds, 0, 1)
+		else 1
 	local idleBlendSpeed = if isAirborne()
 		then Config.Pose.AirborneBlendSpeed
 		else Config.Pose.IdleBlendSpeed
 	local idleBlend = 1 - math.exp(-idleBlendSpeed * deltaTime)
 	local blend = if state == "MeleeIdle" then idleBlend else blockBlend
-	PoseCoordinator:Submit("Melee", if state == "Slashing" or state == "Blocking" then 40 else 20, poses, blend)
+	PoseCoordinator:Submit(
+		"Melee",
+		if state == "Slashing" or state == "Blocking" or state == "AltFiring" then 40 else 20,
+		poses,
+		blend,
+		WEAPON_ARM_POSE_OPTIONS
+	)
 end
 
 local function bindCharacter(nextCharacter)
 	characterGeneration += 1
+	nextSlashAcceptedAt = -math.huge
+	slashSequence = 0
+	blockSequence = 0
+	altSequence = 0
+	guardConfirmed = false
 	table.clear(warnedGroundSlashAnimationIds)
 	local bindCharacterGeneration = characterGeneration
 	pendingCharacter = nextCharacter
@@ -512,6 +673,17 @@ local function bindCharacter(nextCharacter)
 			setState(if isMeleeActive() then "MeleeIdle" else "Holstered")
 			setVisualState(if isMeleeActive() then "GroundIdle" else "Holstered")
 			character:SetAttribute("BLIKK_ClientMeleeReady", true)
+			table.insert(connections, character:GetAttributeChangedSignal(
+				MeleeCombatConfig.Guard.AttributeName
+			):Connect(function()
+				if guardConfirmed and state == "Blocking"
+					and character:GetAttribute(MeleeCombatConfig.Guard.AttributeName) ~= true then
+					blockHeld = false
+					table.clear(heldBlockActions)
+					bufferedBlockAt = nil
+					exitBlock(false)
+				end
+			end))
 			table.insert(connections, humanoid.Died:Connect(function()
 				if bindCharacterGeneration == characterGeneration then
 					interrupt("Interrupted")
@@ -522,7 +694,8 @@ local function bindCharacter(nextCharacter)
 				if bindCharacterGeneration ~= characterGeneration or character ~= nextCharacter then return end
 				if nextHumanoidState == Enum.HumanoidStateType.Landed
 					or nextHumanoidState == Enum.HumanoidStateType.Running then
-					if isMeleeActive() and state ~= "Slashing" and state ~= "Blocking" then
+					if isMeleeActive() and state ~= "Slashing" and state ~= "Blocking"
+						and state ~= "AltFiring" then
 						setState("MeleeIdle")
 					end
 				end
@@ -550,26 +723,63 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 	if isInitialised or isDestroyed then return end
 	isInitialised = true
 	inputManager, fighterController, movementEngine = inputManagerValue, fighterControllerValue, movementEngineValue
+	local remotes = ReplicatedStorage:WaitForChild("BLIKKRemotes", MultiplayerConfig.RemoteLookupTimeoutSeconds)
+	meleeIntent = remotes and remotes:WaitForChild("MeleeIntent", MultiplayerConfig.RemoteLookupTimeoutSeconds)
+	if not meleeIntent then error("[BLIKK MELEE] MeleeIntent unavailable", 0) end
+	local meleeResult = remotes:WaitForChild("MeleeResult", MultiplayerConfig.RemoteLookupTimeoutSeconds)
+	if not meleeResult then error("[BLIKK MELEE] MeleeResult unavailable", 0) end
+	ownLifetimeConnection(meleeResult.OnClientEvent:Connect(function(payload)
+		if type(payload) ~= "table"
+			or payload.SpawnGeneration ~= player:GetAttribute("BLIKK_SpawnGeneration") then return end
+		if payload.Operation == "GuardRejected" and payload.Accepted == false
+			and payload.Sequence == blockSequence and state == "Blocking" then
+			blockHeld = false
+			table.clear(heldBlockActions)
+			bufferedBlockAt = nil
+			exitBlock(false)
+			return
+		end
+		if payload.Operation == "AltFireRejected" and payload.Accepted == false
+			and payload.Sequence == altSequence and state == "AltFiring" then
+			setState("MeleeIdle")
+			setVisualState(if isAirborne() then "AirIdle" else "GroundIdle")
+			return
+		end
+		if payload.Accepted ~= true or payload.Operation ~= "GuardAccepted"
+			or payload.Sequence ~= blockSequence or state ~= "Blocking" then return end
+		guardConfirmed = true
+		if payload.ButterflyAccepted == true and type(payload.CancelDeltaSeconds) == "number" then
+			local acceptedAt = os.clock()
+			Controller.ButterflyAccepted:Fire(
+				payload.Sequence,
+				payload.CancelDeltaSeconds,
+				acceptedAt,
+				payload.TechniqueName,
+				payload.ChainCount,
+				payload.MovingVariant
+			)
+			Controller.TechniqueHook:Fire(
+				"ButterflyAccepted",
+				acceptedAt,
+				payload.CancelDeltaSeconds
+			)
+		end
+	end))
 	ownLifetimeConnection(inputManager.ActionBegan.Event:Connect(function(action)
-		if isMeleeActive() and (action == "Primary" or action == "Slash") then acceptSlash()
-		elseif isMeleeActive() and (action == "Secondary" or action == "Block") then beginBlock(action) end
+		local recoveryEquipped = character
+			and character:GetAttribute("BLIKK_ActiveRecoveryItem") ~= ""
+			and character:GetAttribute("BLIKK_ActiveRecoveryItem") ~= nil
+		if not recoveryEquipped and isMeleeActive() and (action == "Primary" or action == "Slash") then acceptSlash()
+		elseif not recoveryEquipped and isMeleeActive() and action == "Secondary" then acceptAltFire()
+		elseif not recoveryEquipped and isMeleeActive() and action == "Block" then beginBlock(action) end
 	end))
 	ownLifetimeConnection(inputManager.ActionEnded.Event:Connect(function(action)
-		if action == "Secondary" or action == "Block" then
+		if action == "Block" then
 			heldBlockActions[action] = nil
 			blockHeld = next(heldBlockActions) ~= nil
 			bufferedBlockAt = nil
 			if state == "Blocking" and not blockHeld then
-				setState("MeleeIdle")
-				setVisualState("BlockExit")
-				local releasedAt = stateStarted
-				playAuthoredHook("KatanaBlockExit", false, Enum.AnimationPriority.Action)
-				task.delay(Config.Block.ExitPresentationSeconds, function()
-					if state == "MeleeIdle" and stateStarted == releasedAt then
-						setVisualState(if isAirborne() then "AirIdle" else "GroundIdle")
-						playHook("MeleeIdle")
-					end
-				end)
+				exitBlock(true)
 			end
 		end
 	end))
@@ -597,15 +807,19 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 			end
 		end
 	end))
-	ownLifetimeConnection(movementEngine.DashStarted.Event:Connect(function()
+	ownLifetimeConnection(movementEngine.DashStarted.Event:Connect(function(_, _, _, kind)
+		if kind ~= "Dash" then return end
 		dashActive = true
 		stopAuthoredTrack(GroundSlashAnimationConfig.CancelFadeOutSeconds)
 		resetPose()
 	end))
-	ownLifetimeConnection(movementEngine.DashEnded.Event:Connect(function() dashActive = false end))
+	ownLifetimeConnection(movementEngine.DashEnded.Event:Connect(function(_, _, _, kind)
+		if kind == "Dash" then dashActive = false end
+	end))
 	ownLifetimeConnection(wallInteractionController.StateChanged.Event:Connect(function(nextState)
 		wallPresentationActive = nextState == "VerticalWallRun"
 			or nextState == "HorizontalWallRun"
+			or nextState == "WallPost"
 			or nextState == "WallJumpRecovery"
 		if wallPresentationActive then
 			stopAuthoredTrack(GroundSlashAnimationConfig.CancelFadeOutSeconds)
@@ -658,6 +872,7 @@ function Controller:Destroy()
 	Controller.StateChanged:Destroy()
 	Controller.TechniqueHook:Destroy()
 	Controller.SemanticEvent:Destroy()
+	Controller.ButterflyAccepted:Destroy()
 end
 
 ownLifetimeConnection(script.Destroying:Connect(function()

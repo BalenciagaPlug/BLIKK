@@ -25,19 +25,19 @@ Timing is expressed in seconds. Input, buffer, cancel, cooldown, and recovery wi
 
 ## 5. Movement State Model
 
-The client movement owner models `Grounded`, `JumpRising`, `AirborneFree`, ground/air/return dash, `WallApproach`, vertical and horizontal wall runs, `WallJumpRecovery`, `WallCancelFreedom`, and same-wall rejection. Dash phases remain Entry, Travel, and Exit. `MovementEngine` is the sole client gameplay writer of root velocity during dash and wall movement; sensing and presentation only report or observe state. Death, respawn, menu entry, settings, and character replacement cancel stale state.
+The client movement owner models `Grounded`, `JumpRising`, `AirborneFree`, ground/air/return dash, ranged tumble, `WallApproach`, vertical and horizontal wall runs, `WallPost`, `WallJumpRecovery`, `WallCancelFreedom`, and same-wall rejection. Mobility phases remain Entry, Travel, and Exit. `MovementEngine` is the sole client gameplay writer of root velocity during dash, tumble, and wall movement; sensing and presentation only report or observe state. Death, respawn, menu entry, settings, and character replacement cancel stale state.
 
 ## 6. Dash Specification
 
 Directional double taps activate a camera-relative dash. Direction is captured on the accepted second tap and cannot bend during travel. Ground and air dashes have separate distance and cooldown values. One air dash is currently available before landing. Vertical momentum is preserved at activation.
 
-Current provisional values are 18.125 studs ground distance, 16.25 studs air distance, a 0.25-second double-tap window, 0.24-second ground cooldown, and 0.30-second air cooldown. Entry, travel, and exit remain 0.035, 0.115, and 0.085 seconds. These are playtest values, not permanent balance.
+Current provisional values are 18.125 studs ground distance, 16.25 studs air distance, a 0.25-second double-tap window, 0.32-second ground cooldown, and 0.34-second air cooldown. Entry, travel, and exit are 0.040, 0.125, and 0.085 seconds. Each accepted dash consumes one complete two-press pair; a 0.090-second single-capacity follow-up buffer preserves a deliberate pair entered near recovery without synthesizing input. Phase interpolation uses smooth-step easing while its area preserves the configured travel distance. These are playtest values, not permanent balance.
 
 The intended result is immediate, explosive, addictive, repeatable, readable, and suitable for future K-style chaining. Animation, effects, and audio remain independent from dash validity. Dash does not modify the configured camera FOV.
 
 ## 7. Jump and Air Control
 
-Humanoid jump supplies vertical movement with the configured 7.2-stud `JumpHeight`, a 0.12-second landing buffer, and 0.08-second grounded grace. Airborne jump presses do not create an open-air double jump; they may instead be consumed by an eligible wall action. Dash preserves live vertical momentum while airborne. Landing resets the normal air-dash allowance and all wall-return eligibility.
+Ground movement uses an 18-stud/second forward speed, 16-stud strafe speed, and 13-stud backward speed. Humanoid jump supplies vertical movement with the configured 7.5-stud `JumpHeight`, a 0.18-second landing buffer, and 0.10-second grounded grace. Airborne jump presses do not create an open-air double jump; they may instead be consumed by an eligible wall action. Dash and tumble preserve live vertical momentum while airborne. Landing resets the normal air-mobility allowance and all wall-return eligibility.
 
 ## 8. Camera Relationship
 
@@ -47,15 +47,33 @@ The crosshair remains mathematically centred. Locomotion and dash use the flat c
 
 Movement presentation may provide authored animation hooks, procedural fallbacks, directional poses, VFX, camera feedback, and audio. Gameplay never waits for assets. Do not fabricate asset IDs or use copyrighted assets. Presentation must clean up on cancellation, death, respawn, and replacement, and must scale through effects quality and Reduced Effects.
 
+The procedural dash silhouette is phase-driven rather than a fixed lean. Shoulder intent appears
+before delayed hip motion, then a direction-specific lead foot clears into the travel phase and
+recovers before the dash ends. Firearm-equipped directional double taps use a distinct 0.500-second,
+direction-aware 360-degree tumble with a readable mid-rotation float, compact limb tuck, and
+inverse-waist aim stabilisation. It travels 12.5 studs grounded or 11 studs airborne and cannot
+match the katana dash's burst speed. Presentation does not alter the authored movement curve,
+captured direction, or air allowance.
+
 Dash streaks are white world-space Beam effects. Their endpoints follow recent root-part displacement,
 then live velocity, so airborne streaks match the rising or falling travel tangent; grounded streaks
 discard vertical jitter. This visual sampling never writes velocity or controls the dash trajectory.
 
 ## 10. K-Style Technique Framework
 
-Butterfly candidate detection is currently implemented as lightweight local telemetry. An airborne slash cancelled into block inside the configured timing creates a candidate; additional valid cancels in the same airborne sequence create chain candidates. Landing, invalid state, input suppression, character replacement, or weapon switching breaks the sequence. Wall jumps continue the airborne sequence and expose provisional Wall Butterfly hooks. No candidate awards score, progression, damage, or tutorial completion.
+Butterfly recognition counts manually entered Slash-to-Block pairs inside one accepted jump. One,
+two, and three valid airborne pairs produce Butterfly, Double Butterfly, and Triple Butterfly. Dash
+is recorded as moving-variant context but is not required for documented static variants. The server
+validates the live airborne fighter, equipped katana, monotonic melee requests, jump generation,
+unique slash sequence, cancel interval, chain age, and inter-pair gap. No action is synthesized.
 
-Double Butterfly, Triple Butterfly, Slash Shot, Reload Shot, Half Step, Reload Half Step, formal Wall Butterfly, Wall Cancel, and later combinations remain planned. Detection uses semantic action order and timestamps rather than animation coincidence.
+Swap Shot, Reload Shot, Slash Shot, and Half Step are recognized from accepted server actions rather
+than raw key presses. Slash Shot is Jump, Dash, Slash, firearm switch, Fire. Half Step inserts one
+earned continuation dash after the firearm switch and before Fire. Swap Shot is an accepted shot,
+switch to the other firearm, then another accepted shot. Reload Shot adds an accepted reload cancel
+between those shots. Existing slash, block, dash, equip, reload, recoil, and fire presentations form
+the visible technique animation; recognition never waits for a bespoke clip. Reload Half Step,
+Double Half Step, formal Wall Butterfly, Wall Cancel, and later combinations remain planned.
 
 ## 11. Cancellation Model
 
@@ -65,19 +83,43 @@ Double Butterfly, Triple Butterfly, Slash Shot, Reload Shot, Half Step, Reload H
 - A presentation interruption stops visuals without changing gameplay state.
 - A movement interruption transfers velocity ownership through an explicit transition.
 
-The current Training Katana implements buffered slash-to-block presentation cancellation without changing velocity. Future authoritative combat actions must preserve this contract without rewriting dash.
+The current Training Katana implements buffered slash-to-guard cancellation without changing
+velocity. The server preserves the already accepted active-frame contact while validating the guard,
+which makes a correctly executed single Butterfly both offensive and defensive without rewriting dash.
 
-Training Katana cancel timing is owned by the per-weapon profile in `TechniqueConfig`: 0.025 seconds anticipation, 0.115 seconds active swing, 0.160 seconds recovery, a 0.055–0.205-second cancel window, 0.080 seconds early buffering, 0.035 seconds post-cancel block blend, 0.070 seconds landing forgiveness, 0.060 seconds air-action forgiveness, and a 0.045-second repeated-sequence lockout. All values are provisional.
+Normal slashes retain the complete 0.340-second commitment. Only a server-eligible airborne
+slash-to-block cancel predicts a 0.050-second repeated-pair lockout locally and shortens that
+player's authoritative next-slash deadline after the server accepts the Butterfly pair. This narrow
+exception makes two or three manual pairs possible within one jump without increasing grounded
+slash speed.
+
+Half Step does not change the normal one-air-dash limit. An airborne pre-dash slash followed by a
+firearm equip may earn one 0.340-second continuation opportunity. It is consumed by the next valid
+air dash, expires independently, and is cleared by landing, suppression, death, or replacement.
+
+Training Katana cancel timing is owned by the per-weapon profile in `TechniqueConfig`: 0.030 seconds anticipation, 0.110 seconds active swing, 0.200 seconds recovery, a 0.060–0.225-second cancel window, 0.085 seconds early buffering, 0.040 seconds post-cancel block blend, 0.070 seconds landing forgiveness, 0.060 seconds air-action forgiveness, and a 0.050-second repeated-sequence lockout. All values are provisional. Evidence and BLIKK-specific interpretations are frozen in `docs/K_STYLE_EVIDENCE.md`.
 
 ### 11.1 Movement Truth Wall Interaction
 
-Wall contact is sensed by a bounded forward/side spherecast path using authored wall metadata where available and a conservative vertical-geometry fallback. Head-on entry may begin a vertical run; a 15–45 degree approach to the wall plane may begin a horizontal run; other eligible airborne contact produces a standard wall jump. During a run, signed wall-plane distance maintains a rig-relative safety radius using bounded velocity correction rather than position changes. Manual jump exits, missing or changed contact, ceiling obstruction, clearance loss, height caps, and duration caps transfer once to an outward/upward recovery launch.
+Wall contact is sensed by bounded forward, angled, and pure-side spherecasts using authored wall metadata where available and a conservative vertical-geometry fallback. Contact scoring values tangent travel as well as inward approach, so an established side run is not replaced by an adhesion crawl. Head-on entry may begin a vertical run; a 15–45 degree approach to the wall plane may begin a horizontal run; other eligible airborne contact produces a standard wall jump. Horizontal runs retain accepted tangent momentum, accelerate toward their authored traversal speed, and follow a short vertical arc. During a run, signed wall-plane distance maintains a rig-relative safety radius using bounded velocity correction rather than position changes. Manual jump exits, missing or changed contact, ceiling obstruction, clearance loss, height caps, and duration caps transfer once to an outward/upward recovery launch.
+
+With melee equipped, holding airborne Secondary on accepted contact enters a capped `WallPost` rather
+than the grounded katana alternate. Releasing drops the player away; a fresh Jump uses the normal
+wall launch. Posting never grants an extra dash and respects same-wall separation evidence.
 
 The input edge that begins a wall run is consumed. Manual exit requires a newer Jump edge after the configured freshness delay. An accepted katana slash during the short wall-jump recovery cancels only that recovery and earns one time-limited return dash; it does not restore the normal air dash. Exit clears active contact, and same-wall reuse requires elapsed time, measured separation, a moved contact point, inward return velocity, a new spherecast contact, and another buffered Jump. See `WALL_INTERACTION.md` for calibration and diagnostics.
+
+A fresh exit Jump entered just before the minimum run/post exit delay is retained for at most `0.180`
+seconds and executes when that delay opens. This preserves a deliberate high-APM rhythm without
+synthesizing another input edge.
 
 ## 12. Environment Requirements
 
 Movement environments require measured streets, side-dash visibility, opposing walls, corner transitions, elevated routes, duel space, drop routes, and repeatable loops. District Zero provides natural practice geometry for social and advanced play; it is not a tutorial. A future tutorial map may explicitly teach dash, Flash Step, Light Step, Block Step, Block Launch, Slash Shot, Reload Shot, and Double Butterfly.
+
+Authored ladders are an accessibility route, not a scored movement technique. Their invisible
+TrussPart volumes use Roblox's default climbing state and are marked ineligible for wall-tech
+contact. Ladder climbing must not grant, consume, or reset dash, wall-return, or technique state.
 
 ## 13. Networking Direction
 

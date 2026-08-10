@@ -517,6 +517,7 @@ local function restoreRecord(record)
 	record.IsActive = true
 	record.Model:SetAttribute(PracticeDummyConfig.Attributes.IsActive, true)
 	record.Model:SetAttribute(PracticeDummyConfig.Attributes.IsRecovering, false)
+	record.TossToken = (record.TossToken or 0) + 1
 	record.Root.Anchored = true
 	record.Root.AssemblyLinearVelocity = Vector3.zero
 	record.Root.AssemblyAngularVelocity = Vector3.zero
@@ -526,6 +527,28 @@ local function restoreRecord(record)
 			record.IdleTrack:Play(PracticeDummyConfig.Animation.InitialFadeSeconds, 1, 1)
 		end)
 	end
+end
+
+function PracticeDummyService:LaunchTarget(target, desiredVelocity)
+	local record = target and target.Record
+	if not self:IsTargetCurrent(target) or typeof(desiredVelocity) ~= "Vector3"
+		or desiredVelocity.Magnitude <= 0 or not record.Root.Parent then return false end
+	record.TossToken = (record.TossToken or 0) + 1
+	local tossToken = record.TossToken
+	record.Root.Anchored = false
+	pcall(function() record.Root:SetNetworkOwner(nil) end)
+	record.Humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+	record.Root:ApplyImpulse(
+		(desiredVelocity - record.Root.AssemblyLinearVelocity) * record.Root.AssemblyMass
+	)
+	task.delay(1.35, function()
+		if activeRecord ~= record or record.TossToken ~= tossToken or not record.Root.Parent then return end
+		record.Root.AssemblyLinearVelocity = Vector3.zero
+		record.Root.AssemblyAngularVelocity = Vector3.zero
+		record.Root.Anchored = true
+		pcall(function() record.Humanoid:ChangeState(Enum.HumanoidStateType.RunningNoPhysics) end)
+	end)
+	return true
 end
 
 local function createR15Model(description)
@@ -646,6 +669,7 @@ local function beginDummyBuild(district)
 			IdleTrack = nil,
 			RecoveryAttachment = nil,
 			RecoveryPresentationGeneration = 0,
+			TossToken = 0,
 			Connections = {},
 		}
 		activeRecord = record

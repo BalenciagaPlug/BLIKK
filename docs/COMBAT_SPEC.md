@@ -52,11 +52,31 @@ Reward
 
 ## Current Prototype Foundation
 
-The Training Katana has client-side equip, idle, slash, held-block, slash-to-block cancellation, airborne presentation, authored-animation hooks, and a procedural R15 fallback. This layer is presentation-only: it has no hitbox, damage, guard effect, target detection, or server combat authority.
+The Training Katana has client-predicted equip, idle, slash, held guard, slash-to-guard
+cancellation, grounded alternate launch, airborne presentation, authored-animation hooks, and
+repository-owned procedural R15 fallbacks. Slash damage, frontal guard outcomes, alternate launch,
+and single-Butterfly acceptance are server-authoritative.
 
-Primary Action maps to slash and Alternate Action maps to block while the Melee slot is active. Dedicated Slash and Block actions remain aliases. Firearm slots retain their future category-dependent interpretation.
+Primary Action maps to slash and Alternate Action maps to the grounded upward-launch attack while
+the Melee slot is active. The dedicated Block action defaults to Left Shift and remains rebindable;
+the dedicated Slash action remains an alias. Existing saved bindings are not rewritten. Firearm
+slots retain their category-dependent interpretation.
 
-The provisional slash phases are 0.025 seconds anticipation, 0.115 seconds active presentation, and 0.160 seconds recovery. Block may cancel slash from 0.055 through 0.205 seconds after acceptance, with 0.080 seconds of early buffering. Per-weapon cancellation, forgiveness, blend, and lockout values are centralized in `TechniqueConfig` and require feel testing.
+The provisional slash phases are 0.030 seconds anticipation, 0.110 seconds active presentation, and 0.200 seconds recovery. Block may cancel slash from 0.060 through 0.225 seconds after acceptance, with 0.085 seconds of early buffering. Per-weapon cancellation, forgiveness, blend, and lockout values are centralized in `TechniqueConfig` and require feel testing.
+
+Guard intent is predicted locally and validated by the server against the live character, spawn,
+equipped melee slot, request order, action state, and maximum two-second hold. It rejects firearm and
+melee contact only while the attacker is inside the defender's forward 180-degree half-space. A
+successful melee guard ends that guard; ranged contact may continue to be held. Guard never changes
+movement velocity, and its procedural fallback keys only upper-body joints so ground and air
+locomotion continue underneath it.
+
+Katana Alternate Action is a ground-only 0.420-second upward cut. Its server-owned contact occurs at
+0.180 seconds, selects bounded visible targets in front, deals no normal weapon damage, and applies
+an original Roblox-scale 52-stud-per-second upward plus 16-stud-per-second forward launch. Those
+launch values and the 6.75-stud reach are BLIKK calibration, not converted GunZ engine units. The
+procedural fallback uses the complete body for readable coil, forward rise, and recovery without
+moving the character root in world space.
 
 `KatanaSlash1` is the first approved authored-ground-slash integration point. Its original BLIKK
 motion is a compact one-handed right-to-left lateral cut at waist-to-lower-rib height, authored for
@@ -66,11 +86,11 @@ unkeyed so locomotion, jump, dash, and wall systems retain ownership. The comple
 publication, and asset-registration contract is in `docs/ANIMATION_ASSETS.md`.
 
 Gameplay code—not animation length or markers—continues to own slash acceptance, the exact
-0.025/0.115/0.160-second phases, the 0.055–0.205 cancel window, the 0.080-second input buffer, and
-the 0.025–0.140 trail window. A valid slash track runs at Action priority and 1.0 speed with its
+0.030/0.110/0.200-second phases, the 0.060–0.225 cancel window, the 0.085-second input buffer, and
+the 0.030–0.140 trail window. A valid slash track runs at Action priority and 1.0 speed with its
 slash-specific fades. While it plays, the melee controller releases its competing procedural ground
 slash claim; movement and unkeyed lower-body animation continue. If the asset is absent, rejected,
-or fails to load/play, the unchanged procedural slash resumes immediately without affecting timing.
+or fails to load/play, the repository-owned procedural slash resumes immediately without affecting timing.
 Block, switching, unequip, death, replacement, room exit, stronger presentation, and controller
 teardown stop and release the authored track. The existing two-variant gameplay alternation is
 preserved; both grounded variants may use `KatanaSlash1` until a separately approved
@@ -78,18 +98,74 @@ preserved; both grounded variants may use `KatanaSlash1` until a separately appr
 
 ## Sprint 025.0 training arsenal
 
-The Training Katana remains presentation-only. The B-8 shotgun has a narrow server-authoritative
-pellet-combat vertical slice.
+The Training Katana and B-8 shotgun both have narrow server-authoritative damage slices.
 The Training Katana procedurally presents holster, equip/unequip, ground/air idle, alternating ground
 slashes, air slash, block enter/hold/exit, slash-to-block cancels, wall readiness, wall slash, and
-interruption. The two slash variants share the same 0.300-second code-owned timing and reset to the
+interruption. The two slash variants share the same 0.340-second code-owned timing and reset to the
 first variation after 0.65 seconds of inactivity.
+
+The guaranteed slash fallback is a six-pose code-authored upper-body clip with explicit anticipation,
+centreline cut, follow-through, and recovery. It alternates right-to-left and left-to-right variants,
+uses cubic easing around a near-linear active cut, and keys only Waist, optional Neck counter-rotation,
+shoulders, elbows, and wrists. Root and lower-body joints remain unkeyed during the slash so grounded,
+airborne, dash, and wall locomotion retain presentation ownership. No animation upload or public
+catalog dependency is required; an experience-owner-published `KatanaSlash1` can still replace the
+fallback later without changing gameplay timing.
+
+Both procedural variants now combine compact diagonal shoulder arcs with an action-only katana grip
+arc. The grip sampler keeps the handle attached to the right hand while explicitly steering the blade
+axis through the fighter's forward half-space, then restores the approved idle grip at recovery. The
+same sampler runs for remote observers. The server accepts only monotonic equipped-melee
+intent, enforces the 0.340-second cadence, and resolves one query at the 0.085-second active-window
+midpoint. Each slash sends the current camera origin and unit crosshair direction. The server rejects
+non-finite values, origins more than 24 studs from the authoritative root, invalid pitch, and aim that
+disagrees with character facing. The accepted root-relative camera offset follows authoritative fighter
+translation to the active frame while the input-time aim direction remains fixed. The authoritative
+strike begins at the live right-shoulder joint and converges on the server raycast point under the
+crosshair. Reach is derived from the equipped model: the half-handle, guard, blade gap, and blade total
+`4.15` studs from grip origin to tip, added to the live weapon-arm length. A default R15 arm contributes
+`2.55` studs for a `6.70`-stud shoulder-to-tip reach; server clamps keep valid avatar variation between
+`5.95` and `7.40` studs. The full corridor width is the live left-to-right shoulder span, clamped from
+`1.50` through `3.25` studs. A direct body surface under the crosshair is valid inside that reach;
+fallback candidates must place their upper-torso centre inside the same shoulder-width corridor and
+pass line of sight from both camera intent and weapon shoulder. Only the closest target can be selected.
+Wall contact uses the identical shoulder origin, direction, and maximum reach. This removes third-person
+origin parallax without allowing blade animation, client targets, or client hit claims to steer combat.
+It applies 18 damage
+AP first, then HP, to eligible players or the registered practice dummy. Client-supplied targets,
+positions, damage, and hit claims are never accepted.
+
+The equipped melee ready pose is independently hard-locked to the previously approved silhouette:
+`-15` degrees of right-shoulder pitch, a `-1`-degree airborne right-shoulder offset, and the original
+`190`-degree equipped attachment roll. Slash and block begin from that exact baseline, apply only their
+action-specific forward arm/blade solve, and return to it at recovery. Block interpolates its blade
+direction over the existing `0.100`-second enter presentation rather than snapping the grip.
+
+Melee intent and private hit results are reliable. Accepted slash presentation is a bounded
+`UnreliableRemoteEvent`; remote clients construct a temporary clean Training Katana and apply the same
+repository-owned upper-body clip to the observed fighter. The local attacker remains predicted.
+Damage numbers, hitmarkers, the dedicated melee hit-confirm sound, dummy death recovery, match death,
+and Movement Lab death/respawn reuse the existing authoritative paths. Evidence and interpretation are
+locked in `docs/K_STYLE_EVIDENCE.md`.
+
+A confirmed fighter, guard, or collidable vertical-wall contact publishes a bounded presentation
+record with the server-owned world position and normal. Every observing client draws the same
+0.55-second, 4.6-stud slash mark at that contact. Wall and guard contacts play one positional impact
+cue; remote observers also hear fighter contact, while the local attacker retains the sharper private
+damage-confirm cue and does not double-play it. Floor and ceiling normals are excluded from wall marks.
 
 `TrainingShotgun` remains the stable definition ID and displays as **BLIKK B-8 BREAKSHOT**. Primary1
 and Primary2 independently own five loaded rounds, twenty reserve rounds, a one-second fire deadline,
 reload token, and state. The guaranteed repository-built fallback is an original compact single-
 barrel pump-action silhouette. Shared prototype combat tuning is twelve pellets, nine damage per
 pellet, a 4.5-degree spread half-angle, and 300-stud maximum range, without falloff or headshots.
+
+Firearm accuracy uses a fixed weapon-cone model. A stable root-relative origin converges on the
+centered crosshair ray's world aim point for every accepted shot; rendered muzzle position,
+locomotion pose, jumping, dashing, wall presentation, mechanical recoil, and repeated fire never add
+spread or steer that basis. The B-8's intrinsic 4.5-degree half-angle remains identical in every
+movement state. Its visible muzzle still owns local flash and streak alignment, but never becomes
+client-authoritative shot geometry.
 
 The client predicts bounded presentation and sends only slot, monotonic sequence, aim direction, and
 diagnostic timestamp. The server owns ammunition, shell commits, cooldowns, deterministic cone rays,
@@ -113,6 +189,12 @@ the currently released roomless Movement Lab cohort for a Movement Lab shot. The
 shooter may replace the replicated origin with a short-lived cached rendered-muzzle origin for visual
 streak alignment, but never changes the authoritative endpoints. Rejected shots publish no authoritative
 streak or endpoint presentation.
+
+Fire intent and the private hit/miss result use reliable remotes. The server resolves all twelve
+pellets, applies AP/HP, and sends the shooter result before publishing presentation. The separate
+`FirearmShot` endpoint/muzzle channel is an `UnreliableRemoteEvent`: a late cosmetic packet may be
+dropped instead of queueing ahead of authoritative combat state. Victim health and armour remain
+server-owned replicated state; neither client authors hit, miss, damage, or elimination.
 
 Confirmed damage remains private to the shooter on the existing `FirearmResult` reconciliation remote;
 it is never added to the room-scoped shot-presentation payload. An accepted fire result carries the
@@ -185,6 +267,12 @@ ownership, death, and character replacement. This IK is presentation-only; it do
 direction, spread, ammunition, timing, damage, or the server-derived ray origin. Remote-player aim
 replication is not part of the current local presentation slice.
 
+Equip, interrupted, focus-loss, and IK-unavailable frames use a front-facing procedural carry rather
+than inheriting the retired rear-half-space shoulder convention. Its right and left shoulder pitches
+are `72` and `62` degrees respectively and are asserted inside the `0`-to-`110`-degree front-facing
+range. The existing hand attachment, canonical receiver basis, ready IK solution, and reload pose are
+unchanged.
+
 The arm solve derives pitch only from the camera direction in character-root space. Shoulder width,
 upper-torso height, and arm reach produce a scale-relative neutral receiver position that stays on the
 fighter's right/front side without independent aim yaw. A rear stock reference derived from the coded
@@ -211,19 +299,29 @@ basis, both grips must remain below the barrel line, and the foregrip must remai
 grip. A disabled-by-default local diagnostic can display those references, both IK targets, both poles,
 and the canonical blue-forward, green-up, and red-right axes without affecting gameplay.
 
-`PoseCoordinator` owns legacy `Motor6D` character-joint procedural posing only. Upgraded
-`AnimationConstraint` rigs intentionally retain their native animation presentation; finding no
-compatible `Motor6D` pose joints on such a rig is an expected capability mode, not a partial-rig
-error. Base/idle claims have priority 20, dash and wall priority 30, weapon actions priority 40, and
-shotgun tumble priority 50.
+`PoseCoordinator` supports both legacy `Motor6D` and Avatar Joint Upgrade `AnimationConstraint`
+character graphs. Legacy transforms retain their direct procedural ownership. Constraint transforms
+are resolved after Animator evaluation during `PreSimulation`. Ordinary claims remain additive so
+locomotion and retargeting survive beneath the selected BLIKK pose. A weapon claim masks only the arm
+joints it owns, replacing walk-cycle shoulder, elbow, and wrist motion without freezing Root, Waist,
+Neck, hips, or legs. Base/idle claims have priority 20, dash and wall priority 30, weapon arms and
+actions priority 40, and shotgun tumble priority 50.
 The isolated firearm aim rig owns only its local R15 arm IK controls and targets. Weapon hinge and
 shell joints remain internal to their presentation model. No pose changes root physics, collision,
 velocity, dash timing, camera rotation, or FOV.
 
+Every accepted directional double tap while a firearm slot is active presents a distinct tumble on
+ground or in air. Its 0.500-second movement commitment, 0.42-stud presentation-only lift, compact
+weapon carry, and mid-rotation float keep it slower and more readable than katana dash. The lower
+body owns the full roll while inverse-waist stabilisation preserves the crosshair-driven weapon
+platform. This is original BLIKK calibration informed by GunZ's documented tumble vocabulary and
+archival half-second delay; it is not a copied retail animation.
+
 Accepted presentation actions publish timestamped semantic events for equip, unequip, fire, reload
 start/commit/cancel, slash, block, and tumble start/end. The technique controller retains a bounded
-history for future sequence definitions but does not award Slash Shot, Reload Shot, Half Step, or
-Reload Half Step.
+history for diagnostics and presentation rhythm. The server awards Butterfly through Triple
+Butterfly, Swap Shot, Reload Shot, Slash Shot, and Half Step only after their component gameplay
+actions have been accepted. Reload Half Step remains outside this slice.
 
 An accepted Katana slash may schedule a presentation-only air cut at the configured active-window
 boundary. Generation and state checks cancel it if the slash is superseded before that point; this
@@ -252,7 +350,26 @@ does not decrement reserve. The replicated reconciliation carries a finite reser
 `UnlimitedReserve` boolean, and the HUD renders the reserve as infinity. Multiplayer keeps finite
 server-owned reserve and never accepts an unlimited-ammo request from the client.
 
-Butterfly and Wall Butterfly candidates are internal movement/combat telemetry only. They do not imply a hit, successful technique award, guard outcome, or authoritative combat result.
+A single Butterfly is accepted only when an accepted jump is followed by one airborne slash and a
+valid guard cancel. Double and Triple Butterfly require two and three unique accepted slash/guard
+pairs inside that same jump. The server validates live airborne state, katana equipment, jump serial,
+slash sequence, cancel timing, a 0.900-second jump-chain cap, and a 0.300-second maximum gap between
+pairs. Static and moving variants are both recognized; dash context is reported but never fabricated.
+Each slash keeps its scheduled authoritative contact after presentation cancellation. Only an
+accepted airborne pair shortens the next slash deadline to the 0.050-second repeat lockout.
+
+Weapon-weave recognition runs after authoritative equip, reload, and fire acceptance. Swap Shot is
+Fire A, switch, Fire B. Reload Shot is Fire A, Reload, switch, Fire B; switching before the existing
+reload commit still invalidates the token and transfers no ammunition. Slash Shot is an airborne
+Jump/Dash/Slash followed by firearm equip and Fire. Half Step uses the same opening plus one earned
+post-equip continuation dash before Fire. The existing action poses are the technique animations:
+katana slash/cancel, guard, weapon unequip/equip, reload opening, firearm tumble, aim solve, recoil,
+pump, muzzle effects, and audio remain individually owned. No combo button, held-input automation,
+client-authored shot, or animation marker creates acceptance.
+
+Accepted technique names return on a reliable private result channel and drive one reusable HUD
+label. They award no score, progression, damage, ammunition, cooldown relief, or aim assistance.
+Reload Half Step, Double Half Step, and formal Wall Butterfly remain future slices.
 
 ## Melee
 
@@ -306,18 +423,20 @@ Presentation hooks:
 
 # Equipment
 
-Slots
+Every fresh life receives the same four-slot BLIKK recovery belt in Movement Lab and match play:
 
-Equipment 1
+| Key | Item | Delivery | Recovery | Stock per life |
+| --- | --- | --- | --- | --- |
+| `4` | Vital Patch | Deployable HP pickup | 10 HP | 2 |
+| `5` | Aegis Patch | Deployable AP pickup | 10 AP | 2 |
+| `6` | Vital Amp | Immediate self-use | 20 HP | 2 |
+| `7` | Aegis Amp | Immediate self-use | 20 AP | 2 |
 
-Equipment 2
-
-Types
-
-- Med Kit
-- Armour Kit
-- Med HoT
-- Armour HoT
+All four share a one-second use delay. Patch deployment consumes stock and creates a bounded
+12-second pickup that any eligible fighter in the same combat context may claim. Ampoules are
+rejected without consuming stock when their resource is already full. Counts, use timing,
+pickup collection, HP, and AP are server-owned and reset only through the fresh-life lifecycle.
+See `RECOVERY_SPEC.md`.
 
 ---
 
@@ -329,7 +448,8 @@ the server-side Humanoid and armour is replicated through server-written
 character attributes for HUD observation. Accepted firearm damage is aggregated by pellet target,
 then the server drains current armour before applying the remainder to the Humanoid. Armour is clamped
 between zero and the authoritative maximum, and a valid attacker is registered even when armour absorbs
-the complete shot. Armour regeneration and equipment-derived maximum changes are not implemented.
+the complete shot. Recovery is available only through server-approved pickups and per-life equipment;
+passive armour or health regeneration and equipment-derived maximum changes are not implemented.
 
 Slots
 
@@ -383,7 +503,7 @@ Readable effects.
 
 # Techniques
 
-Future combat techniques include:
+Implemented server-recognized combat techniques:
 
 - Butterfly
 - Double Butterfly
@@ -391,6 +511,9 @@ Future combat techniques include:
 - Slash Shot
 - Reload Shot
 - Half Step
+
+Future combat techniques include:
+
 - Reload Half Step
 
 Detection uses semantic actions.

@@ -14,7 +14,7 @@ local isDestroyed = false
 local screenGui = nil
 local hitmarkerLines = {}
 local damageNumberPool = {}
-local remoteConnection = nil
+local remoteConnections = {}
 local updateConnection = nil
 local generationConnection = nil
 local destroyingConnection = nil
@@ -23,7 +23,7 @@ local markerColor = CombatFeedbackConfig.Colors.Mixed
 local soundEffectsController = nil
 local hasWarnedMalformed = false
 local acceptedSpawnGeneration = nil
-local lastAcceptedSequence = 0
+local lastAcceptedSequences = { Firearm = 0, Melee = 0 }
 
 local VALID_TARGET_KINDS = {
 	Player = true,
@@ -53,22 +53,29 @@ local function warnMalformedOnce()
 	warn("[BLIKK COMBAT FEEDBACK] Ignored a malformed or stale server hit confirmation.")
 end
 
-local function validateDamageResult(result, seenTargets)
+local function validateDamageResult(result, seenTargets, operation)
+	if type(result) ~= "table" then return false end
 	local payloadConfig = CombatFeedbackConfig.Payload
-	if type(result) ~= "table" or not VALID_TARGET_KINDS[result.TargetKind]
+	local maximumDamage = if operation == "Melee"
+		then payloadConfig.MaximumMeleeDamagePerTarget
+		else payloadConfig.MaximumDamagePerTarget
+	local validContact = if operation == "Melee"
+		then finiteInteger(result.ContactCount) and result.ContactCount == 1
+		else finiteInteger(result.PelletHits) and result.PelletHits >= 1
+			and result.PelletHits <= payloadConfig.MaximumPelletHitsPerTarget
+	if not VALID_TARGET_KINDS[result.TargetKind]
 		or type(result.TargetId) ~= "string" or #result.TargetId < 1
 		or #result.TargetId > payloadConfig.MaximumTargetIdLength
 		or seenTargets[result.TargetKind .. ":" .. result.TargetId]
-		or not finiteInteger(result.PelletHits) or result.PelletHits < 1
-		or result.PelletHits > payloadConfig.MaximumPelletHitsPerTarget
+		or not validContact
 		or not finiteNumber(result.RawDamage) or result.RawDamage < 0
-		or result.RawDamage > payloadConfig.MaximumDamagePerTarget
+		or result.RawDamage > maximumDamage
 		or not finiteNumber(result.ArmourDamage) or result.ArmourDamage < 0
-		or result.ArmourDamage > payloadConfig.MaximumDamagePerTarget
+		or result.ArmourDamage > maximumDamage
 		or not finiteNumber(result.HealthDamage) or result.HealthDamage < 0
-		or result.HealthDamage > payloadConfig.MaximumDamagePerTarget
+		or result.HealthDamage > maximumDamage
 		or not finiteNumber(result.AppliedDamage) or result.AppliedDamage <= 0
-		or result.AppliedDamage > payloadConfig.MaximumDamagePerTarget
+		or result.AppliedDamage > maximumDamage
 		or math.abs(result.AppliedDamage - result.ArmourDamage - result.HealthDamage)
 			> payloadConfig.DamageEqualityTolerance
 		or not finiteVector(result.WorldPosition)
@@ -77,13 +84,15 @@ local function validateDamageResult(result, seenTargets)
 	return true
 end
 
-local function validatePayload(payload)
-	if type(payload) ~= "table" or payload.Operation ~= "Fire" or payload.Accepted ~= true
+local function validatePayload(payload, operation)
+	if type(payload) ~= "table" or payload.Operation ~= operation or payload.Accepted ~= true
 		or not finiteInteger(payload.Sequence) or payload.Sequence <= 0
 		or not finiteInteger(payload.SpawnGeneration)
 		or payload.SpawnGeneration ~= player:GetAttribute("BLIKK_SpawnGeneration")
 		or type(payload.HitResults) ~= "table" then return false end
-	local maximumResults = CombatFeedbackConfig.Payload.MaximumResultsPerShot
+	local maximumResults = if operation == "Melee"
+		then CombatFeedbackConfig.Payload.MaximumMeleeResultsPerSwing
+		else CombatFeedbackConfig.Payload.MaximumResultsPerShot
 	local count = 0
 	for key in payload.HitResults do
 		if not finiteInteger(key) or key < 1 or key > maximumResults then return false end
@@ -92,7 +101,7 @@ local function validatePayload(payload)
 	if count > maximumResults then return false end
 	local seenTargets = {}
 	for index = 1, count do
-		if not validateDamageResult(payload.HitResults[index], seenTargets) then return false end
+		if not validateDamageResult(payload.HitResults[index], seenTargets, operation) then return false end
 	end
 	return true
 end
@@ -263,8 +272,8 @@ local function handleConfirmation(payload)
 	if isDestroyed then return end
 	if type(payload) ~= "table" or payload.Accepted ~= true then return end
 	local operation = payload.Operation
-	if operation ~= "Fire" and operation ~= "ReloadAccepted" then return end
-	if operation == "Fire" and not validatePayload(payload) then
+	if operation ~= "Fire" and operation ~= "Melee" and operation ~= "ReloadAccepted" then return end
+	if (operation == "Fire" or operation == "Melee") and not validatePayload(payload, operation) then
 		warnMalformedOnce()
 		return
 	elseif operation == "ReloadAccepted" and (
@@ -278,10 +287,12 @@ local function handleConfirmation(payload)
 	end
 	if acceptedSpawnGeneration ~= payload.SpawnGeneration then
 		acceptedSpawnGeneration = payload.SpawnGeneration
-		lastAcceptedSequence = 0
+		lastAcceptedSequences.Firearm = 0
+		lastAcceptedSequences.Melee = 0
 	end
-	if payload.Sequence <= lastAcceptedSequence then return end
-	lastAcceptedSequence = payload.Sequence
+	local sequenceChannel = if operation == "Melee" then "Melee" else "Firearm"
+	if payload.Sequence <= lastAcceptedSequences[sequenceChannel] then return end
+	lastAcceptedSequences[sequenceChannel] = payload.Sequence
 	if operation == "ReloadAccepted" then
 		soundEffectsController:Play("ReloadInitiated")
 		return
@@ -298,7 +309,7 @@ local function handleConfirmation(payload)
 		end
 	end
 	if appliedDamage > 0 then
-		soundEffectsController:Play("FirearmHitConfirm")
+		soundEffectsController:Play(if operation == "Melee" then "MeleeHitConfirm" else "FirearmHitConfirm")
 	end
 	if eliminatedPracticeDummyPosition then
 		soundEffectsController:PlayAtPosition("PracticeDummyDeath", eliminatedPracticeDummyPosition)
@@ -374,7 +385,10 @@ function CombatFeedbackController:Init(soundEffectsControllerValue)
 		MultiplayerConfig.RemoteLookupTimeoutSeconds
 	)
 	if not firearmResult then error("[BLIKK COMBAT FEEDBACK] FirearmResult unavailable", 0) end
-	remoteConnection = firearmResult.OnClientEvent:Connect(handleConfirmation)
+	table.insert(remoteConnections, firearmResult.OnClientEvent:Connect(handleConfirmation))
+	local meleeResult = remotes:WaitForChild("MeleeResult", MultiplayerConfig.RemoteLookupTimeoutSeconds)
+	if not meleeResult then error("[BLIKK COMBAT FEEDBACK] MeleeResult unavailable", 0) end
+	table.insert(remoteConnections, meleeResult.OnClientEvent:Connect(handleConfirmation))
 	updateConnection = RunService.RenderStepped:Connect(function()
 		if isDestroyed then return end
 		local camera = Workspace.CurrentCamera
@@ -385,7 +399,8 @@ function CombatFeedbackController:Init(soundEffectsControllerValue)
 	end)
 	generationConnection = player:GetAttributeChangedSignal("BLIKK_SpawnGeneration"):Connect(function()
 		acceptedSpawnGeneration = player:GetAttribute("BLIKK_SpawnGeneration")
-		lastAcceptedSequence = 0
+		lastAcceptedSequences.Firearm = 0
+		lastAcceptedSequences.Melee = 0
 		for _, record in damageNumberPool do
 			record.Active = false
 			record.Frame.Visible = false
@@ -400,7 +415,8 @@ end
 function CombatFeedbackController:Destroy()
 	if isDestroyed then return end
 	isDestroyed = true
-	if remoteConnection then remoteConnection:Disconnect(); remoteConnection = nil end
+	for _, connection in remoteConnections do connection:Disconnect() end
+	table.clear(remoteConnections)
 	if updateConnection then updateConnection:Disconnect(); updateConnection = nil end
 	if generationConnection then generationConnection:Disconnect(); generationConnection = nil end
 	if destroyingConnection then destroyingConnection:Disconnect(); destroyingConnection = nil end

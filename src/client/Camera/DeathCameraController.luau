@@ -12,10 +12,13 @@ local CharacterDependency = require(Shared.Character.CharacterDependency)
 local MultiplayerConfig = require(Shared.Multiplayer.MultiplayerConfig)
 local CameraObstruction = require(script.Parent.CameraObstruction)
 local CameraSettings = require(script.Parent.CameraSettings)
+local MouseLookInput = require(script.Parent.MouseLookInput)
+local MouseLookMath = require(script.Parent.MouseLookMath)
 
 local DeathCameraController = {}
 
 local BLOCKER_OWNER = "DeathCamera"
+local MOUSE_LOOK_OWNER = "DeathCamera"
 local RENDER_STEP_NAME = "BLIKKDeathCamera"
 local player = Players.LocalPlayer
 local inputManager = nil
@@ -51,6 +54,11 @@ local function updateMouseCapture()
 		then Enum.MouseBehavior.LockCenter
 		else Enum.MouseBehavior.Default
 	UserInputService.MouseIconEnabled = not shouldCapture
+	if shouldCapture then
+		MouseLookInput:Acquire(MOUSE_LOOK_OWNER)
+	else
+		MouseLookInput:Release(MOUSE_LOOK_OWNER)
+	end
 end
 
 local function identityFromCharacter(character)
@@ -118,6 +126,7 @@ local function endDeathCamera(releasedIdentity, force)
 	end
 
 	isActive = false
+	MouseLookInput:Release(MOUSE_LOOK_OWNER)
 	CameraObstruction.Reset()
 	clearDeathState()
 	gameplayCamera:SetGameplayBlocked(BLOCKER_OWNER, false)
@@ -221,6 +230,7 @@ local function updateCamera(deltaTime)
 	if not camera then return end
 	if camera ~= activeCamera then
 		CameraObstruction.Reset()
+		MouseLookInput:Flush(MOUSE_LOOK_OWNER)
 		activeCamera = camera
 	end
 
@@ -234,6 +244,16 @@ local function updateCamera(deltaTime)
 				+ Vector3.new(0, CameraConfig.DeathCamera.TargetVerticalOffsetStuds, 0)
 		end
 	end
+
+	yawRadians, pitchRadians = MouseLookMath.ApplyDelta(
+		yawRadians,
+		pitchRadians,
+		MouseLookInput:Consume(MOUSE_LOOK_OWNER),
+		CameraSettings:Get("MouseSensitivityDegreesPerPixel"),
+		CameraSettings:Get("InvertY"),
+		CameraConfig.DeathCamera.PitchMinDegrees,
+		CameraConfig.DeathCamera.PitchMaxDegrees
+	)
 
 	local cosine = math.cos(pitchRadians)
 	local offset = Vector3.new(
@@ -269,22 +289,11 @@ function DeathCameraController:Init(gameplayInputManager, gameplayCameraControll
 	inputManager = gameplayInputManager
 	gameplayCamera = gameplayCameraController
 	isInitialised = true
+	MouseLookInput:Init()
 
 	UserInputService.InputChanged:Connect(function(input)
 		if not isActive then return end
-		if input.UserInputType == Enum.UserInputType.MouseMovement
-			and hasWindowFocus and not isMenuOpen then
-			local sensitivity = math.rad(CameraSettings:Get("MouseSensitivityDegreesPerPixel"))
-				* CameraConfig.DeathCamera.SensitivityMultiplier
-			local pitchDirection = if CameraSettings:Get("InvertY") then 1 else -1
-			yawRadians -= input.Delta.X * sensitivity
-			pitchRadians += input.Delta.Y * sensitivity * pitchDirection
-			pitchRadians = math.clamp(
-				pitchRadians,
-				math.rad(CameraConfig.DeathCamera.PitchMinDegrees),
-				math.rad(CameraConfig.DeathCamera.PitchMaxDegrees)
-			)
-		elseif input.UserInputType == Enum.UserInputType.MouseWheel then
+		if input.UserInputType == Enum.UserInputType.MouseWheel then
 			distanceStuds = math.clamp(
 				distanceStuds - input.Position.Z * CameraConfig.DeathCamera.ZoomStepStuds,
 				CameraConfig.DeathCamera.MinimumDistanceStuds,

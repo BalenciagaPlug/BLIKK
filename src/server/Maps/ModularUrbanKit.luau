@@ -153,7 +153,7 @@ end
 
 function ModularUrbanKit:Windows(parent, center, size, height, frontSign)
 	local part = self.Context.Part
-	local floors = math.max(1, math.floor(height / 12))
+	local floors = math.max(1, math.floor((height - 5) / 11) + 1)
 	local columns = math.max(2, math.floor(size.X / 14))
 	for floorIndex = 1, floors do
 		for column = 1, columns do
@@ -214,6 +214,24 @@ function ModularUrbanKit:Ladder(parent, position, height, yaw)
 	local frame = CFrame.new(position) * CFrame.Angles(0, math.rad(yaw or 0), 0)
 	for _, x in { -1.2, 1.2 } do self.Context.Part(model, "Rail", Vector3.new(0.3, height, 0.3), frame * CFrame.new(x, height * 0.5, 0), self.Palette.SteelEdge, Enum.Material.Metal, { CanCollide = false, CastShadow = false }) end
 	for y = 1, height - 1, 2 do self.Context.Part(model, "Rung", Vector3.new(2.7, 0.25, 0.25), frame * CFrame.new(0, y, 0), self.Palette.SteelEdge, Enum.Material.Metal, { CanCollide = false, CastShadow = false }) end
+	-- Roblox's Humanoid climbing state is driven by TrussPart contact. Keeping the
+	-- climb volume invisible preserves the authored ladder while giving beginners
+	-- a predictable, non-technical route to every connected roof.
+	local climbVolume = Instance.new("TrussPart")
+	climbVolume.Name = "ClimbVolume"
+	climbVolume.Anchored = true
+	climbVolume.Size = Vector3.new(2.6, height, 0.7)
+	climbVolume.CFrame = frame * CFrame.new(0, height * 0.5, 0.15)
+	climbVolume.Transparency = 1
+	climbVolume.CanCollide = true
+	climbVolume.CanQuery = true
+	climbVolume.CanTouch = true
+	climbVolume.CastShadow = false
+	climbVolume:SetAttribute("BLIKK_ClimbSurface", true)
+	climbVolume:SetAttribute("BLIKK_WallJumpSurface", false)
+	climbVolume.Parent = model
+	model:SetAttribute("BLIKK_ClimbSurface", true)
+	model:SetAttribute("BLIKK_DefaultClimbEnabled", true)
 	return model
 end
 

@@ -8,7 +8,7 @@ local FighterSlots = {
 		},
 	},
 	Equipment = {
-		Ordered = { "Equipment1", "Equipment2" },
+		Ordered = { "Equipment1", "Equipment2", "Equipment3", "Equipment4" },
 	},
 	Armour = {
 		Ordered = { "Head", "Body", "Legs", "Feet" },

@@ -9,6 +9,10 @@ local Controller = {}
 Controller.AirSlashAccepted = Instance.new("BindableEvent")
 Controller.AirSlashCancelledToBlock = Instance.new("BindableEvent")
 Controller.ButterflyCandidate = Instance.new("BindableEvent")
+Controller.ButterflyAccepted = Instance.new("BindableEvent")
+Controller.DoubleButterflyAccepted = Instance.new("BindableEvent")
+Controller.TripleButterflyAccepted = Instance.new("BindableEvent")
+Controller.TechniqueAccepted = Instance.new("BindableEvent")
 Controller.ButterflyChainCandidate = Instance.new("BindableEvent")
 Controller.ButterflyChainBroken = Instance.new("BindableEvent")
 Controller.WallButterflyCandidate = Instance.new("BindableEvent")
@@ -26,6 +30,7 @@ local lastCancelAt = -math.huge
 local lastLandingAt = -math.huge
 local lastWallJumpAt = -math.huge
 local candidateCount = 0
+local acceptedButterflyCount = 0
 local wallJumpCount = 0
 local generation = 0
 local characterGeneration = 0
@@ -39,9 +44,32 @@ local characterBindingTarget
 local cancelDependencyWatch
 local dashAction
 local semanticHistory = {}
+local movementIntentSequence = 0
+local lastTechniqueResultSequence = 0
+local lastDashAt = -math.huge
+local lastWeaveSlashAt = -math.huge
+local lastWeaveSlashHadDash = false
+local techniqueIntent
 
 local cancelConfig = Config.CancelProfiles.TrainingKatana
 local rhythmConfig = Config.Butterfly
+local weaveConfig = Config.WeaponWeave
+
+local VALID_TECHNIQUES = {
+	Butterfly = true,
+	DoubleButterfly = true,
+	TripleButterfly = true,
+	SwapShot = true,
+	ReloadShot = true,
+	SlashShot = true,
+	HalfStep = true,
+}
+
+local VALID_WEAPON_SLOTS = {
+	Melee = true,
+	Primary1 = true,
+	Primary2 = true,
+}
 
 local function diagnose(message)
 	if rhythmConfig.DiagnosticsEnabled then print("[BLIKK RHYTHM] " .. message) end
@@ -64,6 +92,7 @@ local function publishTelemetry()
 	if not rhythmConfig.DiagnosticsEnabled or not character then return end
 	character:SetAttribute("BLIKK_AirborneSequence", airborneSequence)
 	character:SetAttribute("BLIKK_ButterflyCandidates", candidateCount)
+	character:SetAttribute("BLIKK_ButterflyAccepted", acceptedButterflyCount)
 	character:SetAttribute("BLIKK_WallJumpCount", wallJumpCount)
 	character:SetAttribute("BLIKK_LastSlashTime", lastSlashAt)
 	character:SetAttribute("BLIKK_LastBlockCancelTime", lastCancelAt)
@@ -79,6 +108,7 @@ local function breakChain(reason, wallRelated)
 	if wallRelated and wallJumpCount > 0 then Controller.WallChainBroken:Fire(reason, wallJumpCount) end
 	airborneSequence = false
 	candidateCount = 0
+	acceptedButterflyCount = 0
 	wallJumpCount = 0
 	lastSlashAt = -math.huge
 	lastCancelAt = -math.huge
@@ -111,8 +141,66 @@ local function acceptAirSlash(timestamp)
 		return
 	end
 	lastSlashAt = timestamp
+	lastWeaveSlashAt = timestamp
+	lastWeaveSlashHadDash = lastDashAt >= lastJumpAt
+		and timestamp - lastDashAt <= weaveConfig.SlashShot.DashBeforeSlashMaximumSeconds
 	Controller.AirSlashAccepted:Fire(timestamp)
 	diagnose(string.format("air slash %.3f", timestamp))
+	publishTelemetry()
+end
+
+local function sendMovementIntent(operation, detail)
+	if not techniqueIntent then return end
+	movementIntentSequence += 1
+	local payload = {
+		Operation = operation,
+		Sequence = movementIntentSequence,
+	}
+	for key, value in detail or {} do payload[key] = value end
+	techniqueIntent:FireServer(payload)
+end
+
+local function acceptTechniqueResult(payload)
+	if type(payload) ~= "table" or payload.Accepted ~= true
+		or VALID_TECHNIQUES[payload.Name] ~= true
+		or type(payload.Sequence) ~= "number" or payload.Sequence % 1 ~= 0
+		or payload.Sequence <= lastTechniqueResultSequence
+		or payload.SpawnGeneration ~= player:GetAttribute("BLIKK_SpawnGeneration") then return end
+	if payload.Name == "Butterfly" or payload.Name == "DoubleButterfly"
+		or payload.Name == "TripleButterfly" then
+		local expectedCount = if payload.Name == "Butterfly" then 1
+			elseif payload.Name == "DoubleButterfly" then 2 else 3
+		if payload.ChainCount ~= expectedCount or type(payload.MovingVariant) ~= "boolean" then return end
+	else
+		if VALID_WEAPON_SLOTS[payload.FromSlot] ~= true
+			or VALID_WEAPON_SLOTS[payload.ToSlot] ~= true then return end
+	end
+	lastTechniqueResultSequence = payload.Sequence
+	lastRejectionReason = ""
+	local acceptedAt = os.clock()
+	if payload.Name == "Butterfly" or payload.Name == "DoubleButterfly"
+		or payload.Name == "TripleButterfly" then
+		local expectedCount = if payload.Name == "Butterfly" then 1
+			elseif payload.Name == "DoubleButterfly" then 2 else 3
+		acceptedButterflyCount = expectedCount
+		Controller.ButterflyAccepted:Fire(
+			expectedCount,
+			payload.Name,
+			payload.MovingVariant,
+			acceptedAt
+		)
+		if expectedCount == 2 then
+			Controller.DoubleButterflyAccepted:Fire(acceptedAt, payload.MovingVariant)
+		elseif expectedCount == 3 then
+			Controller.TripleButterflyAccepted:Fire(acceptedAt, payload.MovingVariant)
+		end
+	end
+	Controller.TechniqueAccepted:Fire(payload.Name, acceptedAt, payload)
+	recordSemantic(payload.Name .. "Accepted", acceptedAt, payload)
+	if character then
+		character:SetAttribute("BLIKK_LastTechnique", payload.Name)
+		character:SetAttribute("BLIKK_LastTechniqueSequence", payload.Sequence)
+	end
 	publishTelemetry()
 end
 
@@ -121,6 +209,11 @@ local function handleCancel(timestamp)
 	if not isAirEligible(timestamp) then rejectCandidate("not airborne"); return end
 	if delta < 0 or delta > rhythmConfig.CandidateMaximumSeconds then rejectCandidate("cancel delta"); return end
 	if timestamp - lastCancelAt < cancelConfig.RepeatedSequenceLockoutSeconds then rejectCandidate("sequence lockout"); return end
+	if candidateCount >= rhythmConfig.MaximumPairsPerJump then
+		lastRejectionReason = "chain complete"
+		publishTelemetry()
+		return
+	end
 	lastCancelAt = timestamp
 	lastCancelDelta = delta
 	candidateCount += 1
@@ -144,6 +237,11 @@ local function bindCharacter(nextCharacter)
 	characterBindingTarget = nextCharacter
 	if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 	breakChain("character replaced", true)
+	movementIntentSequence = 0
+	lastTechniqueResultSequence = 0
+	lastDashAt = -math.huge
+	lastWeaveSlashAt = -math.huge
+	lastWeaveSlashHadDash = false
 	table.clear(semanticHistory)
 	if diedConnection then diedConnection:Disconnect(); diedConnection = nil end
 	character, humanoid = nil, nil
@@ -172,6 +270,7 @@ function Controller:GetTelemetry()
 	return {
 		AirborneSequence = airborneSequence, LastJumpAt = lastJumpAt, LastSlashAt = lastSlashAt,
 		LastCancelAt = lastCancelAt, CandidateCount = candidateCount, WallJumpCount = wallJumpCount,
+		AcceptedButterflyCount = acceptedButterflyCount,
 		LastRejectionReason = lastRejectionReason,
 		SemanticHistory = table.clone(semanticHistory),
 	}
@@ -180,7 +279,13 @@ end
 function Controller:Init(inputManager, movementEngine, meleeController, wallController, fighterController, firearmController)
 	if isInitialised then return end
 	isInitialised = true
+	local remotes = ReplicatedStorage:WaitForChild("BLIKKRemotes", MultiplayerConfig.RemoteLookupTimeoutSeconds)
+	techniqueIntent = remotes and remotes:WaitForChild("TechniqueIntent", MultiplayerConfig.RemoteLookupTimeoutSeconds)
+	local techniqueResult = remotes and remotes:WaitForChild("TechniqueResult", MultiplayerConfig.RemoteLookupTimeoutSeconds)
+	if not techniqueIntent or not techniqueResult then error("[BLIKK TECHNIQUE] Technique remotes unavailable", 0) end
+	techniqueResult.OnClientEvent:Connect(acceptTechniqueResult)
 	movementEngine.JumpAccepted.Event:Connect(function(timestamp, wasAirborne)
+		sendMovementIntent("Jump")
 		lastJumpAt = timestamp
 		movementState = "Airborne"
 		if not wasAirborne then airborneSequence = true; candidateCount = 0; wallJumpCount = 0 end
@@ -197,6 +302,8 @@ function Controller:Init(inputManager, movementEngine, meleeController, wallCont
 		end)
 	end)
 	movementEngine.DashStarted.Event:Connect(function(action, _, grounded)
+		lastDashAt = os.clock()
+		sendMovementIntent("Dash", { Direction = action })
 		dashAction = action
 		movementState = if grounded then "GroundDash" else "AirDash"
 		publishTelemetry()
@@ -214,7 +321,18 @@ function Controller:Init(inputManager, movementEngine, meleeController, wallCont
 		elseif hook == "SlashCancelledToBlock" then handleCancel(timestamp) end
 	end)
 	meleeController.SemanticEvent.Event:Connect(recordSemantic)
-	if firearmController then firearmController.SemanticEvent.Event:Connect(recordSemantic) end
+	if firearmController then
+		firearmController.SemanticEvent.Event:Connect(function(actionName, timestamp, payload)
+			recordSemantic(actionName, timestamp, payload)
+			if actionName == "WeaponEquipped" and payload and payload.Slot ~= "Melee"
+				and lastWeaveSlashHadDash
+				and timestamp - lastWeaveSlashAt <= weaveConfig.HalfStep.MaximumSequenceSeconds then
+				if movementEngine:GrantHalfStepDash(timestamp) then
+					lastWeaveSlashHadDash = false
+				end
+			end
+		end)
+	end
 	wallController.WallJumped.Event:Connect(function(timestamp)
 		airborneSequence = true
 		lastWallJumpAt = timestamp
@@ -242,6 +360,8 @@ function Controller:Init(inputManager, movementEngine, meleeController, wallCont
 			dashAction = nil
 			character = nil
 			humanoid = nil
+			lastTechniqueResultSequence = 0
+			movementIntentSequence = 0
 			table.clear(semanticHistory)
 		end
 	end)

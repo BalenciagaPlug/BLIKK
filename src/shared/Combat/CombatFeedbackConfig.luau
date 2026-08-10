@@ -1,4 +1,5 @@
 local FirearmCombatConfig = require(script.Parent.FirearmCombatConfig)
+local MeleeCombatConfig = require(script.Parent.MeleeCombatConfig)
 
 local CombatFeedbackConfig = {
 	DiagnosticsEnabled = false,
@@ -6,6 +7,8 @@ local CombatFeedbackConfig = {
 		MaximumResultsPerShot = FirearmCombatConfig.PelletsPerShot,
 		MaximumPelletHitsPerTarget = FirearmCombatConfig.PelletsPerShot,
 		MaximumDamagePerTarget = FirearmCombatConfig.MaximumRawDamagePerTarget,
+		MaximumMeleeResultsPerSwing = MeleeCombatConfig.MaximumTargetsPerSwing,
+		MaximumMeleeDamagePerTarget = MeleeCombatConfig.DamagePerTarget,
 		MaximumTargetIdLength = 64,
 		MaximumWorldCoordinateMagnitude = 100000,
 		DamageEqualityTolerance = 0.001,

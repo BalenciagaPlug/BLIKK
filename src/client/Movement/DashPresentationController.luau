@@ -22,6 +22,7 @@ local humanoidStateConnection = nil
 local activeRootPart = nil
 local activeDirection = nil
 local activeGrounded = false
+local activeProgress = 0
 local previousRootPosition = nil
 local activeStreaks = {}
 local ownedStreakParts = {}
@@ -53,6 +54,7 @@ function Controller:Interrupt()
 	airReady = false
 	activeRootPart = nil
 	activeDirection = nil
+	activeProgress = 0
 	previousRootPosition = nil
 	table.clear(activeStreaks)
 	for part in ownedStreakParts do
@@ -170,27 +172,110 @@ local function applyPose()
 	end
 	local poses = {}
 	if airReady and not activeAction then
-		poses.Root = CFrame.Angles(math.rad(-7), 0, 0)
-		poses.Waist = CFrame.Angles(math.rad(4), 0, 0)
-		poses.LeftShoulder = CFrame.Angles(math.rad(-18), 0, math.rad(-12))
-		poses.RightShoulder = CFrame.Angles(math.rad(-18), 0, math.rad(12))
-		poses.LeftHip = CFrame.Angles(math.rad(15), 0, math.rad(-7))
-		poses.RightHip = CFrame.Angles(math.rad(-9), 0, math.rad(7))
+		local rootPose = CFrame.Angles(math.rad(-4), 0, 0)
+		poses.Root = rootPose
+		poses.Waist = rootPose.Rotation:Inverse() * CFrame.Angles(math.rad(2), 0, 0)
+		local readyTuck = math.rad(config.AirReadyHipTuckDegrees)
+		local readySpread = math.rad(config.AirHipSpreadDegrees * 0.5)
+		poses.LeftHip = CFrame.Angles(readyTuck, 0, -readySpread)
+		poses.RightHip = CFrame.Angles(readyTuck, 0, readySpread)
 		PoseCoordinator:Submit("Dash", 30, poses)
 		return
 	end
 	local pose = directionPose[activeAction]
 	if not pose then return end
+	local function smoothstep(alpha)
+		alpha = math.clamp(alpha, 0, 1)
+		return alpha * alpha * (3 - 2 * alpha)
+	end
+	local entry = smoothstep(activeProgress / config.StepPeakProgress)
+	local recovery = 1 - smoothstep(
+		(activeProgress - config.StepRecoveryStartProgress)
+			/ (1 - config.StepRecoveryStartProgress)
+	)
+	local actionStrength = entry * recovery
+	if not activeGrounded then
+		-- Airborne traversal deliberately has no leading foot. The compact,
+		-- symmetrical pose reads as controlled flight and leaves weapon arms to
+		-- their higher-priority aim/melee owner throughout the dash.
+		local airLean = math.rad(config.AirCharacterLeanDegrees)
+		local airYaw = math.rad(config.AirDirectionYawDegrees * pose.Twist)
+		local airWave = math.sin(math.clamp(activeProgress, 0, 1) * math.pi)
+		local airStrength = actionStrength * (0.72 + airWave * 0.28)
+		local rootPose = CFrame.Angles(
+			pose.Pitch * airLean * airStrength,
+			airYaw * airStrength,
+			pose.Roll * airLean * airStrength
+		)
+		poses.Root = rootPose
+		poses.Waist = rootPose.Rotation:Inverse() * CFrame.Angles(
+			-pose.Pitch * airLean * 0.18 * airStrength,
+			-airYaw * 0.25 * airStrength,
+			-pose.Roll * airLean * 0.16 * airStrength
+		)
+		poses.Neck = CFrame.Angles(
+			-pose.Pitch * airLean * 0.20 * airStrength,
+			-airYaw * 0.18 * airStrength,
+			-pose.Roll * airLean * 0.22 * airStrength
+		)
+		local tuck = math.rad(config.AirHipTuckDegrees) * airWave * actionStrength
+		local spread = math.rad(config.AirHipSpreadDegrees) * airWave * actionStrength
+		poses.LeftHip = CFrame.Angles(tuck, 0, -spread)
+		poses.RightHip = CFrame.Angles(tuck, 0, spread)
+		PoseCoordinator:Submit("Dash", 30, poses)
+		return
+	end
+	local stepWave = math.sin(math.clamp(activeProgress, 0, 1) * math.pi) * actionStrength
+	local hipStrength = smoothstep(
+		(activeProgress - config.HipMotionDelayProgress)
+			/ math.max(0.001, config.StepPeakProgress - config.HipMotionDelayProgress)
+	) * recovery
 	local lean = math.rad(config.CharacterLeanDegrees)
-	local twist = math.rad(config.CounterTwistDegrees * pose.Twist)
+	local twist = math.rad(config.CounterTwistDegrees * pose.Twist) * actionStrength
 	local brace = math.rad(config.ArmBraceDegrees)
-	local tuck = math.rad(config.HipTuckDegrees)
-	poses.Root = CFrame.Angles(pose.Pitch * lean, twist, pose.Roll * lean)
-	poses.Waist = CFrame.Angles(pose.Pitch * lean * 0.45, -twist, pose.Roll * lean * 0.6)
-	poses.LeftShoulder = CFrame.Angles(-brace, 0, -pose.Roll * brace * 0.8)
-	poses.RightShoulder = CFrame.Angles(-brace, 0, pose.Roll * brace * 0.35)
-	poses.LeftHip = CFrame.Angles(tuck + pose.Pitch * tuck, 0, -pose.Roll * tuck * 1.2)
-	poses.RightHip = CFrame.Angles(-tuck + pose.Pitch * tuck, 0, pose.Roll * tuck * 0.45)
+	local shoulderLead = math.rad(config.LeadShoulderDegrees) * actionStrength
+	local leadStep = math.rad(config.LeadStepDegrees) * stepWave * hipStrength
+	local trailStep = math.rad(config.TrailStepDegrees) * stepWave * hipStrength
+	local rootPose = CFrame.Angles(
+		pose.Pitch * lean * actionStrength,
+		twist,
+		pose.Roll * lean * actionStrength
+	)
+	local waistAccent = CFrame.Angles(
+		pose.Pitch * lean * 0.62 * actionStrength,
+		-twist * 0.55,
+		pose.Roll * lean * 0.42 * actionStrength
+	)
+	poses.Root = rootPose
+	-- Keep the leg/lower-torso lean, but cancel its inherited rotation before
+	-- applying the smaller upper-body accent. Weapon poses can remain on aim.
+	poses.Waist = rootPose.Rotation:Inverse() * waistAccent
+	poses.Neck = CFrame.Angles(
+		-pose.Pitch * lean * 0.22 * actionStrength,
+		-twist * 0.25,
+		-pose.Roll * lean * 0.18 * actionStrength
+	)
+	if activeAction == "Forward" then
+		poses.RightShoulder = CFrame.Angles(-brace - shoulderLead, 0, math.rad(8) * actionStrength)
+		poses.LeftShoulder = CFrame.Angles(-brace * 0.55, 0, -math.rad(7) * actionStrength)
+		poses.RightHip = CFrame.Angles(-leadStep, 0, math.rad(3) * hipStrength)
+		poses.LeftHip = CFrame.Angles(trailStep, 0, -math.rad(3) * hipStrength)
+	elseif activeAction == "Backward" then
+		poses.LeftShoulder = CFrame.Angles(-brace - shoulderLead, 0, -math.rad(8) * actionStrength)
+		poses.RightShoulder = CFrame.Angles(-brace * 0.55, 0, math.rad(7) * actionStrength)
+		poses.LeftHip = CFrame.Angles(-leadStep, 0, -math.rad(3) * hipStrength)
+		poses.RightHip = CFrame.Angles(trailStep, 0, math.rad(3) * hipStrength)
+	elseif activeAction == "Left" then
+		poses.LeftShoulder = CFrame.Angles(-brace - shoulderLead * 0.75, 0, -shoulderLead * 0.55)
+		poses.RightShoulder = CFrame.Angles(-brace * 0.55, 0, -shoulderLead * 0.18)
+		poses.LeftHip = CFrame.Angles(-leadStep * 0.55, 0, -leadStep)
+		poses.RightHip = CFrame.Angles(trailStep * 0.4, 0, trailStep * 0.65)
+	else
+		poses.RightShoulder = CFrame.Angles(-brace - shoulderLead * 0.75, 0, shoulderLead * 0.55)
+		poses.LeftShoulder = CFrame.Angles(-brace * 0.55, 0, shoulderLead * 0.18)
+		poses.RightHip = CFrame.Angles(-leadStep * 0.55, 0, leadStep)
+		poses.LeftHip = CFrame.Angles(trailStep * 0.4, 0, -trailStep * 0.65)
+	end
 	PoseCoordinator:Submit("Dash", 30, poses)
 end
 
@@ -244,14 +329,15 @@ function Controller:Init(movementEngine, _cameraController)
 		resetJoints()
 	end)
 	if player.Character then bindCharacter(player.Character) end
-	movementEngine.DashStarted.Event:Connect(function(action, direction, grounded)
-		if not config.Enabled then return end
+	movementEngine.DashStarted.Event:Connect(function(action, direction, grounded, kind)
+		if not config.Enabled or kind == "Tumble" then return end
 		activeAction = action
 		airReady = false
 		local rootPart = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 		activeRootPart = rootPart
 		activeDirection = direction
 		activeGrounded = grounded
+		activeProgress = 0
 		previousRootPosition = rootPart and rootPart.Position or nil
 		table.clear(activeStreaks)
 		if rootPart and config.Enabled then
@@ -267,6 +353,7 @@ function Controller:Init(movementEngine, _cameraController)
 		end
 	end)
 	movementEngine.DashUpdated.Event:Connect(function(_, _, progress)
+		activeProgress = progress
 		if activeAction and activeRootPart and activeRootPart.Parent and previousRootPosition then
 			local currentPosition = activeRootPart.Position
 			local tangent = streakDirection(
@@ -279,11 +366,13 @@ function Controller:Init(movementEngine, _cameraController)
 			positionStreaks(activeRootPart, tangent)
 		end
 	end)
-	movementEngine.DashEnded.Event:Connect(function(action, _, grounded)
+	movementEngine.DashEnded.Event:Connect(function(action, _, grounded, kind)
+		if kind == "Tumble" then return end
 		if not activeAction or action ~= activeAction then return end
 		activeAction = nil
 		activeRootPart = nil
 		activeDirection = nil
+		activeProgress = 0
 		previousRootPosition = nil
 		table.clear(activeStreaks)
 		airReady = not grounded

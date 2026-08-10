@@ -38,6 +38,12 @@ It is always mathematically centred.
 
 It never moves because of recoil, dash, animations or effects.
 
+Gameplay aim is sampled from the camera controller's input-integrated yaw and pitch, using the
+resolved third-person camera position as its origin. It is not read back from the rendered camera
+object, a character joint, weapon muzzle, tumble orientation, wall pose, dash lean, jump pose, or
+animation result. Physical movement may translate the camera with the fighter, but only player mouse
+input changes the shot direction.
+
 An equipped local firearm automatically follows the existing centered crosshair ray. There is no aim
 button or aim-down-sights camera mode. Arm IK consumes the camera result for presentation only and
 does not write camera position, rotation, sensitivity, field of view, or crosshair placement.
@@ -73,6 +79,28 @@ The camera must:
 
 Mouse movement equals camera movement.
 
+### Mouse input truth
+
+Gameplay, developer free-look, and the death camera consume one shared mouse-delta stream. Mouse
+movement is accumulated between render updates and integrated exactly once on the next camera update;
+it is never multiplied by frame time. This preserves all reported displacement across different mouse
+polling rates without making rotation depend on render rate.
+
+The mouse contract is:
+
+- centred capture while a live gameplay camera owns input
+- linear degrees-per-input-pixel gain
+- equal horizontal and vertical gain before optional Y inversion
+- no acceleration, smoothing, deadzone, movement multiplier, weapon multiplier, or FOV multiplier
+- the same player sensitivity in normal gameplay, developer free-look, and the death camera
+- accumulated input is flushed whenever ownership or focus changes, preventing a menu-close, respawn,
+  free-look, or death-camera snap
+- yaw is normalised continuously to protect long-session numerical precision
+
+Roblox's additional `MouseDeltaSensitivity` scale remains neutral at `1` while BLIKK owns the mouse
+and is restored when BLIKK releases it. Physical DPI and operating-system mouse configuration remain
+outside the experience and therefore cannot be inferred by the settings screen.
+
 ---
 
 ## 4. Camera Movement
@@ -100,6 +128,12 @@ Examples:
 
 Camera feedback must never interfere with aiming.
 Dash presentation does not own or offset FOV; the configured player FOV remains unchanged through a dash.
+Tumble keeps the lower-body rotation while counter-rotating the waist, allowing the upper weapon
+platform and firearm IK to remain aligned to the stable crosshair ray.
+Dash, airborne-ready, wall-run, and wall-jump presentation follow the same hierarchy at smaller
+amplitudes: Root and hips communicate movement, while Waist cancels inherited Root rotation before
+adding a restrained upper-body accent. No presentation pose feeds back into camera yaw, pitch, or
+shot direction.
 
 ---
 
@@ -113,6 +147,10 @@ Players may configure:
 - Shoulder Offset
 - Sensitivity
 - Invert Y
+
+Sensitivity is stored account-wide as explicit degrees per input pixel and accepts typed numeric entry.
+The current default is `0.030 DEG/PX`; it is a BLIKK calibration value, not a claimed numerical
+conversion from another game's settings scale.
 
 Future settings:
 

@@ -32,7 +32,18 @@ function RemoteRegistry:Init()
 	self.CharacterLifecycleUpdated = getOrCreate("RemoteEvent", "CharacterLifecycleUpdated")
 	self.FirearmIntent = getOrCreate("RemoteEvent", "FirearmIntent")
 	self.FirearmResult = getOrCreate("RemoteEvent", "FirearmResult")
-	self.FirearmShot = getOrCreate("RemoteEvent", "FirearmShot")
+	-- Authoritative results remain reliable. Endpoint streaks and remote muzzle
+	-- flashes are disposable presentation and must not queue ahead of game state.
+	self.FirearmShot = getOrCreate("UnreliableRemoteEvent", "FirearmShot")
+	self.MeleeIntent = getOrCreate("RemoteEvent", "MeleeIntent")
+	self.MeleeResult = getOrCreate("RemoteEvent", "MeleeResult")
+	-- Remote slash, guard, and alternate-launch poses are disposable. Damage and
+	-- accepted technique results remain on the reliable MeleeResult channel.
+	self.MeleeSwing = getOrCreate("UnreliableRemoteEvent", "MeleeSwing")
+	self.TechniqueIntent = getOrCreate("RemoteEvent", "TechniqueIntent")
+	self.TechniqueResult = getOrCreate("RemoteEvent", "TechniqueResult")
+	self.RecoveryIntent = getOrCreate("RemoteEvent", "RecoveryIntent")
+	self.RecoveryResult = getOrCreate("RemoteEvent", "RecoveryResult")
 	self.SpectatorRequest = getOrCreate("RemoteFunction", "SpectatorRequest")
 	self.ReplayRequest = getOrCreate("RemoteFunction", "ReplayRequest")
 	self.ReportRequest = getOrCreate("RemoteFunction", "ReportRequest")

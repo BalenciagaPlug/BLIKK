@@ -4,8 +4,9 @@ local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage.Shared.Combat.FirearmCombatConfig)
 local FeedbackConfig = require(ReplicatedStorage.Shared.Combat.FirearmShotFeedbackConfig)
+local MeleeCombatConfig = require(ReplicatedStorage.Shared.Combat.MeleeCombatConfig)
 local ShotgunSpread = require(ReplicatedStorage.Shared.Combat.ShotgunSpread)
-local FirearmDamageResolver = require(script.Parent.FirearmDamageResolver)
+local CombatDamageResolver = require(script.Parent.CombatDamageResolver)
 
 local FirearmService = {}
 local states = {}
@@ -13,6 +14,7 @@ local warned = {}
 local matchService
 local roomService
 local practiceDummyService
+local techniqueService
 local resultRemote
 local shotRemote
 local seedRandom = Random.new()
@@ -72,7 +74,9 @@ local function isEligible(player)
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	local context = player:GetAttribute("BLIKK_CharacterContext")
 	local spawnGeneration = player:GetAttribute("BLIKK_SpawnGeneration")
-	local contextEligible = context == "MovementLab" or context == "Match" and matchService:GetMatch(player) ~= nil
+	-- Match character contexts describe the lifecycle transition (MatchEntry,
+	-- Respawn, and JoinInProgress), so live membership is the match authority.
+	local contextEligible = context == "MovementLab" or matchService:GetMatch(player) ~= nil
 	return character and humanoid and humanoid.Health > 0 and root and root:IsA("BasePart")
 		and player:GetAttribute("BLIKK_GameplayReleased") == true
 		and character:GetAttribute("BLIKK_GameplayReleased") == true
@@ -223,6 +227,7 @@ local function handleFire(player, state, payload)
 	slot.ReloadActive = false
 	slot.Magazine -= 1
 	slot.NextFireAt = now + Config.FireIntervalSeconds
+	techniqueService:RegisterFire(player, slotId, now)
 	local seed = seedRandom:NextInteger(1, 2147483646)
 	local origin = root.Position + Vector3.new(0, Config.Aim.MuzzleUpStuds, 0)
 		+ root.CFrame.LookVector * Config.Aim.MuzzleForwardStuds
@@ -236,7 +241,7 @@ local function handleFire(player, state, payload)
 	local directions = ShotgunSpread.GenerateDirections(
 		aim,
 		Config.PelletsPerShot,
-		Config.SpreadHalfAngleDegrees,
+		Config.Accuracy.SpreadHalfAngleDegrees,
 		seed
 	)
 	for index = 1, Config.PelletsPerShot do
@@ -276,11 +281,15 @@ local function handleFire(player, state, payload)
 			pelletHits * Config.DamagePerPellet,
 			Config.MaximumRawDamagePerTarget
 		)
+		if target.Kind == "Player"
+			and CombatDamageResolver.ResolveGuard(target.Humanoid, origin, "Firearm") then
+			continue
+		end
 		local mayApply = if target.Kind == "Player"
 			then matchService:RegisterDamageSource(target.Player, player)
 			else practiceDummyService:IsTargetCurrent(target)
 		if not mayApply then continue end
-		local result = FirearmDamageResolver.Apply(target.Humanoid, rawDamage)
+		local result = CombatDamageResolver.Apply(target.Humanoid, rawDamage)
 		if not result then continue end
 		if target.Kind == "PracticeDummy" then
 			practiceDummyService:OnDamageApplied(target, result)
@@ -347,6 +356,7 @@ local function handleReload(player, state, payload)
 	slot.ReloadToken += 1
 	local token = slot.ReloadToken
 	slot.ReloadActive = true
+	techniqueService:RegisterReload(player, slotId, now)
 	local spawnGeneration = player:GetAttribute("BLIKK_SpawnGeneration")
 	local character = player.Character
 	send(player, "ReloadAccepted", true, sequence, slotId, slot)
@@ -376,11 +386,13 @@ function FirearmService:Init(
 	remoteRegistry,
 	matchServiceValue,
 	roomServiceValue,
-	practiceDummyServiceValue
+	practiceDummyServiceValue,
+	techniqueServiceValue
 )
 	matchService = matchServiceValue
 	roomService = roomServiceValue
 	practiceDummyService = practiceDummyServiceValue
+	techniqueService = techniqueServiceValue
 	assert(practiceDummyService and type(practiceDummyService.ResolveTarget) == "function",
 		"Firearm service requires practice-dummy target authority")
 	resultRemote = remoteRegistry.FirearmResult
@@ -395,6 +407,11 @@ function FirearmService:Init(
 				state[slotId].ReloadActive = false
 			end
 			state.ActiveSlot = payload.Slot
+			techniqueService:RegisterEquip(player, payload.Slot, os.clock())
+			local character = player.Character
+			if payload.Slot ~= "Melee" and character then
+				character:SetAttribute(MeleeCombatConfig.Guard.AttributeName, false)
+			end
 			synchronizeReserveContext(player, state)
 			local equippedSlot = state[payload.Slot]
 			if equippedSlot then
@@ -410,6 +427,11 @@ function FirearmService:Init(
 	Players.PlayerAdded:Connect(setupPlayer)
 	Players.PlayerRemoving:Connect(function(player) states[player] = nil end)
 	for _, player in Players:GetPlayers() do setupPlayer(player) end
+end
+
+function FirearmService:IsMeleeEquipped(player)
+	local state = states[player]
+	return state ~= nil and state.ActiveSlot == "Melee"
 end
 
 return FirearmService

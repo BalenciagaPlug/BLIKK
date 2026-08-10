@@ -9,6 +9,12 @@ local CameraConfig = {
 	CameraHeightAboveRootStuds = 3.25,
 	CameraRightOffsetStuds = 2.5,
 
+	MouseInput = {
+		-- BLIKK owns sensitivity in degrees per input pixel. Keep Roblox's additional
+		-- delta scale neutral so one physical delta is integrated exactly once.
+		DeltaSensitivityScale = 1,
+	},
+
 	DeveloperFreeLook = {
 		Enabled = true,
 		PitchMinDegrees = -75,
@@ -29,7 +35,6 @@ local CameraConfig = {
 		FallbackDistanceStuds = 11,
 		TargetVerticalOffsetStuds = 2.25,
 		ZoomStepStuds = 1.5,
-		SensitivityMultiplier = 1,
 	},
 
 	Obstruction = {

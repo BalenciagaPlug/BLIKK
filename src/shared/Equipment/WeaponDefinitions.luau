@@ -12,6 +12,7 @@ local WeaponDefinitions = {
 			KatanaUnequip = "",
 			KatanaIdle = "",
 			KatanaSlash1 = "",
+			KatanaAltLaunch = "",
 			KatanaBlockEnter = "",
 			KatanaBlockHold = "",
 			KatanaBlockExit = "",

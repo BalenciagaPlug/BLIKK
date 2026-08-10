@@ -412,7 +412,8 @@ function Effects:Destroy()
 end
 
 function FirearmShotEffects.Create(shotRemote, soundEffectsController)
-	assert(shotRemote and shotRemote:IsA("RemoteEvent"), "FirearmShotEffects requires FirearmShot")
+	assert(shotRemote and shotRemote:IsA("UnreliableRemoteEvent"),
+		"FirearmShotEffects requires the presentation-only FirearmShot channel")
 	assert(soundEffectsController, "FirearmShotEffects requires SoundEffectsController")
 	local folder = Instance.new("Folder")
 	folder.Name = "BLIKK_FirearmShotEffects"

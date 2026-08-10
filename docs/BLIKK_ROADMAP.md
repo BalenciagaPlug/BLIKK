@@ -75,14 +75,15 @@ Starter Combat
 
 # Phase 3 — K-Style
 
-- Butterfly candidate rhythm prototype
+- Butterfly candidate rhythm prototype (implemented)
 - Wall-contact and wall-jump foundation
-- Authoritative/final Butterfly validation
-- Double Butterfly
-- Triple Butterfly
-- Slash Shot
-- Reload Shot
-- Half Step
+- Authoritative/final Butterfly validation (implemented)
+- Double Butterfly (implemented; Studio feel validation pending)
+- Triple Butterfly (implemented; Studio feel validation pending)
+- Swap Shot (implemented; Studio feel validation pending)
+- Slash Shot (implemented; Studio feel validation pending)
+- Reload Shot (implemented; Studio feel validation pending)
+- Half Step (implemented; Studio feel validation pending)
 - Reload Half Step
 - Wall Cancels
 

@@ -96,9 +96,9 @@ local cameraSliders = {
 	},
 	{
 		Key = "MouseSensitivityDegreesPerPixel",
-		Label = "MOUSE SENSITIVITY",
+		Label = "MOUSE SENSITIVITY // DIRECT",
 		Decimals = 3,
-		Suffix = "",
+		Suffix = " DEG/PX",
 		AllowNumericEntry = true,
 	},
 }
@@ -401,11 +401,18 @@ local function createSlider(parent, definition, rowIndex, source, ranges)
 	updateSliderVisual(control)
 
 	if definition.AllowNumericEntry then
+		valueLabel.Focused:Connect(function()
+			local displayValue = control.Source:Get(control.Key)
+				* (control.DisplayMultiplier or 1)
+			valueLabel.Text = string.format("%." .. control.Decimals .. "f", displayValue)
+			valueLabel.CursorPosition = #valueLabel.Text + 1
+		end)
 		valueLabel.FocusLost:Connect(function(enterPressed)
 			cancelPendingSliderCommit(control)
 			local typedValue = tonumber(valueLabel.Text)
 
 			if typedValue then
+				typedValue /= control.DisplayMultiplier or 1
 				local range = control.Range
 				local steppedValue = range.Minimum
 					+ math.round((typedValue - range.Minimum) / range.Step) * range.Step
@@ -511,7 +518,7 @@ local function createCameraPage(parent)
 	local sensitivityNote = createLabel(
 		parent,
 		"SensitivityNote",
-		"SENSITIVITY IS IN-GAME DEG/PIXEL // PHYSICAL MOUSE DPI IS NOT DETECTED",
+		"LINEAR 1:1 AXES // NO ACCELERATION OR SMOOTHING // PHYSICAL DPI IS NOT DETECTED",
 		UDim2.fromOffset(238, 427),
 		UDim2.new(1, -254, 0, 31),
 		9,

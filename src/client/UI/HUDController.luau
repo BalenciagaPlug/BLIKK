@@ -8,6 +8,7 @@ local CharacterDependency = require(ReplicatedStorage.Shared.Character.Character
 local FighterVitalsConfig = require(ReplicatedStorage.Shared.Combat.FighterVitalsConfig)
 local MeleeConfig = require(ReplicatedStorage.Shared.Combat.MeleePresentationConfig)
 local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
+local RecoveryConfig = require(ReplicatedStorage.Shared.Recovery.RecoveryConfig)
 
 local HUDController = {}
 
@@ -37,10 +38,16 @@ local ammoTrack = nil
 local ammoLabel = nil
 local weaponSilhouette = nil
 local dataStateLabel = nil
+local recoveryRoot = nil
+local recoveryLabels = {}
+local recoverySlots = {}
+local recoveryAttributeConnections = {}
+local addStroke
+local createLabel
 
 local function applyHudScale()
 	local scale = SessionSettings:Get("UIScale") * SessionSettings:Get("HudScale")
-	for _, target in { statusRoot, weaponRoot } do
+	for _, target in { statusRoot, weaponRoot, recoveryRoot } do
 		if target then
 			local scaler = target:FindFirstChildOfClass("UIScale") or Instance.new("UIScale")
 			scaler.Scale = scale
@@ -49,14 +56,83 @@ local function applyHudScale()
 	end
 end
 
-local function addStroke(instance, color, thickness)
+local function createRecoveryBlock(parent)
+	local root = Instance.new("Frame")
+	root.Name = "RecoveryBelt"
+	root.AnchorPoint = Vector2.new(0.5, 1)
+	root.BackgroundColor3 = colors.Backdrop
+	root.BackgroundTransparency = 0.18
+	root.BorderSizePixel = 0
+	root.Position = UDim2.new(0.5, 0, 1, -18)
+	root.Size = UDim2.fromOffset(500, 52)
+	root.Parent = parent
+	recoveryRoot = root
+	Instance.new("UIScale").Parent = root
+	addStroke(root, colors.Metal, 2)
+
+	for index, itemId in RecoveryConfig.InventoryOrder do
+		local definition = RecoveryConfig.Definitions[itemId]
+		local slot = Instance.new("Frame")
+		slot.Name = itemId
+		slot.BackgroundColor3 = colors.Panel
+		slot.BackgroundTransparency = 0.12
+		slot.BorderSizePixel = 0
+		slot.Position = UDim2.fromOffset(5 + (index - 1) * 123, 5)
+		slot.Size = UDim2.fromOffset(118, 42)
+		slot.Parent = root
+		recoverySlots[itemId] = slot
+		local edge = Instance.new("Frame")
+		edge.BackgroundColor3 = definition.Color
+		edge.BorderSizePixel = 0
+		edge.Size = UDim2.fromOffset(4, 42)
+		edge.Parent = slot
+		local label = createLabel(
+			slot,
+			"Status",
+			string.format("%d // %s\nX--", index + 3, definition.ShortName),
+			UDim2.fromOffset(9, 3),
+			UDim2.fromOffset(105, 36),
+			11,
+			colors.Text
+		)
+		label.TextWrapped = true
+		label.TextTruncate = Enum.TextTruncate.None
+		label.TextYAlignment = Enum.TextYAlignment.Center
+		recoveryLabels[itemId] = label
+	end
+end
+
+local function updateRecovery(recoveryController)
+	for index, itemId in RecoveryConfig.InventoryOrder do
+		local definition = RecoveryConfig.Definitions[itemId]
+		local count = recoveryController:GetCount(itemId)
+		local label = recoveryLabels[itemId]
+		local slot = recoverySlots[itemId]
+		local equipped = recoveryController:GetEquippedItem() == itemId
+		if label then
+			label.Text = string.format("%d // %s%s\nX%d", index + 3, definition.ShortName,
+				if equipped then " // READY" else "", count)
+			label.TextColor3 = if count > 0 then colors.Text else colors.TextMuted
+		end
+		if slot then
+			slot.BackgroundColor3 = if equipped then definition.Color:Lerp(colors.Panel, 0.72) else colors.Panel
+		end
+	end
+end
+
+local function disconnectRecoveryAttributes()
+	for _, connection in recoveryAttributeConnections do connection:Disconnect() end
+	table.clear(recoveryAttributeConnections)
+end
+
+addStroke = function(instance, color, thickness)
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = color
 	stroke.Thickness = thickness
 	stroke.Parent = instance
 end
 
-local function createLabel(parent, name, text, position, size, textSize, color, alignment)
+createLabel = function(parent, name, text, position, size, textSize, color, alignment)
 	local label = Instance.new("TextLabel")
 	label.Name = name
 	label.BackgroundTransparency = 1
@@ -317,6 +393,19 @@ local function createKatanaSilhouette(parent)
 	createLine(parent, "Pommel", UDim2.fromOffset(3, 36), UDim2.fromOffset(10, 13), colors.TechniqueDark, -8)
 end
 
+local function createRecoverySilhouette(parent, definition)
+	if definition.Delivery == "Self" then
+		createLine(parent, "Ampoule", UDim2.fromOffset(82, 25), UDim2.fromOffset(142, 16), definition.Color, -7)
+		createLine(parent, "Core", UDim2.fromOffset(112, 27), UDim2.fromOffset(78, 10),
+			definition.Color:Lerp(colors.Text, 0.55), -7)
+		createLine(parent, "Injector", UDim2.fromOffset(214, 23), UDim2.fromOffset(32, 5), colors.Metal, -7)
+	else
+		local body = createLine(parent, "Patch", UDim2.fromOffset(104, 8), UDim2.fromOffset(92, 48), definition.Color, -5)
+		addStroke(body, colors.Metal, 2)
+		createLine(parent, "StatusStrip", UDim2.fromOffset(124, 26), UDim2.fromOffset(52, 6), colors.Text, -5)
+	end
+end
+
 local function createWeaponBlock(parent)
 	local size = style.WeaponSize
 	local root = Instance.new("Frame")
@@ -392,7 +481,28 @@ local function clearSilhouette()
 	for _, child in weaponSilhouette:GetChildren() do child:Destroy() end
 end
 
-local function updateWeapon(fighterController, firearmController)
+local function updateWeapon(fighterController, firearmController, recoveryController)
+	local recoveryItemId = recoveryController and recoveryController:GetEquippedItem() or nil
+	local recoveryDefinition = recoveryItemId and RecoveryConfig.Definitions[recoveryItemId] or nil
+	if recoveryDefinition then
+		local count = recoveryController:GetCount(recoveryItemId)
+		weaponSlotLabel.Text = "SLOT // EQUIPMENT"
+		weaponNameLabel.Text = recoveryDefinition.DisplayName
+		weaponStatsLabel.Text = string.format("+%d %s  |  STOCK X%d",
+			recoveryDefinition.Recovery,
+			if recoveryDefinition.Resource == "Health" then "HP" else "AP",
+			count
+		)
+		ammoTrack.Visible = true
+		ammoLabel.Visible = true
+		ammoLabel.Text = string.format("X%d", count)
+		ammoTrack.Size = UDim2.fromOffset(218 * math.clamp(count / recoveryDefinition.StockPerLife, 0, 1), 13)
+		ammoTrack.BackgroundColor3 = if count > 0 then recoveryDefinition.Color else colors.Blood
+		dataStateLabel.Text = if recoveryDefinition.Delivery == "Self" then "LMB // APPLY" else "LMB // DEPLOY"
+		clearSilhouette()
+		createRecoverySilhouette(weaponSilhouette, recoveryDefinition)
+		return
+	end
 	local fighter = fighterController:GetFighter()
 	local slotId = fighter.ActiveWeaponSlot
 	local definition = fighterController:GetWeaponDefinition(slotId)
@@ -464,12 +574,13 @@ local function disconnectVitals()
 	maximumArmourConnection = nil
 end
 
-local function bindCharacter(character)
+local function bindCharacter(character, recoveryController)
 	characterGeneration += 1
 	local bindGeneration = characterGeneration
 	characterBindingTarget = character
 	if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 	disconnectVitals()
+	disconnectRecoveryAttributes()
 	healthCharacter = nil
 	cancelDependencyWatch = CharacterDependency.ObserveHumanoidAndRoot(
 		character,
@@ -496,6 +607,14 @@ local function bindCharacter(character)
 				if bindGeneration == characterGeneration then updateArmour(character) end
 			end)
 			healthCharacter = character
+			updateRecovery(recoveryController)
+			for _, itemId in RecoveryConfig.InventoryOrder do
+				table.insert(recoveryAttributeConnections, character:GetAttributeChangedSignal(
+					RecoveryConfig.Attributes.CountPrefix .. itemId
+				):Connect(function()
+					if bindGeneration == characterGeneration then updateRecovery(recoveryController) end
+				end))
+			end
 			character:SetAttribute("BLIKK_ClientHudReady", true)
 		end,
 		function()
@@ -506,7 +625,7 @@ local function bindCharacter(character)
 	)
 end
 
-function HUDController:Init(fighterController, firearmController)
+function HUDController:Init(fighterController, firearmController, recoveryController)
 	if isInitialised then
 		return
 	end
@@ -528,7 +647,8 @@ function HUDController:Init(fighterController, firearmController)
 	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	createStatusBlock(screenGui)
 	createWeaponBlock(screenGui)
-	updateWeapon(fighterController, firearmController)
+	updateWeapon(fighterController, firearmController, recoveryController)
+	updateRecovery(recoveryController)
 	applyHudScale()
 	screenGui.Enabled = SessionSettings:Get("HudVisible")
 	screenGui.Parent = playerGui
@@ -541,28 +661,39 @@ function HUDController:Init(fighterController, firearmController)
 		end
 	end)
 
-	player.CharacterAdded:Connect(bindCharacter)
+	player.CharacterAdded:Connect(function(character)
+		bindCharacter(character, recoveryController)
+	end)
 	player.CharacterRemoving:Connect(function(removingCharacter)
 		if removingCharacter ~= characterBindingTarget then return end
 		characterGeneration += 1
 		characterBindingTarget = nil
 		if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 		disconnectVitals()
+		disconnectRecoveryAttributes()
 		healthCharacter = nil
 	end)
 	fighterController.LoadoutChanged.Event:Connect(function(changeType)
 		if changeType == "ActiveWeaponSlot" or changeType == "Weapon" then
-			updateWeapon(fighterController, firearmController)
+			updateWeapon(fighterController, firearmController, recoveryController)
 		end
 	end)
 	if firearmController then
 		firearmController.StateChanged.Event:Connect(function()
-			updateWeapon(fighterController, firearmController)
+			updateWeapon(fighterController, firearmController, recoveryController)
 		end)
 	end
+	recoveryController.InventoryChanged.Event:Connect(function()
+		updateRecovery(recoveryController)
+		updateWeapon(fighterController, firearmController, recoveryController)
+	end)
+	recoveryController.EquippedItemChanged.Event:Connect(function()
+		updateRecovery(recoveryController)
+		updateWeapon(fighterController, firearmController, recoveryController)
+	end)
 
 	if player.Character then
-		bindCharacter(player.Character)
+		bindCharacter(player.Character, recoveryController)
 	end
 end
 

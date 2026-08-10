@@ -37,7 +37,9 @@ local EXPECTED_CAPABILITIES = { "Root", "Waist", "RightShoulder", "LeftShoulder"
 local function clearApplied()
 	for alias in applied do
 		local joint = joints[alias]
-		if joint and joint.Parent then joint.Transform = CFrame.identity end
+		if joint and joint.Parent and joint:IsA("Motor6D") then
+			joint.Transform = CFrame.identity
+		end
 	end
 	table.clear(applied)
 end
@@ -51,6 +53,7 @@ local function bindCharacter(character)
 	table.clear(joints)
 	boundCharacter = character
 	character:SetAttribute("BLIKK_ClientPoseReady", nil)
+	character:SetAttribute("BLIKK_ClientPoseJointType", nil)
 	local function hasAllCapabilities()
 		for _, alias in EXPECTED_CAPABILITIES do
 			if not joints[alias] then return false end
@@ -61,13 +64,19 @@ local function bindCharacter(character)
 		if not hasAllCapabilities() or bindGeneration ~= generation
 			or player.Character ~= character or not character.Parent then return false end
 		character:SetAttribute("BLIKK_ClientPoseReady", true)
+		character:SetAttribute("BLIKK_ClientPoseJointType", joints.Root.ClassName)
 		return true
 	end
 	local function register(descendant)
-		if not descendant:IsA("Motor6D") then return end
+		if not descendant:IsA("AnimationConstraint") and not descendant:IsA("Motor6D") then return end
 		local alias = aliases[descendant.Name:gsub(" ", "")]
 		if alias then
-			joints[alias] = descendant
+			local current = joints[alias]
+			-- Avatar Joint Upgrade characters can temporarily expose compatibility
+			-- joints while they assemble. Prefer the engine's final constraint joint.
+			if descendant:IsA("AnimationConstraint") or not current or not current.Parent then
+				joints[alias] = descendant
+			end
 			markReady()
 		end
 	end
@@ -96,11 +105,8 @@ local function bindCharacter(character)
 		table.sort(discovered)
 		local humanoid = character:FindFirstChildOfClass("Humanoid")
 		if #discovered == 0 then
-			-- Upgraded rigs retain their native AnimationConstraint presentation. This
-			-- read-only capability check must not register those joints for pose claims.
-			if character:FindFirstChildWhichIsA("AnimationConstraint", true) then return end
 			warn(string.format(
-				"[BLIKK POSE] No supported Motor6D or upgraded AnimationConstraint "
+				"[BLIKK POSE] No supported Motor6D or AnimationConstraint "
 					.. "pose joint graph found. RigType=%s Missing=%s",
 				humanoid and humanoid.RigType.Name or "Unknown",
 				table.concat(missing, ",")
@@ -118,16 +124,20 @@ end
 
 local function applyClaims()
 	local selected = {}
-	for _, claim in claims do
+	for owner, claim in claims do
 		for alias, target in claim.Poses do
 			local current = selected[alias]
-			if not current or claim.Priority > current.Priority
-				or claim.Priority == current.Priority and claim.Serial > current.Serial then
+			local priority = math.max(claim.Priority, claim.PriorityOverrides[alias] or claim.Priority)
+			if not current or priority > current.Priority
+				or priority == current.Priority and claim.Serial > current.Serial then
 				selected[alias] = {
-					Priority = claim.Priority,
+					Owner = owner,
+					Priority = priority,
 					Serial = claim.Serial,
 					Target = target,
 					Blend = claim.Blend,
+					SuppressAnimator = claim.SuppressAnimator[alias] == true,
+					StableReference = claim.StableReference[alias] == true,
 				}
 			end
 		end
@@ -135,23 +145,70 @@ local function applyClaims()
 	for alias in applied do
 		if not selected[alias] then
 			local joint = joints[alias]
-			if joint and joint.Parent then joint.Transform = CFrame.identity end
+			if joint and joint.Parent and joint:IsA("Motor6D") then
+				joint.Transform = CFrame.identity
+			end
 			applied[alias] = nil
 		end
 	end
 	for alias, selection in selected do
 		local joint = joints[alias]
 		if joint and joint.Parent then
-			joint.Transform = joint.Transform:Lerp(selection.Target, selection.Blend or 1)
-			applied[alias] = true
+			local blend = selection.Blend or 1
+			if selection.SuppressAnimator then
+				-- Weapon-bearing limbs must not inherit the Animator's walk-cycle arm
+				-- swing. Retain our last resolved weapon pose as the blend source so
+				-- transitions stay smooth while locomotion continues on unmasked joints.
+				local previous = applied[alias]
+				local sameOwner = previous and previous.SuppressAnimator
+					and previous.Owner == selection.Owner
+				local reference = if sameOwner and previous.StableReference
+					then previous.StableReference else joint.Transform
+				local from = if selection.StableReference
+					then reference
+					else if sameOwner then previous.ResolvedTarget else joint.Transform
+				-- A stable weapon idle must not be recomputed from a variable render
+				-- delta every frame. Cache an unchanged target's first resolved pose;
+				-- changing slash/block targets still evaluate normally.
+				local targetUnchanged = sameOwner and previous.Target == selection.Target
+				local resolved = if selection.StableReference and targetUnchanged
+					then previous.ResolvedTarget else from:Lerp(selection.Target, blend)
+				joint.Transform = resolved
+				applied[alias] = {
+					Owner = selection.Owner,
+					Target = selection.Target,
+					ResolvedTarget = resolved,
+					SuppressAnimator = true,
+					StableReference = if selection.StableReference then reference else nil,
+				}
+			elseif joint:IsA("AnimationConstraint") then
+				-- Animator evaluates before PreSimulation. Layering the procedural
+				-- offset here preserves locomotion and avatar retargeting underneath.
+				joint.Transform = CFrame.identity:Lerp(selection.Target, blend) * joint.Transform
+			else
+				joint.Transform = joint.Transform:Lerp(selection.Target, blend)
+				applied[alias] = { Owner = selection.Owner, SuppressAnimator = false }
+			end
 		end
 	end
 end
 
-function PoseCoordinator:Submit(owner, priority, poses, blend)
+function PoseCoordinator:Submit(owner, priority, poses, blend, options)
 	if type(owner) ~= "string" or type(poses) ~= "table" then return end
+	options = if type(options) == "table" then options else {}
 	claimSerial += 1
-	claims[owner] = { Priority = priority, Serial = claimSerial, Poses = poses, Blend = blend }
+	claims[owner] = {
+		Priority = priority,
+		Serial = claimSerial,
+		Poses = poses,
+		Blend = blend,
+		SuppressAnimator = if type(options.SuppressAnimator) == "table"
+			then options.SuppressAnimator else {},
+		StableReference = if type(options.StableReference) == "table"
+			then options.StableReference else {},
+		PriorityOverrides = if type(options.PriorityOverrides) == "table"
+			then options.PriorityOverrides else {},
+	}
 end
 
 function PoseCoordinator:Release(owner)
@@ -172,11 +229,9 @@ function PoseCoordinator:Init()
 		boundCharacter = nil
 	end)
 	if player.Character then bindCharacter(player.Character) end
-	RunService:BindToRenderStep(
-		"BLIKKPoseCoordinator",
-		Enum.RenderPriority.Character.Value + 10,
-		applyClaims
-	)
+	-- AnimationConstraint.Transform is written by Animator after PreAnimation;
+	-- PreSimulation is the supported phase for a procedural layer.
+	RunService.PreSimulation:Connect(applyClaims)
 end
 
 return PoseCoordinator

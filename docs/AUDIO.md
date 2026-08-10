@@ -72,8 +72,14 @@ camera ownership is active.
 An accepted Katana slash schedules its air cut for the existing anticipation/active-window boundary.
 The pending cue is generation-gated and cancelled by block, unequip, holster, interruption, weapon
 switch, dash, or teardown before that boundary. The two existing slash variants use only a narrow
-configured pitch difference. `MeleeHitConfirm` is registered as a future API contract but has no
-runtime caller: melee presentation, overlap, slash input, and trails cannot produce a fake hit cue.
+configured pitch difference. `MeleeHitConfirm` is requested only from a validated shooter-private
+melee result with positive server-applied damage. Local presentation, overlap, input, and trails
+cannot produce a fake hit cue.
+
+Server-confirmed Katana contact additionally drives `KatanaImpact` at the accepted world position.
+Wall and guard contacts play for every recipient; fighter contact plays for remote observers while
+the local attacker keeps the private `MeleeHitConfirm` without a doubled recording. The cue uses an
+8-to-90-stud positional rolloff and cannot be triggered by the animated blade or a client-authored hit.
 
 `CombatFeedbackController` requests `FirearmHitConfirm` once per accepted shot only when the validated
 server result reports positive total applied damage. It requests `ReloadInitiated` only from the
@@ -91,8 +97,9 @@ confirmed impact position with volume `1.45`, an 18-stud full-level radius, and 
 rolloff distance. This keeps the solo-training death cue prominent without raising every player death.
 
 `UINavigationController` emits semantic navigation, activation, confirmation, back, denied, and
-slider-step events to the same owner. Automatic initial selection is silent. Hover navigation emits
-only when focus changes; disabled, hidden, and inactive controls are silent. A registered control may
+slider-step events to the same owner. Arrow keys and W/A/S/D use the same explicit focus graph, and
+an externally changed valid selection also emits one de-duplicated navigation event. Automatic initial
+selection is silent. Hover navigation emits only when focus changes; disabled, hidden, and inactive controls are silent. A registered control may
 select `Activate`, `Confirm`, `Back`, `Denied`, or `Silent`; sliders use the dedicated throttled role.
 The shared layer de-duplicates keyboard/controller activation from Roblox `Activated` delivery. Room
 create/join confirmation is deferred until a successful transport result; genuine rejection emits the
@@ -112,7 +119,8 @@ grant permission to redistribute an asset outside Roblox or outside the terms at
 | `B8DryFire` | Equipped, ready, empty trigger click | `TheNikolas24`, asset name `Dry Fire Gun-Sound` | `rbxassetid://484110242` | Creator Store / Get Audio; target-place preload pending | Catalog-selected; Studio combat-mix pass required | Yes |
 | `KatanaSlash` | Active-window blade-air cut | `GleonoffG`, asset name `Katana Slash Wind 2` | `rbxassetid://140180249061198` | Creator Store / Get Audio; target-place preload pending | Catalog-selected; slash-timing pass required | Yes |
 | `FirearmHitConfirm` | Shooter-private positive authoritative firearm damage tick | `NeoDoesStuff`, asset name `hitmarker_2` | `rbxassetid://125235091454234` | Creator Store / Get Audio; target-place preload pending | Catalog-selected replacement; authoritative damage and mix pass required | Yes |
-| `MeleeHitConfirm` | Future shooter-private positive authoritative melee damage | `ProSoundEffects`, asset name `Sword Hit 4 (SFX)` | `rbxassetid://9119746751` | Roblox licensed catalog entry; target-place preload pending | Catalog-selected; remains unheard until authoritative melee damage exists | Yes; no runtime caller yet |
+| `MeleeHitConfirm` | Shooter-private positive authoritative melee damage | `ProSoundEffects`, asset name `Sword Hit 4 (SFX)` | `rbxassetid://9119746751` | Roblox licensed catalog entry; target-place preload pending | Catalog-selected; authoritative damage and mix pass required | Yes |
+| `KatanaImpact` | Positional validated wall, guard, and remote fighter contact | `ProSoundEffects`, asset name `Sword Hit 4 (SFX)` | `rbxassetid://9119746751` | Roblox licensed catalog entry; target-place preload pending | Reused at lower pitch/level; spatial contact pass required | Yes |
 | `ReloadInitiated` | Shooter-private authoritative reload acceptance | `WackyWafflerz` (`581230884`), asset name `Gun Reload` | `rbxassetid://8145744063` | Baseline-approved in target experience | Identity approved; level re-audition required | Yes |
 | `WeaponSwitch` | Successful local slot commit | `Spellwright`, asset name `Weapon equip` | `rbxassetid://5508953366` | Creator Store / Get Audio; target-place preload pending | Catalog-selected; Studio mix pass required | Yes |
 | `PlayerDeath` | Positional player-character death cry | `ProSoundEffects`, asset name `Male Scream Short Yelling Bursts Death Cries (SFX)` | `rbxassetid://9125653559` | Roblox licensed catalog entry / Get Audio; target-place preload pending | Catalog-selected; spatial mix and rapid-respawn pass required | Yes |

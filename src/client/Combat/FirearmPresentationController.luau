@@ -11,9 +11,29 @@ local CombatConfig = require(ReplicatedStorage.Shared.Combat.FirearmCombatConfig
 local FeedbackConfig = require(ReplicatedStorage.Shared.Combat.FirearmShotFeedbackConfig)
 local FighterSlots = require(ReplicatedStorage.Shared.Character.FighterSlots)
 local MovementConfig = require(ReplicatedStorage.Shared.Movement.MovementConfig)
+local TechniqueConfig = require(ReplicatedStorage.Shared.Movement.TechniqueConfig)
 local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
 
 local Controller = {}
+
+local WEAPON_ARM_POSE_OPTIONS = {
+	SuppressAnimator = {
+		RightShoulder = true,
+		LeftShoulder = true,
+		RightElbow = true,
+		LeftElbow = true,
+		RightWrist = true,
+		LeftWrist = true,
+	},
+	PriorityOverrides = {
+		RightShoulder = Config.ActionPriority,
+		LeftShoulder = Config.ActionPriority,
+		RightElbow = Config.ActionPriority,
+		LeftElbow = Config.ActionPriority,
+		RightWrist = Config.ActionPriority,
+		LeftWrist = Config.ActionPriority,
+	},
+}
 Controller.StateChanged = Instance.new("BindableEvent")
 Controller.SemanticEvent = Instance.new("BindableEvent")
 
@@ -336,6 +356,10 @@ local function recoilEnvelope(elapsedSeconds)
 	return 1 - returnElapsed / recoil.ReturnSeconds
 end
 
+local function rotationFromDegrees(degrees)
+	return CFrame.Angles(math.rad(degrees.X), math.rad(degrees.Y), math.rad(degrees.Z))
+end
+
 local function commitSwitch(slotId, requestGeneration, characterGeneration)
 	if requestGeneration ~= switchGeneration or characterGeneration ~= generation
 		or not character or player.Character ~= character then return end
@@ -427,9 +451,13 @@ local function fireActive()
 	if os.clock() < slot.NextFireAt then return false end
 	local muzzleAttachment = slot.Model.PrimaryPart:FindFirstChild("MuzzleAttachment")
 	local aim = readFreshGameplayAim(slot)
-	if not aim or not muzzleAttachment or not muzzleAttachment:IsA("Attachment") then return false end
-	local muzzleDirection = aim.AimPoint - muzzleAttachment.WorldPosition
-	if muzzleDirection.Magnitude < 0.001 then return false end
+	if not aim or not rootPart or not rootPart.Parent
+		or not muzzleAttachment or not muzzleAttachment:IsA("Attachment") then return false end
+	local gameplayOrigin = rootPart.Position
+		+ Vector3.yAxis * CombatConfig.Aim.MuzzleUpStuds
+		+ rootPart.CFrame.LookVector * CombatConfig.Aim.MuzzleForwardStuds
+	local gameplayDirection = aim.AimPoint - gameplayOrigin
+	if gameplayDirection.Magnitude < 0.001 then return false end
 	local preferredBarrel = slot.LastBarrel % Config.ChamberCapacity + 1
 	local barrel = nil
 	for offset = 0, Config.ChamberCapacity - 1 do
@@ -460,7 +488,9 @@ local function fireActive()
 		Operation = "Fire",
 		Slot = slot.Id,
 		Sequence = sequence,
-		AimDirection = muzzleDirection.Unit,
+		-- The stable root-relative origin converges on the centered crosshair point.
+		-- The rendered muzzle may animate, but presentation must never steer a shot.
+		AimDirection = gameplayDirection.Unit,
 		ClientTimestamp = acceptedAt,
 	})
 	slot.Barrels[barrel] = false
@@ -494,7 +524,12 @@ end
 
 local function reloadActive()
 	local slot = slots[activeSlot]
-	if pendingSwitch or not gameplayEnabled or inputSuppressed or not slot or slot.State ~= "Ready"
+	local reloadShotWindow = TechniqueConfig.WeaponWeave.ReloadShot.ReloadAfterFireMaximumSeconds
+	local isReloadShotCancel = slot and slot.LastFireAt
+		and (slot.State == "Firing" or slot.State == "Recovering")
+		and os.clock() - slot.LastFireAt <= reloadShotWindow
+	if pendingSwitch or not gameplayEnabled or inputSuppressed or not slot
+		or (slot.State ~= "Ready" and not isReloadShotCancel)
 		or chamberCount(slot) >= Config.ChamberCapacity
 		or (not slot.UnlimitedReserve and slot.Reserve <= 0) then return false end
 	slot.Token += 1
@@ -541,14 +576,13 @@ local function reloadActive()
 	return true
 end
 
-local function beginTumble(action, _, grounded)
-	if pendingSwitch or not slots[activeSlot] then return end
-	local duration = MovementConfig.Dash.EntryDurationSeconds
-		+ MovementConfig.Dash.TravelDurationSeconds
-		+ MovementConfig.Dash.ExitDurationSeconds
+local function beginTumble(action, _, _, kind)
+	if kind ~= "Tumble" or pendingSwitch or not slots[activeSlot] then return end
+	local duration = MovementConfig.Tumble.EntryDurationSeconds
+		+ MovementConfig.Tumble.TravelDurationSeconds
+		+ MovementConfig.Tumble.ExitDurationSeconds
 	tumble = {
 		Action = action,
-		Grounded = grounded,
 		StartedAt = os.clock(),
 		Duration = duration,
 		Slot = activeSlot,
@@ -583,14 +617,14 @@ local function updatePose()
 		return
 	end
 	refreshAimRigOwnership()
+	local carryPose = Config.Pose.FallbackCarry
 	local poses = {
-		Waist = CFrame.Angles(math.rad(-3), math.rad(4), 0),
-		RightShoulder = CFrame.Angles(math.rad(-72), math.rad(-8), math.rad(18)),
-		LeftShoulder = CFrame.Angles(math.rad(-62), math.rad(12), math.rad(-26)),
-		RightElbow = CFrame.Angles(math.rad(-18), 0, 0),
-		LeftElbow = CFrame.Angles(math.rad(-32), 0, 0),
+		Waist = rotationFromDegrees(carryPose.Waist),
+		RightShoulder = rotationFromDegrees(carryPose.RightShoulder),
+		LeftShoulder = rotationFromDegrees(carryPose.LeftShoulder),
+		RightElbow = rotationFromDegrees(carryPose.RightElbow),
+		LeftElbow = rotationFromDegrees(carryPose.LeftElbow),
 	}
-	local priority = Config.IdlePriority
 	local moveVector = movementEngineController and movementEngineController:GetMoveVector() or Vector3.zero
 	if moveVector.Magnitude > 0.05 and character then
 		local root = character:FindFirstChild("HumanoidRootPart")
@@ -621,12 +655,10 @@ local function updatePose()
 	if recoilAlpha > 0 then
 		poses.Waist *= CFrame.Angles(math.rad(FeedbackConfig.Recoil.PitchDegrees * 0.5 * recoilAlpha), 0, 0)
 		poses.RightShoulder *= CFrame.Angles(math.rad(FeedbackConfig.Recoil.PitchDegrees * recoilAlpha), 0, 0)
-		priority = Config.ActionPriority
 	end
 	if string.sub(slot.State, 1, 6) == "Reload" then
-		poses.RightShoulder = CFrame.Angles(math.rad(-48), math.rad(-18), math.rad(25))
-		poses.LeftShoulder = CFrame.Angles(math.rad(-78), math.rad(20), math.rad(-32))
-		priority = Config.ActionPriority
+		poses.RightShoulder = rotationFromDegrees(Config.Pose.Reload.RightShoulder)
+		poses.LeftShoulder = rotationFromDegrees(Config.Pose.Reload.LeftShoulder)
 	else
 		local pumpElapsed = recoilElapsed - FeedbackConfig.Recoil.PumpDelaySeconds
 		if pumpElapsed >= 0 and pumpElapsed < FeedbackConfig.Recoil.PumpCycleSeconds then
@@ -641,8 +673,8 @@ local function updatePose()
 		end
 	end
 	if aimRig then
-		local shouldSolve = not tumble
-			and (slot.State == "Ready" or slot.State == "Firing" or slot.State == "Recovering")
+		local shouldSolve = slot.State == "Ready" or slot.State == "Firing"
+			or slot.State == "Recovering"
 		if shouldSolve then
 			local updated, reason = true, nil
 			if freshAim then
@@ -661,21 +693,53 @@ local function updatePose()
 			aimRig:SetEnabled(false)
 		end
 	end
-	PoseCoordinator:Submit("Firearm", priority, poses, 0.35)
+	-- Body accents yield to dash/wall counter-rotation, while arm overrides in
+	-- WEAPON_ARM_POSE_OPTIONS retain action priority and crosshair ownership.
+	PoseCoordinator:Submit("Firearm", Config.IdlePriority, poses, 0.35, WEAPON_ARM_POSE_OPTIONS)
 
 	if tumble then
 		local alpha = math.clamp((os.clock() - tumble.StartedAt) / tumble.Duration, 0, 1)
-		local wave = math.sin(alpha * math.pi)
-		local full = not tumble.Grounded
-		local angle = (full and 360 * alpha or 42 * wave)
+		local tumbleConfig = Config.Tumble
+		local easedAlpha
+		if alpha < tumbleConfig.FloatStartProgress then
+			local phase = alpha / tumbleConfig.FloatStartProgress
+			easedAlpha = tumbleConfig.FloatRotationShare * phase * phase * (3 - 2 * phase)
+		elseif alpha <= tumbleConfig.FloatEndProgress then
+			local phase = (alpha - tumbleConfig.FloatStartProgress)
+				/ (tumbleConfig.FloatEndProgress - tumbleConfig.FloatStartProgress)
+			easedAlpha = tumbleConfig.FloatRotationShare + phase * 0.08
+		else
+			local phase = (alpha - tumbleConfig.FloatEndProgress) / (1 - tumbleConfig.FloatEndProgress)
+			phase = phase * phase * (3 - 2 * phase)
+			easedAlpha = tumbleConfig.FloatRotationShare + 0.08
+				+ (1 - tumbleConfig.FloatRotationShare - 0.08) * phase
+		end
+		local wave = math.sin(alpha * math.pi) ^ 0.58
+		local angle = tumbleConfig.RotationDegrees * easedAlpha
 		local tumblePose = {}
-		if tumble.Action == "Forward" then tumblePose.Root = CFrame.Angles(math.rad(-angle), 0, 0)
-		elseif tumble.Action == "Backward" then tumblePose.Root = CFrame.Angles(math.rad(angle), 0, 0)
-		elseif tumble.Action == "Left" then tumblePose.Root = CFrame.Angles(0, 0, math.rad(angle))
-		else tumblePose.Root = CFrame.Angles(0, 0, math.rad(-angle)) end
-		tumblePose.Waist = CFrame.Angles(math.rad(-18 * wave), 0, 0)
-		tumblePose.LeftHip = CFrame.Angles(math.rad(38 * wave), 0, math.rad(-12 * wave))
-		tumblePose.RightHip = CFrame.Angles(math.rad(-24 * wave), 0, math.rad(12 * wave))
+		local lift = tumbleConfig.VisualLiftStuds * wave
+		local bodyRotation
+		if tumble.Action == "Forward" then
+			bodyRotation = CFrame.Angles(math.rad(-angle), 0, 0)
+		elseif tumble.Action == "Backward" then
+			bodyRotation = CFrame.Angles(math.rad(angle), 0, 0)
+		elseif tumble.Action == "Left" then
+			bodyRotation = CFrame.Angles(0, 0, math.rad(angle))
+		else
+			bodyRotation = CFrame.Angles(0, 0, math.rad(-angle))
+		end
+		tumblePose.Root = CFrame.new(0, lift, 0) * bodyRotation
+		-- The tumble is a coherent whole-body flip. Camera aim and the gameplay
+		-- ray remain independent of this Motor6D presentation, while the live arm
+		-- IK continues solving the weapon toward the crosshair during the roll.
+		tumblePose.Waist = CFrame.Angles(
+			math.rad(-tumbleConfig.WaistTuckDegrees * wave),
+			0,
+			math.rad(tumbleConfig.WaistBankDegrees * wave)
+		)
+		tumblePose.Neck = CFrame.Angles(math.rad(tumbleConfig.NeckCounterDegrees * wave), 0, 0)
+		tumblePose.LeftHip = CFrame.Angles(math.rad(tumbleConfig.LeadHipTuckDegrees * wave), 0, math.rad(-12 * wave))
+		tumblePose.RightHip = CFrame.Angles(math.rad(-tumbleConfig.TrailHipTuckDegrees * wave), 0, math.rad(12 * wave))
 		PoseCoordinator:Submit("Tumble", Config.TumblePriority, tumblePose)
 		if alpha >= 1 then endTumble() end
 	end
@@ -854,6 +918,9 @@ function Controller:Init(
 		publish(slot)
 	end)
 	inputManager.ActionBegan.Event:Connect(function(action)
+		local recoveryEquipped = character
+			and character:GetAttribute("BLIKK_ActiveRecoveryItem") ~= ""
+			and character:GetAttribute("BLIKK_ActiveRecoveryItem") ~= nil
 		if action == "EquipWeapon1" then
 			requestSwitch("Primary1")
 		elseif action == "EquipWeapon2" then
@@ -867,8 +934,8 @@ function Controller:Init(
 			local index = table.find(ordered, currentSlot) or 1
 			local offset = if action == "NextWeapon" then 1 else -1
 			requestSwitch(ordered[(index - 1 + offset) % #ordered + 1])
-		elseif slots[activeSlot] and action == "Primary" then fireActive()
-		elseif slots[activeSlot] and action == "Reload" then reloadActive() end
+		elseif not recoveryEquipped and slots[activeSlot] and action == "Primary" then fireActive()
+		elseif not recoveryEquipped and slots[activeSlot] and action == "Reload" then reloadActive() end
 	end)
 	fighterController.LoadoutChanged.Event:Connect(function(changeType, slotId)
 		if changeType == "ActiveWeaponSlot" and not isCommittingSwitch and slotId ~= activeSlot then
@@ -876,7 +943,9 @@ function Controller:Init(
 		end
 	end)
 	movementEngine.DashStarted.Event:Connect(beginTumble)
-	movementEngine.DashEnded.Event:Connect(function() endTumble() end)
+	movementEngine.DashEnded.Event:Connect(function(_, _, _, kind)
+		if kind == "Tumble" then endTumble() end
+	end)
 	inputManager.GameplayEnabledChanged.Event:Connect(function(enabled)
 		gameplayEnabled = enabled
 		if not enabled then

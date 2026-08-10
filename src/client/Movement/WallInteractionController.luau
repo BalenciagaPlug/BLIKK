@@ -21,6 +21,7 @@ local humanoid
 local rootPart
 local raycastParams = RaycastParams.new()
 local state = "None"
+local stateStartedAt = 0
 local contactPart
 local contactNormal = Vector3.zero
 local contactSide = "Forward"
@@ -98,8 +99,11 @@ local function chooseContact(candidates, velocity)
 		if normal.Magnitude == 0 then continue end
 		normal = normal.Unit
 		local intoSpeed = math.max(0, -horizontalVelocity:Dot(normal))
+		local tangent = horizontalVelocity - normal * horizontalVelocity:Dot(normal)
 		local stabilityBonus = if result.Instance == contactPart then 2 else 0
-		local score = intoSpeed + stabilityBonus - result.Distance * 0.05
+		local score = intoSpeed * Config.SensorIntoSpeedWeight
+			+ tangent.Magnitude * Config.SensorTangentSpeedWeight
+			+ stabilityBonus - result.Distance * 0.05
 		if score > bestScore then bestScore, bestResult = score, result end
 	end
 	return bestResult
@@ -131,6 +135,10 @@ local function updateWallQuery(deltaTime)
 		queryDirection(origin, basis, distance),
 		queryDirection(origin, basis * cosine - sideAxis * sine, distance),
 		queryDirection(origin, basis * cosine + sideAxis * sine, distance),
+		-- Pure side probes retain a wall while velocity is already parallel to it;
+		-- angled-only probes caused the old slow slide/stuck-wall behaviour.
+		queryDirection(origin, -sideAxis, Config.MinimumCheckDistanceStuds),
+		queryDirection(origin, sideAxis, Config.MinimumCheckDistanceStuds),
 	}, velocity)
 	if not result then clearContact(); return end
 
@@ -153,29 +161,53 @@ local function updateWallQuery(deltaTime)
 end
 
 local function applyWallPose()
-	local isRun = state == "VerticalWallRun" or state == "HorizontalWallRun"
+	local isRun = state == "VerticalWallRun" or state == "HorizontalWallRun" or state == "WallPost"
 	local isJump = state == "WallJumpRecovery"
 	if not isRun and not isJump and state ~= "WallApproach" then resetOwnedPose(); return end
 	local side = if contactSide == "Left" then -1 elseif contactSide == "Right" then 1 else 0
 	local presentation = Config.Presentation
+	local elapsed = os.clock() - stateStartedAt
+	local stride = 0
+	if state == "HorizontalWallRun" then
+		stride = math.sin(elapsed * presentation.HorizontalStrideCyclesPerSecond * math.pi * 2)
+			* presentation.HorizontalStrideDegrees
+	elseif state == "VerticalWallRun" then
+		stride = math.sin(elapsed * presentation.VerticalClimbCyclesPerSecond * math.pi * 2)
+			* presentation.VerticalClimbDegrees
+	end
 	table.clear(poseTargets)
-	poseTargets.Root = CFrame.Angles(
+	local rootPose = CFrame.Angles(
 		math.rad(if isJump then presentation.JumpRootPitchDegrees else presentation.ContactRootPitchDegrees),
 		0,
 		math.rad(side * (if isJump then presentation.JumpRootRollDegrees else presentation.ContactRootRollDegrees))
 	)
-	poseTargets.Waist = CFrame.Angles(
+	local waistAccent = CFrame.Angles(
 		math.rad(if isJump then presentation.JumpWaistPitchDegrees else presentation.ContactWaistPitchDegrees),
 		math.rad(-side * presentation.ContactWaistYawDegrees),
 		math.rad(-side * presentation.ContactWaistRollDegrees)
 	)
+	poseTargets.Root = rootPose
+	-- Retain enough whole-body contact lean to read as a wall action while only
+	-- partially countering it at the waist. Weapon-arm owners keep higher pose
+	-- priority, so this never redirects the camera or authoritative shot ray.
+	local counterRotation = CFrame.identity:Lerp(
+		rootPose.Rotation:Inverse(),
+		presentation.UpperBodyCounterRotationScale
+	)
+	poseTargets.Waist = counterRotation * waistAccent
+	local leftHipPitch = if isJump then presentation.JumpHipBackDegrees
+		elseif state == "WallPost" then presentation.PostKneeTuckDegrees
+		else presentation.ContactHipForwardDegrees + stride
+	local rightHipPitch = if isJump then presentation.JumpHipForwardDegrees
+		elseif state == "WallPost" then presentation.PostKneeTuckDegrees
+		else presentation.ContactHipBackDegrees - stride
 	poseTargets.LeftHip = CFrame.Angles(
-		math.rad(if isJump then presentation.JumpHipBackDegrees else presentation.ContactHipForwardDegrees),
+		math.rad(leftHipPitch),
 		0,
 		math.rad(-side * presentation.ContactHipRollDegrees)
 	)
 	poseTargets.RightHip = CFrame.Angles(
-		math.rad(if isJump then presentation.JumpHipForwardDegrees else presentation.ContactHipBackDegrees),
+		math.rad(rightHipPitch),
 		0,
 		math.rad(side * presentation.ContactHipRollDegrees)
 	)
@@ -228,9 +260,11 @@ function Controller:Init(inputManager, movementEngineValue, gameplayCamera)
 	isInitialised = true
 	movementEngine, cameraController = movementEngineValue, gameplayCamera
 	movementEngine.WallStateChanged.Event:Connect(function(nextState, nextSide, nextNormal, nextPart)
+		if state ~= nextState then stateStartedAt = os.clock() end
 		local isWallState = nextState == "WallApproach"
 			or nextState == "VerticalWallRun"
 			or nextState == "HorizontalWallRun"
+			or nextState == "WallPost"
 			or nextState == "WallJumpRecovery"
 			or nextState == "WallCancelFreedom"
 			or nextState == "RecontactLocked"

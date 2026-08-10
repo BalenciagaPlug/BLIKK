@@ -451,11 +451,13 @@ local function handleNavigationAction(_, inputState, inputObject)
 	local keyCode = inputObject.KeyCode
 	if keyCode == Enum.KeyCode.Up then
 		moveSelection(scope, "Up")
-	elseif keyCode == Enum.KeyCode.Down then
+	elseif keyCode == Enum.KeyCode.W then
+		moveSelection(scope, "Up")
+	elseif keyCode == Enum.KeyCode.Down or keyCode == Enum.KeyCode.S then
 		moveSelection(scope, "Down")
-	elseif keyCode == Enum.KeyCode.Left then
+	elseif keyCode == Enum.KeyCode.Left or keyCode == Enum.KeyCode.A then
 		moveSelection(scope, "Left")
-	elseif keyCode == Enum.KeyCode.Right then
+	elseif keyCode == Enum.KeyCode.Right or keyCode == Enum.KeyCode.D then
 		moveSelection(scope, "Right")
 	elseif keyCode == Enum.KeyCode.Return or keyCode == Enum.KeyCode.KeypadEnter then
 		activateSelection(scope)
@@ -484,8 +486,11 @@ local function updateSelectionVisual()
 	end
 
 	if scope and record then
+		local previousObserved = scope.LastObservedSelectedObject
+		scope.LastObservedSelectedObject = selected
 		rememberSelection(scope, record)
 		notifySelectionFocused(scope, record)
+		if previousObserved and previousObserved ~= selected then emitAudio("Navigate", record) end
 	end
 end
 
@@ -538,6 +543,10 @@ function UINavigationController:Init(gameplayInputManager)
 		Enum.KeyCode.Down,
 		Enum.KeyCode.Left,
 		Enum.KeyCode.Right,
+		Enum.KeyCode.W,
+		Enum.KeyCode.A,
+		Enum.KeyCode.S,
+		Enum.KeyCode.D,
 		Enum.KeyCode.Return,
 		Enum.KeyCode.KeypadEnter,
 		Enum.KeyCode.Backspace
@@ -586,6 +595,7 @@ function UINavigationController:CreateScope(scopeId, config)
 		LastSelected = nil,
 		LastSelectionIdentity = nil,
 		LastNotifiedSelectionIdentity = nil,
+		LastObservedSelectedObject = nil,
 	}
 	scopesById[scopeId] = scope
 

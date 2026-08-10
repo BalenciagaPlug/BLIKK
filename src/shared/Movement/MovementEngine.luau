@@ -6,7 +6,10 @@ local ActionBuffer = require(ReplicatedStorage.Shared.Input.ActionBuffer)
 local CharacterDependency = require(ReplicatedStorage.Shared.Character.CharacterDependency)
 local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
 local MovementConfig = require(script.Parent.MovementConfig)
-local WallConfig = require(script.Parent.TechniqueConfig).Wall
+local TechniqueConfig = require(script.Parent.TechniqueConfig)
+
+local WallConfig = TechniqueConfig.Wall
+local WeaponWeaveConfig = TechniqueConfig.WeaponWeave
 
 local MovementEngine = {}
 MovementEngine.DashStarted = Instance.new("BindableEvent")
@@ -18,6 +21,7 @@ MovementEngine.WallStateChanged = Instance.new("BindableEvent")
 MovementEngine.WallJumped = Instance.new("BindableEvent")
 
 local dashConfig = MovementConfig.Dash
+local tumbleConfig = MovementConfig.Tumble
 local jumpConfig = MovementConfig.Jump
 local directions = {
 	Forward = Vector2.new(0, 1),
@@ -43,6 +47,7 @@ local stateConnection
 local cameraController
 local heldDirections = {}
 local dashState
+local bufferedDash
 local movementState = "AirborneFree"
 local movementStateStartedAt = 0
 local characterHeightStuds = 5.5
@@ -57,6 +62,9 @@ local lastWallActionAt = -math.huge
 local hasSeparatedFromLastWall = false
 local returnDashExpiresAt = -math.huge
 local returnDashAvailable = false
+local techniqueDashExpiresAt = -math.huge
+local techniqueDashAvailable = false
+local wallPostHeld = false
 
 local function diagnose(message)
 	if dashConfig.Diagnostics.Enabled or WallConfig.DiagnosticsEnabled then
@@ -68,6 +76,7 @@ local function isWallState(state)
 	return state == "WallApproach"
 		or state == "VerticalWallRun"
 		or state == "HorizontalWallRun"
+		or state == "WallPost"
 		or state == "WallJumpRecovery"
 		or state == "WallCancelFreedom"
 		or state == "RecontactLocked"
@@ -138,6 +147,7 @@ local function ownsHorizontalVelocity()
 	return dashState ~= nil
 		or movementState == "VerticalWallRun"
 		or movementState == "HorizontalWallRun"
+		or movementState == "WallPost"
 		or movementState == "WallJumpRecovery"
 end
 
@@ -146,27 +156,44 @@ local function updateWalking()
 	if ownsHorizontalVelocity() then
 		humanoid:Move(Vector3.zero, false)
 	else
-		humanoid:Move(MovementEngine:GetMoveVector(), false)
+		local movement = MovementEngine:GetMoveVector()
+		local forward = cameraController and cameraController:GetFlatBasis() or Vector3.zAxis
+		local forwardDot = if movement.Magnitude > 0 then movement.Unit:Dot(forward) else 1
+		if forwardDot >= 0 then
+			humanoid.WalkSpeed = MovementConfig.Ground.StrafeSpeedStudsPerSecond
+				+ (MovementConfig.Ground.ForwardSpeedStudsPerSecond
+					- MovementConfig.Ground.StrafeSpeedStudsPerSecond) * forwardDot
+		else
+			humanoid.WalkSpeed = MovementConfig.Ground.StrafeSpeedStudsPerSecond
+				+ (MovementConfig.Ground.BackwardSpeedStudsPerSecond
+					- MovementConfig.Ground.StrafeSpeedStudsPerSecond) * -forwardDot
+		end
+		humanoid:Move(movement, false)
 	end
 end
 
-local function phaseAt(elapsed)
-	local entryEnd = dashConfig.EntryDurationSeconds
-	local travelEnd = entryEnd + dashConfig.TravelDurationSeconds
+local function phaseAt(config, elapsed)
+	local entryEnd = config.EntryDurationSeconds
+	local travelEnd = entryEnd + config.TravelDurationSeconds
 	if elapsed < entryEnd then
-		return "Entry", elapsed / entryEnd, dashConfig.EntrySpeedMultiplier, dashConfig.PeakSpeedMultiplier
+		return "Entry", elapsed / entryEnd, config.EntrySpeedMultiplier, config.PeakSpeedMultiplier
 	elseif elapsed < travelEnd then
-		return "Travel", (elapsed - entryEnd) / dashConfig.TravelDurationSeconds,
-			dashConfig.PeakSpeedMultiplier, dashConfig.TravelEndSpeedMultiplier
+		return "Travel", (elapsed - entryEnd) / config.TravelDurationSeconds,
+			config.PeakSpeedMultiplier, config.TravelEndSpeedMultiplier
 	end
-	return "Exit", (elapsed - travelEnd) / dashConfig.ExitDurationSeconds,
-		dashConfig.TravelEndSpeedMultiplier, dashConfig.ExitMomentumRetention
+	return "Exit", (elapsed - travelEnd) / config.ExitDurationSeconds,
+		config.TravelEndSpeedMultiplier, config.ExitMomentumRetention
 end
 
-local function curveArea()
-	return dashConfig.EntryDurationSeconds * (dashConfig.EntrySpeedMultiplier + dashConfig.PeakSpeedMultiplier) / 2
-		+ dashConfig.TravelDurationSeconds * (dashConfig.PeakSpeedMultiplier + dashConfig.TravelEndSpeedMultiplier) / 2
-		+ dashConfig.ExitDurationSeconds * (dashConfig.TravelEndSpeedMultiplier + dashConfig.ExitMomentumRetention) / 2
+local function smoothStep(alpha)
+	alpha = math.clamp(alpha, 0, 1)
+	return alpha * alpha * (3 - 2 * alpha)
+end
+
+local function curveArea(config)
+	return config.EntryDurationSeconds * (config.EntrySpeedMultiplier + config.PeakSpeedMultiplier) / 2
+		+ config.TravelDurationSeconds * (config.PeakSpeedMultiplier + config.TravelEndSpeedMultiplier) / 2
+		+ config.ExitDurationSeconds * (config.TravelEndSpeedMultiplier + config.ExitMomentumRetention) / 2
 end
 
 local function finishDash(interrupted)
@@ -183,7 +210,7 @@ local function finishDash(interrupted)
 			state.PeakSpeed
 		))
 	end
-	MovementEngine.DashEnded:Fire(state.Action, interrupted, state.Grounded)
+	MovementEngine.DashEnded:Fire(state.Action, interrupted, state.Grounded, state.Kind)
 	if state.Grounded then
 		setMovementState("Grounded")
 	elseif not isWallState(movementState) then
@@ -193,6 +220,7 @@ end
 
 local function cancelOwnedMovement()
 	finishDash(true)
+	bufferedDash = nil
 
 	if wallContact then
 		lastWall = wallContact.Part
@@ -207,6 +235,9 @@ local function cancelOwnedMovement()
 	lastWallContactAt = -math.huge
 	returnDashAvailable = false
 	returnDashExpiresAt = -math.huge
+	techniqueDashAvailable = false
+	techniqueDashExpiresAt = -math.huge
+	wallPostHeld = false
 
 	local isGrounded = humanoid and humanoid.Health > 0
 		and humanoid.FloorMaterial ~= Enum.Material.Air
@@ -222,9 +253,10 @@ local function stepDash(deltaTime)
 	end
 
 	state.Elapsed += deltaTime
-	local total = dashConfig.EntryDurationSeconds + dashConfig.TravelDurationSeconds + dashConfig.ExitDurationSeconds
-	local phase, alpha, fromMultiplier, toMultiplier = phaseAt(math.min(state.Elapsed, total))
-	local multiplier = fromMultiplier + (toMultiplier - fromMultiplier) * math.clamp(alpha, 0, 1)
+	local config = state.Config
+	local total = config.EntryDurationSeconds + config.TravelDurationSeconds + config.ExitDurationSeconds
+	local phase, alpha, fromMultiplier, toMultiplier = phaseAt(config, math.min(state.Elapsed, total))
+	local multiplier = fromMultiplier + (toMultiplier - fromMultiplier) * smoothStep(alpha)
 	local speed = state.BaseSpeed * multiplier
 	state.PeakSpeed = math.max(state.PeakSpeed, speed)
 	local vertical = rootPart.AssemblyLinearVelocity.Y
@@ -232,53 +264,86 @@ local function stepDash(deltaTime)
 		vertical = state.VerticalVelocity
 	end
 	rootPart.AssemblyLinearVelocity = Vector3.new(state.Direction.X * speed, vertical, state.Direction.Z * speed)
-	MovementEngine.DashUpdated:Fire(state.Action, phase, math.clamp(state.Elapsed / total, 0, 1))
+	MovementEngine.DashUpdated:Fire(state.Action, phase, math.clamp(state.Elapsed / total, 0, 1), state.Kind)
 	if state.Elapsed >= total then finishDash(false) end
 end
 
 local function tryDash(action, direction)
-	if dashState or not gameplayEnabled or inputSuppressed or not humanoid or not rootPart or humanoid.Health <= 0 then
+	if not gameplayEnabled or inputSuppressed or not humanoid or not rootPart or humanoid.Health <= 0 then
 		diagnose("dash rejected // unavailable")
-		return
+		return false
 	end
-	if movementState == "VerticalWallRun" or movementState == "HorizontalWallRun" or movementState == "WallJumpRecovery" then
+	if movementState == "VerticalWallRun" or movementState == "HorizontalWallRun"
+		or movementState == "WallPost" or movementState == "WallJumpRecovery" then
 		diagnose("dash rejected // wall commitment")
-		return
+		return false
 	end
 
 	local now = os.clock()
 	local grounded = humanoid.FloorMaterial ~= Enum.Material.Air
-	local cooldown = if grounded then dashConfig.GroundCooldownSeconds else dashConfig.AirCooldownSeconds
-	if now - lastDashTime < cooldown then diagnose("dash rejected // cooldown") return end
-	local isReturnDash = false
-	if not grounded and airDashCount >= dashConfig.AirDashLimit then
-		if not returnDashAvailable or now > returnDashExpiresAt then
-			diagnose("dash rejected // air limit")
-			return
+	local isTumble = character:GetAttribute("BLIKK_ActiveWeaponSlot") ~= "Melee"
+	local config = if isTumble then tumbleConfig else dashConfig
+	local kind = if isTumble then "Tumble" else "Dash"
+	local cooldown = if grounded then config.GroundCooldownSeconds else config.AirCooldownSeconds
+	-- A slash-confirmed wall return is a distinct cancel resource, not another
+	-- ordinary air dash. It must be executable in the GunZ wall-cancel rhythm
+	-- even when the approach dash's normal cooldown has not expired.
+	local hasWallReturnResource = not grounded and returnDashAvailable and now <= returnDashExpiresAt
+	local availableAt = if hasWallReturnResource then now else lastDashTime + cooldown
+	if dashState or now < availableAt then
+		if availableAt - now <= dashConfig.FollowupInputBufferSeconds then
+			bufferedDash = {
+				Action = action,
+				Direction = direction,
+				ExpiresAt = availableAt + dashConfig.FollowupInputBufferSeconds,
+			}
+			diagnose("dash buffered // follow-up rhythm")
+		else
+			diagnose("dash rejected // cooldown")
 		end
-		isReturnDash = true
-		returnDashAvailable = false
+		return false
+	end
+	local isReturnDash = false
+	local isTechniqueDash = false
+	if not grounded and airDashCount >= dashConfig.AirDashLimit then
+		if returnDashAvailable and now <= returnDashExpiresAt then
+			isReturnDash = true
+			returnDashAvailable = false
+		elseif techniqueDashAvailable and now <= techniqueDashExpiresAt then
+			isTechniqueDash = true
+			techniqueDashAvailable = false
+		else
+			diagnose("dash rejected // air limit")
+			return false
+		end
 	else
 		if not grounded then airDashCount += 1 end
 	end
 
 	lastDashTime = now
-	local distance = if grounded then dashConfig.GroundDistanceStuds else dashConfig.AirDistanceStuds
+	local distance = if grounded then config.GroundDistanceStuds else config.AirDistanceStuds
 	dashState = {
 		Action = action,
 		Direction = direction,
 		Grounded = grounded,
 		Elapsed = 0,
-		BaseSpeed = distance / curveArea(),
+		BaseSpeed = distance / curveArea(config),
+		Config = config,
+		Kind = kind,
 		VerticalVelocity = rootPart.AssemblyLinearVelocity.Y,
 		Generation = generation,
 		StartPosition = rootPart.Position,
 		PeakSpeed = 0,
 		IsReturnDash = isReturnDash,
+		IsTechniqueDash = isTechniqueDash,
 	}
-	setMovementState(if grounded then "GroundDash" elseif isReturnDash then "WallReturnDash" else "AirDash")
+	setMovementState(if grounded then "GroundDash"
+		elseif isReturnDash then "WallReturnDash"
+		elseif isTechniqueDash then "TechniqueDash"
+		else "AirDash")
 	diagnose(string.format("%s start grounded=%s return=%s", action, tostring(grounded), tostring(isReturnDash)))
-	MovementEngine.DashStarted:Fire(action, direction, grounded)
+	MovementEngine.DashStarted:Fire(action, direction, grounded, kind)
+	return true
 end
 
 local function sameWall(contact)
@@ -307,6 +372,53 @@ local function rememberWallAction(contact, now)
 	lastWallPoint = contact.Position
 	lastWallActionAt = now
 	hasSeparatedFromLastWall = false
+end
+
+local function canWallPost(now)
+	return wallPostHeld and character and character:GetAttribute("BLIKK_ActiveWeaponSlot") == "Melee"
+		and (character:GetAttribute("BLIKK_ActiveRecoveryItem") == ""
+			or character:GetAttribute("BLIKK_ActiveRecoveryItem") == nil)
+		and humanoid and humanoid.FloorMaterial == Enum.Material.Air
+		and wallContact and now - lastWallContactAt <= WallConfig.ContactGraceSeconds
+end
+
+local function beginWallPost(now)
+	if not canWallPost(now) or not canRecontact(wallContact, now) then return false end
+	finishDash(true)
+	wallRun = {
+		Kind = "Post",
+		StartedAt = now,
+		StartHeight = rootPart.Position.Y,
+		Part = wallContact.Part,
+		Normal = wallContact.Normal,
+		EntryJumpAt = now,
+	}
+	setMovementState("WallPost")
+	diagnose("wall post accepted")
+	return true
+end
+
+local function releaseWallPost(now, reason)
+	if movementState ~= "WallPost" or not rootPart then return end
+	if not wallContact then
+		wallRun = nil
+		lastWallContactAt = -math.huge
+		setMovementState("AirborneFree")
+		diagnose("wall post released // " .. reason)
+		return
+	end
+	local exitedContact = wallContact
+	local velocity = rootPart.AssemblyLinearVelocity
+	local horizontal = Vector3.new(velocity.X, 0, velocity.Z)
+	local tangent = horizontal - exitedContact.Normal * horizontal:Dot(exitedContact.Normal)
+	rememberWallAction(exitedContact, now)
+	wallRun = nil
+	wallContact = nil
+	lastWallContactAt = -math.huge
+	setMovementState("AirborneFree")
+	local released = tangent + exitedContact.Normal * WallConfig.Post.ReleaseOutwardSpeedStudsPerSecond
+	rootPart.AssemblyLinearVelocity = Vector3.new(released.X, math.min(velocity.Y, 0), released.Z)
+	diagnose("wall post released // " .. reason)
 end
 
 local function wallLaunch(now, exitKind, exitReason)
@@ -437,6 +549,7 @@ local function stepWall(now)
 		if character and WallConfig.DiagnosticsEnabled then character:SetAttribute("BLIKK_WallMovingAway", separation > 0) end
 	end
 	if returnDashAvailable and now > returnDashExpiresAt then returnDashAvailable = false end
+	if techniqueDashAvailable and now > techniqueDashExpiresAt then techniqueDashAvailable = false end
 	if character and WallConfig.DiagnosticsEnabled then
 		character:SetAttribute("BLIKK_WallReturnDashAvailable", returnDashAvailable)
 		character:SetAttribute("BLIKK_WallReturnDashExpiry", returnDashExpiresAt)
@@ -448,6 +561,48 @@ local function stepWall(now)
 		if now - lastWallContactAt > WallConfig.ContactGraceSeconds then setMovementState("AirborneFree") end
 		return
 	end
+	if movementState == "WallPost" then
+		if not wallRun or not wallContact or now - lastWallContactAt > WallConfig.ContactGraceSeconds then
+			releaseWallPost(now, "ContactLost")
+			return
+		end
+		if not wallPostHeld or now - wallRun.StartedAt >= WallConfig.Post.MaximumHoldSeconds then
+			releaseWallPost(now, if wallPostHeld then "Duration" else "Released")
+			return
+		end
+		local recoveryItem = character:GetAttribute("BLIKK_ActiveRecoveryItem")
+		if character:GetAttribute("BLIKK_ActiveWeaponSlot") ~= "Melee"
+			or (recoveryItem ~= nil and recoveryItem ~= "") then
+			releaseWallPost(now, "EquipmentChanged")
+			return
+		end
+		if wallRun.BufferedExitJumpAt
+			and now - wallRun.EntryJumpAt >= WallConfig.MinimumFreshExitInputDelaySeconds
+			and now - wallRun.BufferedExitJumpAt <= WallConfig.JumpInputBufferSeconds then
+			local bufferedAt = wallRun.BufferedExitJumpAt
+			wallLaunch(now, "Manual", "BufferedFreshJump")
+			MovementEngine.JumpAccepted:Fire(bufferedAt, true)
+			return
+		end
+		local minimumClearance = characterHorizontalHalfExtentStuds + WallConfig.ClearancePaddingStuds
+		local wallDistance = (rootPart.Position - wallContact.Position):Dot(wallContact.Normal)
+		local normalSpeed = if wallDistance < minimumClearance
+			then math.min((minimumClearance - wallDistance) * WallConfig.ClearanceCorrectionGain,
+				WallConfig.MaximumClearanceCorrectionSpeedStudsPerSecond)
+			else -WallConfig.AdhesionSpeedStudsPerSecond
+		local movement = MovementEngine:GetMoveVector()
+		local tangent = movement - wallContact.Normal * movement:Dot(wallContact.Normal)
+		local horizontal = wallContact.Normal * normalSpeed
+		if tangent.Magnitude > WallConfig.DirectionDeadzone then
+			horizontal += tangent.Unit * WallConfig.Post.TangentialSpeedStudsPerSecond
+		end
+		rootPart.AssemblyLinearVelocity = Vector3.new(
+			horizontal.X,
+			-WallConfig.Post.DownwardSpeedStudsPerSecond,
+			horizontal.Z
+		)
+		return
+	end
 	if movementState ~= "VerticalWallRun" and movementState ~= "HorizontalWallRun" then
 		if movementState == "WallJumpRecovery" and now - movementStateStartedAt >= WallConfig.RecoveryDurationSeconds then
 			setMovementState("AirborneFree")
@@ -456,6 +611,14 @@ local function stepWall(now)
 	end
 	if not wallRun or not wallContact or now - lastWallContactAt > WallConfig.ContactGraceSeconds then
 		wallLaunch(now, "Automatic", "ContactLost")
+		return
+	end
+	if wallRun.BufferedExitJumpAt
+		and now - wallRun.EntryJumpAt >= WallConfig.MinimumFreshExitInputDelaySeconds
+		and now - wallRun.BufferedExitJumpAt <= WallConfig.JumpInputBufferSeconds then
+		local bufferedAt = wallRun.BufferedExitJumpAt
+		wallLaunch(now, "Manual", "BufferedFreshJump")
+		MovementEngine.JumpAccepted:Fire(bufferedAt, true)
 		return
 	end
 	if wallRun.Kind == "Vertical" and wallContact.HasOverheadClearance == false then
@@ -483,10 +646,18 @@ local function stepWall(now)
 	if wallRun.Kind == "Vertical" then
 		tangentSpeed = wallRun.EntryTangentSpeed * runConfig.TangentialRetentionScale
 	else
-		tangentSpeed = math.max(
+		local retained = math.max(
 			wallRun.EntryTangentSpeed * runConfig.TangentialRetentionScale,
 			runConfig.MinimumTangentialSpeedStudsPerSecond
 		)
+		wallRun.CurrentTangentSpeed = wallRun.CurrentTangentSpeed or retained
+		wallRun.CurrentTangentSpeed = math.min(
+			runConfig.TargetTangentialSpeedStudsPerSecond,
+			wallRun.CurrentTangentSpeed + runConfig.TangentialAccelerationStudsPerSecondSquared
+				* math.max(0, now - (wallRun.LastStepAt or wallRun.StartedAt))
+		)
+		wallRun.LastStepAt = now
+		tangentSpeed = wallRun.CurrentTangentSpeed
 	end
 	local normalSpeed
 	local adhesionActive = wallDistance >= minimumClearance
@@ -519,13 +690,27 @@ local function heartbeat(deltaTime)
 		lastGroundedAt = now
 	end
 	if not gameplayEnabled or inputSuppressed then
-		if dashState or isWallState(movementState) or movementState == "WallReturnDash" then
+		if dashState or isWallState(movementState) or movementState == "WallReturnDash"
+			or movementState == "TechniqueDash" then
 			cancelOwnedMovement()
 		end
 		return
 	end
 	if grounded and ActionBuffer:Consume("Jump", jumpConfig.InputBufferSeconds, now) then acceptGroundJump(now) end
 	stepDash(deltaTime)
+	if not dashState and bufferedDash then
+		local request = bufferedDash
+		if now > request.ExpiresAt then
+			bufferedDash = nil
+		else
+			local groundedNow = humanoid.FloorMaterial ~= Enum.Material.Air
+			local cooldown = if groundedNow then dashConfig.GroundCooldownSeconds else dashConfig.AirCooldownSeconds
+			if now >= lastDashTime + cooldown then
+				bufferedDash = nil
+				tryDash(request.Action, request.Direction)
+			end
+		end
+	end
 	if not dashState then stepWall(now) end
 end
 
@@ -541,10 +726,18 @@ function MovementEngine:ReportWallContact(contact)
 		lastWallContactAt = now
 		return
 	end
+	if movementState == "WallPost" then
+		if not wallRun or contact.Part ~= wallRun.Part
+			or contact.Normal:Dot(wallRun.Normal) < WallConfig.SameWallNormalMatchDot then return end
+		wallContact = contact
+		lastWallContactAt = now
+		return
+	end
 	if movementState ~= "AirborneFree"
 		and movementState ~= "JumpRising"
 		and movementState ~= "AirDash"
 		and movementState ~= "WallReturnDash"
+		and movementState ~= "TechniqueDash"
 		and movementState ~= "WallApproach"
 		and movementState ~= "RecontactLocked" then
 		return
@@ -555,6 +748,7 @@ function MovementEngine:ReportWallContact(contact)
 	end
 	wallContact = contact
 	lastWallContactAt = now
+	if canWallPost(now) and beginWallPost(now) then return end
 	if movementState ~= "WallApproach" then
 		if canRecontact(contact, now) then
 			setMovementState("WallApproach")
@@ -580,16 +774,36 @@ function MovementEngine:ConfirmSlashAccepted(timestamp)
 	return true
 end
 
+function MovementEngine:GrantHalfStepDash(timestamp)
+	if not gameplayEnabled or inputSuppressed or not humanoid or humanoid.Health <= 0
+		or humanoid.FloorMaterial ~= Enum.Material.Air
+		or airDashCount < dashConfig.AirDashLimit
+		or isWallState(movementState) then return false end
+	techniqueDashAvailable = true
+	techniqueDashExpiresAt = timestamp
+		+ WeaponWeaveConfig.HalfStep.ContinuationDashAvailabilitySeconds
+	diagnose("half-step continuation dash earned")
+	return true
+end
+
 function MovementEngine:HandleAction(action, timestamp)
 	local now = timestamp or os.clock()
+	if action == "Secondary" then
+		wallPostHeld = true
+		beginWallPost(now)
+		return
+	end
 	if action == "Jump" then
 		if not humanoid or humanoid.Health <= 0 then return end
-		if movementState == "VerticalWallRun" or movementState == "HorizontalWallRun" then
+		if movementState == "VerticalWallRun" or movementState == "HorizontalWallRun"
+			or movementState == "WallPost" then
 			ActionBuffer:Consume("Jump", WallConfig.JumpInputBufferSeconds, now)
 			if wallRun and now - wallRun.EntryJumpAt >= WallConfig.MinimumFreshExitInputDelaySeconds then
 				wallLaunch(now, "Manual", "FreshJump")
 				MovementEngine.JumpAccepted:Fire(now, true)
 				if character and WallConfig.DiagnosticsEnabled then character:SetAttribute("BLIKK_WallFreshExitJumpAccepted", true) end
+			elseif wallRun then
+				wallRun.BufferedExitJumpAt = now
 			end
 		elseif humanoid.FloorMaterial ~= Enum.Material.Air or now - lastGroundedAt <= jumpConfig.GroundedGraceSeconds then
 			acceptGroundJump(now)
@@ -603,6 +817,9 @@ function MovementEngine:HandleAction(action, timestamp)
 	local previous = lastDirectionPress[action]
 	lastDirectionPress[action] = now
 	if previous and now - previous <= dashConfig.DoubleTapWindowSeconds then
+		-- One accepted dash consumes exactly one two-edge pair. This prevents taps
+		-- two and three from being interpreted as a second, accidental pair.
+		lastDirectionPress[action] = nil
 		local direction = flatDirection(action)
 		if direction then tryDash(action, direction) end
 	end
@@ -610,6 +827,10 @@ end
 
 function MovementEngine:HandleActionEnded(action)
 	if directions[action] then heldDirections[action] = nil end
+	if action == "Secondary" then
+		wallPostHeld = false
+		if movementState == "WallPost" then releaseWallPost(os.clock(), "Released") end
+	end
 end
 
 function MovementEngine:GetState()
@@ -633,6 +854,8 @@ function MovementEngine:BindCharacter(nextCharacter)
 	lastWallContactAt, lastWallActionAt = -math.huge, -math.huge
 	hasSeparatedFromLastWall = false
 	returnDashAvailable, returnDashExpiresAt = false, -math.huge
+	techniqueDashAvailable, techniqueDashExpiresAt = false, -math.huge
+	wallPostHeld = false
 	setMovementState("AirborneFree")
 	character, humanoid, rootPart = nil, nil, nil
 	local player = Players.LocalPlayer
@@ -643,13 +866,16 @@ function MovementEngine:BindCharacter(nextCharacter)
 			if bindGeneration ~= generation or characterBindingTarget ~= nextCharacter
 				or player.Character ~= nextCharacter then return end
 			character, humanoid, rootPart = nextCharacter, nextHumanoid, nextRootPart
-			humanoid.WalkSpeed = MovementConfig.Ground.WalkSpeedStudsPerSecond
+			humanoid.WalkSpeed = MovementConfig.Ground.ForwardSpeedStudsPerSecond
 			humanoid.UseJumpPower = false
 			humanoid.JumpHeight = jumpConfig.HeightStuds
 			airDashCount, lastDashTime, lastDirectionPress, heldDirections = 0, -math.huge, {}, {}
+			bufferedDash = nil
 			wallContact, wallRun, lastWall = nil, nil, nil
 			lastGroundedAt = if humanoid.FloorMaterial ~= Enum.Material.Air then os.clock() else -math.huge
 			returnDashAvailable = false
+			techniqueDashAvailable = false
+			wallPostHeld = false
 			measureCharacter()
 			setMovementState(if humanoid.FloorMaterial == Enum.Material.Air then "AirborneFree" else "Grounded")
 			stateConnection = humanoid.StateChanged:Connect(function(_, newState)
@@ -659,6 +885,8 @@ function MovementEngine:BindCharacter(nextCharacter)
 					airDashCount = 0
 					wallContact, wallRun, lastWall = nil, nil, nil
 					returnDashAvailable = false
+					techniqueDashAvailable = false
+					wallPostHeld = false
 					finishDash(true)
 					setMovementState("Grounded")
 					if wasAirborne then MovementEngine.Landed:Fire(os.clock()) end
@@ -693,9 +921,11 @@ function MovementEngine:Init(inputManager, gameplayCamera)
 		lastWallContactAt, lastWallActionAt = -math.huge, -math.huge
 		hasSeparatedFromLastWall = false
 		returnDashAvailable, returnDashExpiresAt = false, -math.huge
+		techniqueDashAvailable, techniqueDashExpiresAt = false, -math.huge
+		wallPostHeld = false
 		setMovementState("AirborneFree")
 		character, humanoid, rootPart = nil, nil, nil
-		heldDirections, lastDirectionPress = {}, {}
+		heldDirections, lastDirectionPress, bufferedDash = {}, {}, nil
 		airDashCount, lastDashTime, lastGroundedAt = 0, -math.huge, -math.huge
 	end)
 	if player.Character then self:BindCharacter(player.Character) end
@@ -704,14 +934,14 @@ function MovementEngine:Init(inputManager, gameplayCamera)
 	inputManager.GameplayEnabledChanged.Event:Connect(function(enabled)
 		gameplayEnabled = enabled
 		if not enabled then
-			heldDirections, lastDirectionPress = {}, {}
+			heldDirections, lastDirectionPress, bufferedDash = {}, {}, nil
 			cancelOwnedMovement()
 		end
 	end)
 	inputManager.SuppressionChanged.Event:Connect(function(suppressed)
 		inputSuppressed = suppressed
 		if suppressed then
-			heldDirections, lastDirectionPress = {}, {}
+			heldDirections, lastDirectionPress, bufferedDash = {}, {}, nil
 			cancelOwnedMovement()
 		end
 	end)

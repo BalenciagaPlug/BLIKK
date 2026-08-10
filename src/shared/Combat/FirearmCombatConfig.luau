@@ -11,7 +11,14 @@ local FirearmCombatConfig = {
 	StartingReserve = 20,
 	MovementLabUnlimitedReserve = true,
 	FireIntervalSeconds = 1.000,
-	SpreadHalfAngleDegrees = 4.5, -- BLIKK prototype tuning; not a historical GunZ value.
+	Accuracy = {
+		AimBasis = "StableRootOriginToCrosshairPoint",
+		SpreadModel = "FixedWeaponCone",
+		SpreadHalfAngleDegrees = 4.5, -- BLIKK prototype tuning; not a historical GunZ value.
+		MovementStateAffectsSpread = false,
+		PresentationRecoilAffectsSpread = false,
+		RepeatedFireBloomEnabled = false,
+	},
 	MaximumRangeStuds = 300, -- BLIKK prototype tuning; not a historical GunZ value.
 	Aim = {
 		MinimumDirectionMagnitude = 0.99,

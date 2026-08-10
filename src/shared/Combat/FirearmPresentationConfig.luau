@@ -51,8 +51,35 @@ local FirearmPresentationConfig = {
 		LeftElbowPoleForwardArmReaches = 0.10,
 	},
 	TumblePriority = 50,
+	Tumble = {
+		RotationDegrees = 360,
+		VisualLiftStuds = 0.42,
+		WaistTuckDegrees = 18,
+		WaistBankDegrees = 5,
+		NeckCounterDegrees = 10,
+		LeadHipTuckDegrees = 46,
+		TrailHipTuckDegrees = 38,
+		FloatStartProgress = 0.28,
+		FloatEndProgress = 0.72,
+		FloatRotationShare = 0.46,
+	},
 	ActionPriority = 40,
 	IdlePriority = 20,
+	Pose = {
+		FallbackCarry = {
+			Waist = Vector3.new(-3, 4, 0),
+			RightShoulder = Vector3.new(72, -8, 18),
+			LeftShoulder = Vector3.new(62, 12, -26),
+			RightElbow = Vector3.new(-18, 0, 0),
+			LeftElbow = Vector3.new(-32, 0, 0),
+		},
+		Reload = {
+			RightShoulder = Vector3.new(54, -18, 25),
+			LeftShoulder = Vector3.new(82, 20, -32),
+		},
+		MinimumFrontShoulderPitchDegrees = 0,
+		MaximumFrontShoulderPitchDegrees = 110,
+	},
 	Colors = {
 		Gunmetal = Color3.fromRGB(43, 46, 52),
 		Black = Color3.fromRGB(18, 19, 22),
@@ -106,5 +133,19 @@ attachments.WeaponBottomReference = CFrame.new(
 	0
 )
 FirearmPresentationConfig.Attachments.StockReference = CFrame.new(rearStockCenter.Position)
+
+for poseName, pose in {
+	FallbackCarry = FirearmPresentationConfig.Pose.FallbackCarry,
+	Reload = FirearmPresentationConfig.Pose.Reload,
+} do
+	for _, alias in { "RightShoulder", "LeftShoulder" } do
+		local pitch = pose[alias].X
+		assert(
+			pitch >= FirearmPresentationConfig.Pose.MinimumFrontShoulderPitchDegrees
+				and pitch <= FirearmPresentationConfig.Pose.MaximumFrontShoulderPitchDegrees,
+			string.format("B-8 %s %s pitch must remain in the front-facing range", poseName, alias)
+		)
+	end
+end
 
 return FirearmPresentationConfig
