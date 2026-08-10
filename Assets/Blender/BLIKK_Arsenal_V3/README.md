@@ -8,6 +8,14 @@ It also contains the Training Katana V3.1 proof: a slim, curved, one-handed blad
 cross-section, fullers, restrained guard, wrapped handle, explicit trail endpoints, and no oversized
 fantasy geometry.
 
+The V9 SMG V3.1 proof is an original compact, single-unit submachine gun intended for later
+dual-wield presentation. It uses a narrow receiver, short shrouded barrel, angled magazine,
+skeletal rear brace, and the same restrained early-2000s BLIKK material language.
+
+The AR4 Rifle V3.1 proof extends that language into a slim shoulder-fired weapon with a longer
+vented handguard, exposed barrel, structured stock, compact rear grip, and clearly separated
+curved magazine. It remains an original BLIKK design rather than a copied game asset.
+
 It does not contain extracted GunZ meshes, textures, animations, or code. GunZ is used only as a
 broad reference for compact K-style weapon readability and period presentation.
 
@@ -24,6 +32,12 @@ broad reference for compact K-style weapon readability and period presentation.
 - `Models/BLIKK_TRAINING_KATANA_V3_1.glb` — script-free Katana proof.
 - `Textures/TrainingKatana_V3_1_BaseColor.png` — original Katana texture atlas.
 - `author_katana_v3_1.py` / `validate_katana_v3_1.py` — deterministic Katana build and validation.
+- `BLIKK_V9_SMG_V3_1_Master.blend` — current V9 SMG source.
+- `Models/BLIKK_V9_SMG_V3_1.glb` — script-free single-SMG proof.
+- `author_v9_smg_v3_1.py` / `validate_v9_smg_v3_1.py` — deterministic V9 build and validation.
+- `BLIKK_AR4_RIFLE_V3_1_Master.blend` — current AR4 rifle source.
+- `Models/BLIKK_AR4_RIFLE_V3_1.glb` — script-free AR4 rifle proof.
+- `author_ar4_rifle_v3_1.py` / `validate_ar4_rifle_v3_1.py` — deterministic AR4 build and validation.
 
 ## Contract
 
