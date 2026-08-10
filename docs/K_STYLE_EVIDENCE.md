@@ -146,6 +146,10 @@ Sources reviewed on 2026-08-10:
 - BLIKK wall posting uses airborne melee Secondary while a valid wall is under the wall sensor. It
   is an original semantic adaptation of GunZ wall hanging: hold is capped, release drops away, and
   a fresh Jump performs the normal validated wall launch. It does not synthesize a slash or dash.
+- The classic wall-jump, slash-cancel, return-dash loop is calibrated for holding elevation and
+  repositioning near one wall. Slash-first dash-to-wall, Slash, then Jump remains the explicitly
+  faster vertical climb. This role split follows the reviewed Wall Cancel/Flash Climb action order;
+  the Roblox velocities and timing windows are original BLIKK calibration, not copied retail values.
 
 ## Current BLIKK calibration
 

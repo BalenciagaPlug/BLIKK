@@ -707,17 +707,31 @@ local function updatePose()
 		elseif alpha <= tumbleConfig.FloatEndProgress then
 			local phase = (alpha - tumbleConfig.FloatStartProgress)
 				/ (tumbleConfig.FloatEndProgress - tumbleConfig.FloatStartProgress)
-			easedAlpha = tumbleConfig.FloatRotationShare + phase * 0.08
+			easedAlpha = tumbleConfig.FloatRotationShare
+				+ phase * tumbleConfig.FloatRotationDriftShare
+		elseif alpha < tumbleConfig.RecoveryUprightProgress then
+			local phase = (alpha - tumbleConfig.FloatEndProgress)
+				/ (tumbleConfig.RecoveryUprightProgress - tumbleConfig.FloatEndProgress)
+			-- Accelerate out of the inverted Matrix beat, then settle early enough
+			-- that ground contact never catches the avatar upside down.
+			phase = 1 - (1 - math.clamp(phase, 0, 1)) ^ tumbleConfig.RecoveryEaseOutPower
+			easedAlpha = tumbleConfig.FloatRotationShare + tumbleConfig.FloatRotationDriftShare
+				+ (1 - tumbleConfig.FloatRotationShare - tumbleConfig.FloatRotationDriftShare) * phase
 		else
-			local phase = (alpha - tumbleConfig.FloatEndProgress) / (1 - tumbleConfig.FloatEndProgress)
-			phase = phase * phase * (3 - 2 * phase)
-			easedAlpha = tumbleConfig.FloatRotationShare + 0.08
-				+ (1 - tumbleConfig.FloatRotationShare - 0.08) * phase
+			easedAlpha = 1
 		end
 		local wave = math.sin(alpha * math.pi) ^ 0.58
+		local floatPhase = math.clamp(
+			(alpha - tumbleConfig.FloatStartProgress)
+				/ (tumbleConfig.FloatEndProgress - tumbleConfig.FloatStartProgress),
+			0,
+			1
+		)
+		local hangtimeWave = math.sin(floatPhase * math.pi)
 		local angle = tumbleConfig.RotationDegrees * easedAlpha
 		local tumblePose = {}
 		local lift = tumbleConfig.VisualLiftStuds * wave
+			+ tumbleConfig.HangtimeLiftBonusStuds * hangtimeWave
 		local bodyRotation
 		if tumble.Action == "Forward" then
 			bodyRotation = CFrame.Angles(math.rad(-angle), 0, 0)

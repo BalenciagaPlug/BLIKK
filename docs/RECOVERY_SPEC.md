@@ -29,7 +29,8 @@ GunZ's item slots. Selecting melee or a firearm clears the recovery selection.
 
 The client sends only item ID, monotonic request sequence, and observed spawn generation. The server
 validates the live released character, match or isolated Movement Lab context, exact life generation,
-request order, rate, shared one-second delay, and remaining stock. The server alone changes Humanoid
+request order, rate, shared one-second delay, remaining stock, and current capacity for the selected
+resource. The server alone changes Humanoid
 health, armour attributes, counts, world availability, and observer effects. Malformed, reordered,
 stale-life, dead, held, menu, and out-of-context requests cannot recover resources.
 
@@ -44,8 +45,9 @@ stale-life, dead, held, menu, and out-of-context requests cannot recover resourc
 
 Fresh-life preparation resets all four stocks. Movement Lab receives no refill exception and uses
 the identical counts and delay as Deathmatch. A patch can be stolen by an opponent in the same
-combat context, preserving the positioning risk of GunZ-style medding. An ampoule at full resource
-is rejected without consuming stock.
+combat context, preserving the positioning risk of GunZ-style medding. Patches and ampoules are
+rejected without consuming stock when the owner already has full matching HP or AP; a full owner
+cannot deploy a patch merely to create a later world pickup.
 
 ## District Zero cores
 

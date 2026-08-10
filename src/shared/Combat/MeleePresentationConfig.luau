@@ -5,8 +5,13 @@ local SLASH_ACTIVE_END_SECONDS = SlashConfig.AnticipationSeconds + SlashConfig.A
 local SLASH_RECOVERY_SETTLE_SECONDS = SLASH_ACTIVE_END_SECONDS + SlashConfig.RecoverySeconds * 0.53125
 local SLASH_TOTAL_SECONDS = SLASH_ACTIVE_END_SECONDS + SlashConfig.RecoverySeconds
 local CHARACTER_FORWARD_AXIS = -Vector3.zAxis
+local HARD_LOCKED_EQUIPPED_GRIP_POSITION = Vector3.new(0, -0.12, 0.02)
 local HARD_LOCKED_EQUIPPED_GRIP_ROTATION = CFrame.Angles(math.rad(-54), 0, math.rad(190))
+local HARD_LOCKED_EQUIPPED_GRIP_PIVOT = CFrame.new(0, 0.18, 0)
+local HARD_LOCKED_IDLE_WAIST = Vector3.new(-1, -4, 1)
 local HARD_LOCKED_IDLE_RIGHT_SHOULDER = Vector3.new(-15, -5, 8)
+local HARD_LOCKED_IDLE_RIGHT_ELBOW = Vector3.new(-30, 0, 0)
+local HARD_LOCKED_IDLE_RIGHT_WRIST = Vector3.new(4, -4, 6)
 local HARD_LOCKED_AIRBORNE_RIGHT_SHOULDER_OFFSET = Vector3.new(-1, 0, -1)
 local MINIMUM_BLADE_FORWARD_DOT = 0.55
 local MAXIMUM_FRONT_SHOULDER_PITCH_DEGREES = 110
@@ -71,9 +76,9 @@ local MeleePresentationConfig = {
 		},
 		EquippedAttachment = {
 			PartName = "RightHand",
-			Offset = CFrame.new(0, -0.12, 0.02)
+			Offset = CFrame.new(HARD_LOCKED_EQUIPPED_GRIP_POSITION)
 				* HARD_LOCKED_EQUIPPED_GRIP_ROTATION,
-			GripPivot = CFrame.new(0, 0.18, 0),
+			GripPivot = HARD_LOCKED_EQUIPPED_GRIP_PIVOT,
 		},
 		HolsteredAttachment = {
 			PartName = "UpperTorso",
@@ -91,10 +96,16 @@ local MeleePresentationConfig = {
 		AirReadyTorsoDegrees = -7,
 		AirReadyHipDegrees = 13,
 		EquippedIdle = {
-			Waist = Vector3.new(-1, -4, 1),
+			Waist = HARD_LOCKED_IDLE_WAIST,
 			RightShoulder = HARD_LOCKED_IDLE_RIGHT_SHOULDER,
-			RightElbow = Vector3.new(-30, 0, 0),
-			RightWrist = Vector3.new(4, -4, 6),
+			RightElbow = HARD_LOCKED_IDLE_RIGHT_ELBOW,
+			RightWrist = HARD_LOCKED_IDLE_RIGHT_WRIST,
+			-- The support arm is part of the approved ready pose too. Explicit
+			-- neutral targets guarantee block/slash transforms cannot survive after
+			-- their action claim ends on AnimationConstraint avatars.
+			LeftShoulder = Vector3.zero,
+			LeftElbow = Vector3.zero,
+			LeftWrist = Vector3.zero,
 		},
 		EquippedAirborneOffsets = {
 			RightShoulder = HARD_LOCKED_AIRBORNE_RIGHT_SHOULDER_OFFSET,
@@ -258,9 +269,38 @@ local function validateActionFrontFacingPose(pose, label)
 	end
 end
 
+local function validateHardLockedReadyPose(pose, label)
+	assert(
+		pose.Waist == HARD_LOCKED_IDLE_WAIST
+			and pose.RightShoulder == HARD_LOCKED_IDLE_RIGHT_SHOULDER
+			and pose.RightElbow == HARD_LOCKED_IDLE_RIGHT_ELBOW
+			and pose.RightWrist == HARD_LOCKED_IDLE_RIGHT_WRIST
+			and pose.LeftShoulder == Vector3.zero
+			and pose.LeftElbow == Vector3.zero
+			and pose.LeftWrist == Vector3.zero,
+		label .. " must exactly match the approved Training Katana ready pose"
+	)
+end
+
 assert(
-	MeleePresentationConfig.Pose.EquippedIdle.RightShoulder == HARD_LOCKED_IDLE_RIGHT_SHOULDER,
-	"Training Katana equipped idle must retain the approved hard-locked right shoulder"
+	MeleePresentationConfig.Pose.EquippedIdle.Waist == HARD_LOCKED_IDLE_WAIST
+		and MeleePresentationConfig.Pose.EquippedIdle.RightShoulder == HARD_LOCKED_IDLE_RIGHT_SHOULDER
+		and MeleePresentationConfig.Pose.EquippedIdle.RightElbow == HARD_LOCKED_IDLE_RIGHT_ELBOW
+		and MeleePresentationConfig.Pose.EquippedIdle.RightWrist == HARD_LOCKED_IDLE_RIGHT_WRIST,
+	"Training Katana equipped idle must retain every approved hard-locked arm coordinate"
+)
+assert(
+	MeleePresentationConfig.TrainingKatana.EquippedAttachment.Offset
+		== CFrame.new(HARD_LOCKED_EQUIPPED_GRIP_POSITION) * HARD_LOCKED_EQUIPPED_GRIP_ROTATION
+		and MeleePresentationConfig.TrainingKatana.EquippedAttachment.GripPivot
+			== HARD_LOCKED_EQUIPPED_GRIP_PIVOT,
+	"Training Katana equipped attachment must retain the approved position, rotation, and pivot"
+)
+assert(
+	MeleePresentationConfig.Pose.EquippedIdle.LeftShoulder == Vector3.zero
+		and MeleePresentationConfig.Pose.EquippedIdle.LeftElbow == Vector3.zero
+		and MeleePresentationConfig.Pose.EquippedIdle.LeftWrist == Vector3.zero,
+	"Training Katana equipped idle must clear every support-arm action transform"
 )
 assert(
 	MeleePresentationConfig.Pose.EquippedAirborneOffsets.RightShoulder
@@ -269,6 +309,14 @@ assert(
 )
 
 for variantIndex, keyframes in MeleePresentationConfig.Pose.ProceduralSlash.Variants do
+	validateHardLockedReadyPose(
+		keyframes[1].Pose,
+		string.format("Slash variant %d opening frame", variantIndex)
+	)
+	validateHardLockedReadyPose(
+		keyframes[#keyframes].Pose,
+		string.format("Slash variant %d recovery frame", variantIndex)
+	)
 	-- First and last frames are the approved ready pose. Only the action frames
 	-- are constrained to the procedural forward-facing animation convention.
 	for keyframeIndex = 2, #keyframes - 1 do
@@ -279,6 +327,19 @@ for variantIndex, keyframes in MeleePresentationConfig.Pose.ProceduralSlash.Vari
 		)
 	end
 end
+
+validateHardLockedReadyPose(
+	MeleePresentationConfig.Pose.ProceduralBlock[1].Pose,
+	"Block opening frame"
+)
+validateHardLockedReadyPose(
+	MeleePresentationConfig.Pose.ProceduralAltFire[1].Pose,
+	"Alt-fire opening frame"
+)
+validateHardLockedReadyPose(
+	MeleePresentationConfig.Pose.ProceduralAltFire[#MeleePresentationConfig.Pose.ProceduralAltFire].Pose,
+	"Alt-fire recovery frame"
+)
 
 for variantIndex, keyframes in MeleePresentationConfig.Pose.ProceduralSlash.WeaponArcVariants do
 	for keyframeIndex, keyframe in keyframes do

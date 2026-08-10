@@ -126,6 +126,10 @@ local function setState(nextState)
 	local previousState = state
 	state = nextState
 	stateStarted = os.clock()
+	if nextState == "MeleeIdle" then
+		-- Every action exit converges on the approved grip and arm claim.
+		SlashPoseSampler.ResetWeaponArc(gripJoint)
+	end
 	if playHook then playHook(nextState, previousState) end
 	Controller.StateChanged:Fire(nextState)
 end
@@ -546,8 +550,6 @@ local function poseForState(now)
 	end
 	if state == "Slashing" and authoredGroundSlashActive then return nil end
 	if state == "Holstered" or state == "Interrupted" or state == "Equipping" or state == "Unequipping" then return nil end
-	if dashActive and not airborne and state ~= "Slashing" and state ~= "Blocking"
-		and state ~= "AltFiring" then return nil end
 	local poses = {}
 	if state == "Slashing" then
 		poses = SlashPoseSampler.Sample(slashVariant, now - stateStarted)
@@ -557,12 +559,7 @@ local function poseForState(now)
 		poses = MeleePoseSampler.SampleAltFire(now - stateStarted)
 	else
 		for alias, degrees in Config.Pose.EquippedIdle do
-			if wallPresentationActive
-				and alias ~= "RightShoulder"
-				and alias ~= "RightElbow"
-				and alias ~= "RightWrist" then
-				continue
-			end
+			if wallPresentationActive and alias == "Waist" then continue end
 			if dashActive and alias == "Waist" then continue end
 			if airborne then
 				degrees += Config.Pose.EquippedAirborneOffsets[alias] or Vector3.zero
@@ -578,7 +575,7 @@ local function poseForState(now)
 	return poses
 end
 
-local function applyPose(deltaTime)
+local function applyPose(_deltaTime)
 	if not character or not humanoid or humanoid.Health <= 0 then
 		SlashPoseSampler.ResetWeaponArc(gripJoint)
 		resetPose()
@@ -614,11 +611,10 @@ local function applyPose(deltaTime)
 	local blockBlend = if state == "Blocking"
 		then math.clamp((now - stateStarted) / blockEnterSeconds, 0, 1)
 		else 1
-	local idleBlendSpeed = if isAirborne()
-		then Config.Pose.AirborneBlendSpeed
-		else Config.Pose.IdleBlendSpeed
-	local idleBlend = 1 - math.exp(-idleBlendSpeed * deltaTime)
-	local blend = if state == "MeleeIdle" then idleBlend else blockBlend
+	-- Action clips already finish on the canonical ready keyframe. Resolve idle
+	-- directly so a previous block/slash pose or Animator arm swing cannot leave
+	-- the approved weapon silhouette partially blended or displaced.
+	local blend = if state == "MeleeIdle" then 1 else blockBlend
 	PoseCoordinator:Submit(
 		"Melee",
 		if state == "Slashing" or state == "Blocking" or state == "AltFiring" then 40 else 20,

@@ -4,6 +4,7 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
+local FighterVitalsConfig = require(ReplicatedStorage.Shared.Combat.FighterVitalsConfig)
 local RecoveryConfig = require(ReplicatedStorage.Shared.Recovery.RecoveryConfig)
 local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
 
@@ -198,7 +199,18 @@ local function useItem(itemId)
 	local definition = RecoveryConfig.Definitions[itemId]
 	local character = player.Character
 	local spawnGeneration = player:GetAttribute("BLIKK_SpawnGeneration")
-	if not definition or not character or type(spawnGeneration) ~= "number" then return end
+	if not definition or not character or type(spawnGeneration) ~= "number" then return false end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return false end
+	local resourceFull
+	if definition.Resource == "Health" then
+		resourceFull = humanoid.Health >= humanoid.MaxHealth
+	else
+		local maximum = character:GetAttribute(FighterVitalsConfig.Attributes.MaximumArmour)
+		local current = character:GetAttribute(FighterVitalsConfig.Attributes.Armour)
+		resourceFull = type(maximum) == "number" and type(current) == "number" and current >= maximum
+	end
+	if resourceFull then return false, "RESOURCE_FULL" end
 	sequence += 1
 	intentRemote:FireServer({
 		Operation = "Use",
@@ -206,6 +218,7 @@ local function useItem(itemId)
 		Sequence = sequence,
 		SpawnGeneration = spawnGeneration,
 	})
+	return true
 end
 
 local function setEquippedItem(itemId)
@@ -300,7 +313,10 @@ function RecoveryController:Init(inputManager, soundEffectsController)
 			setEquippedItem(itemId)
 			soundEffectsController:Play("UIActivate")
 		elseif action == "Primary" and equippedItemId then
-			useItem(equippedItemId)
+			local sent, code = useItem(equippedItemId)
+			if not sent and code == "RESOURCE_FULL" then
+				soundEffectsController:Play("UIDenied")
+			end
 		elseif action == "EquipMelee" or action == "EquipWeapon1" or action == "EquipWeapon2"
 			or action == "NextWeapon" or action == "PreviousWeapon" then
 			setEquippedItem(nil)

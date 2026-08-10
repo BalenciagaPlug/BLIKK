@@ -37,7 +37,7 @@ local EXPECTED_CAPABILITIES = { "Root", "Waist", "RightShoulder", "LeftShoulder"
 local function clearApplied()
 	for alias in applied do
 		local joint = joints[alias]
-		if joint and joint.Parent and joint:IsA("Motor6D") then
+		if joint and joint.Parent then
 			joint.Transform = CFrame.identity
 		end
 	end
@@ -145,7 +145,7 @@ local function applyClaims()
 	for alias in applied do
 		if not selected[alias] then
 			local joint = joints[alias]
-			if joint and joint.Parent and joint:IsA("Motor6D") then
+			if joint and joint.Parent then
 				joint.Transform = CFrame.identity
 			end
 			applied[alias] = nil
@@ -157,22 +157,18 @@ local function applyClaims()
 			local blend = selection.Blend or 1
 			if selection.SuppressAnimator then
 				-- Weapon-bearing limbs must not inherit the Animator's walk-cycle arm
-				-- swing. Retain our last resolved weapon pose as the blend source so
-				-- transitions stay smooth while locomotion continues on unmasked joints.
+				-- swing. Advance from our last resolved weapon pose each frame so a
+				-- smooth recovery actually reaches idle instead of freezing after its
+				-- first blended frame.
 				local previous = applied[alias]
 				local sameOwner = previous and previous.SuppressAnimator
 					and previous.Owner == selection.Owner
 				local reference = if sameOwner and previous.StableReference
 					then previous.StableReference else joint.Transform
 				local from = if selection.StableReference
-					then reference
+					then (if sameOwner then previous.ResolvedTarget else reference)
 					else if sameOwner then previous.ResolvedTarget else joint.Transform
-				-- A stable weapon idle must not be recomputed from a variable render
-				-- delta every frame. Cache an unchanged target's first resolved pose;
-				-- changing slash/block targets still evaluate normally.
-				local targetUnchanged = sameOwner and previous.Target == selection.Target
-				local resolved = if selection.StableReference and targetUnchanged
-					then previous.ResolvedTarget else from:Lerp(selection.Target, blend)
+				local resolved = from:Lerp(selection.Target, blend)
 				joint.Transform = resolved
 				applied[alias] = {
 					Owner = selection.Owner,

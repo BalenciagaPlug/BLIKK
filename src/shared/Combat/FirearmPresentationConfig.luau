@@ -54,14 +54,18 @@ local FirearmPresentationConfig = {
 	Tumble = {
 		RotationDegrees = 360,
 		VisualLiftStuds = 0.42,
+		HangtimeLiftBonusStuds = 0.20,
 		WaistTuckDegrees = 18,
 		WaistBankDegrees = 5,
 		NeckCounterDegrees = 10,
 		LeadHipTuckDegrees = 46,
 		TrailHipTuckDegrees = 38,
-		FloatStartProgress = 0.28,
-		FloatEndProgress = 0.72,
-		FloatRotationShare = 0.46,
+		FloatStartProgress = 0.24,
+		FloatEndProgress = 0.60,
+		FloatRotationShare = 0.44,
+		FloatRotationDriftShare = 0.10,
+		RecoveryUprightProgress = 0.88,
+		RecoveryEaseOutPower = 2.6,
 	},
 	ActionPriority = 40,
 	IdlePriority = 20,
@@ -133,6 +137,19 @@ attachments.WeaponBottomReference = CFrame.new(
 	0
 )
 FirearmPresentationConfig.Attachments.StockReference = CFrame.new(rearStockCenter.Position)
+
+local tumble = FirearmPresentationConfig.Tumble
+assert(
+	0 < tumble.FloatStartProgress
+		and tumble.FloatStartProgress < tumble.FloatEndProgress
+		and tumble.FloatEndProgress < tumble.RecoveryUprightProgress
+		and tumble.RecoveryUprightProgress < 1,
+	"B-8 tumble speed-ramp phases must remain ordered inside the action"
+)
+assert(
+	tumble.FloatRotationShare + tumble.FloatRotationDriftShare < 1,
+	"B-8 tumble must reserve rotation for its accelerated recovery"
+)
 
 for poseName, pose in {
 	FallbackCarry = FirearmPresentationConfig.Pose.FallbackCarry,

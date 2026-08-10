@@ -74,8 +74,8 @@ local TechniqueConfig = {
 		MinimumUsableHeightStuds = 8,
 		DirectionDeadzone = 0.05,
 		ContactSideDotThreshold = 0.30,
-		ContactGraceSeconds = 0.10,
-		JumpInputBufferSeconds = 0.18,
+		ContactGraceSeconds = 0.12,
+		JumpInputBufferSeconds = 0.28,
 		MinimumFreshExitInputDelaySeconds = 0.08,
 		ClearancePaddingStuds = 0.30,
 		ContactMaintenanceDistanceStuds = 0.90,
@@ -87,12 +87,16 @@ local TechniqueConfig = {
 		HeadOnMinimumIntoWallRatio = 0.72,
 		HeadOnMaximumTangentRatio = 0.45,
 		HeadOnMinimumIntoWallSpeedStudsPerSecond = 8,
-		AngledMinimumDegreesFromWallPlane = 15,
-		AngledMaximumDegreesFromWallPlane = 45,
-		AngledMinimumTangentRatio = 0.55,
-		AngledMinimumIntoWallSpeedStudsPerSecond = 6,
-		AngledMinimumTangentSpeedStudsPerSecond = 8,
+		-- A wider band accepts deliberate shallow and steep approaches while the
+		-- tangent/into-speed gates still prevent passive wall adhesion.
+		AngledMinimumDegreesFromWallPlane = 8,
+		AngledMaximumDegreesFromWallPlane = 58,
+		AngledMinimumTangentRatio = 0.42,
+		AngledMinimumIntoWallSpeedStudsPerSecond = 4,
+		AngledMinimumTangentSpeedStudsPerSecond = 6,
 		VerticalRun = {
+			GroundEntryWindowSeconds = 0.16,
+			GroundContactToleranceStuds = 0.35,
 			DurationSeconds = 0.68,
 			InitialUpwardSpeedStudsPerSecond = 30,
 			FinalUpwardSpeedStudsPerSecond = 8,
@@ -115,27 +119,42 @@ local TechniqueConfig = {
 			TangentialSpeedStudsPerSecond = 8,
 			ReleaseOutwardSpeedStudsPerSecond = 6,
 		},
-		UpwardSpeedStudsPerSecond = 50,
+		-- Classic wall-jump cancel is the accessible wall-posting profile. It
+		-- preserves elevation and creates return space; slash-first Scale below
+		-- remains the deliberately faster vertical-climb profile.
+		UpwardSpeedStudsPerSecond = 54,
 		OutwardSpeedStudsPerSecond = 48,
 		DirectionalInfluenceStudsPerSecond = 12,
 		RetainedTangentialVelocityScale = 0.65,
 		MinimumOutwardRetentionScale = 0.50,
 		AutomaticVerticalExit = {
-			UpwardSpeedStudsPerSecond = 38,
+			UpwardSpeedStudsPerSecond = 46,
 			OutwardSpeedStudsPerSecond = 42,
 			TangentialRetentionScale = 0.60,
 		},
 		AutomaticHorizontalExit = {
-			UpwardSpeedStudsPerSecond = 33,
+			UpwardSpeedStudsPerSecond = 38,
 			OutwardSpeedStudsPerSecond = 37.5,
 			TangentialRetentionScale = 0.75,
 		},
-		RecoveryDurationSeconds = 0.18,
-		SlashCancelWindowSeconds = 0.16,
-		ReturnDashAvailabilitySeconds = 0.48,
+		RecoveryDurationSeconds = 0.26,
+		SlashCancelWindowSeconds = 0.22,
+		ReturnDashAvailabilitySeconds = 0.68,
+		Scale = {
+			-- Supports approach dash -> slash -> jump and wall run -> slash -> jump.
+			-- The reverse wall jump -> slash order remains the classic cancel path.
+			DashToWallMaximumSeconds = 0.44,
+			MinimumDashIntoWallDot = 0.42,
+			SlashToJumpMinimumSeconds = 0.000,
+			SlashToJumpMaximumSeconds = 0.34,
+			UpwardSpeedStudsPerSecond = 66,
+			OutwardSpeedStudsPerSecond = 48,
+			RetainedTangentialVelocityScale = 0.70,
+			ReturnDashAvailabilitySeconds = 0.70,
+		},
 		SameWallMinimumRecontactSeconds = 0.10,
-		SameWallMinimumSeparationStuds = 0.65,
-		SameWallMinimumContactPointMovementStuds = 0.5,
+		SameWallMinimumSeparationStuds = 0.55,
+		SameWallMinimumContactPointMovementStuds = 0.35,
 		SameWallMinimumReentrySpeedStudsPerSecond = 5,
 		SameWallNormalMatchDot = 0.94,
 		DiagnosticsEnabled = false,
@@ -154,5 +173,48 @@ local TechniqueConfig = {
 		},
 	},
 }
+
+local wall = TechniqueConfig.Wall
+assert(
+	wall.AngledMinimumDegreesFromWallPlane >= 0
+		and wall.AngledMinimumDegreesFromWallPlane < wall.AngledMaximumDegreesFromWallPlane
+		and wall.AngledMaximumDegreesFromWallPlane < 90,
+	"Wall-run angle band must remain ordered inside the wall-plane hemisphere"
+)
+assert(
+	wall.Scale.SlashToJumpMinimumSeconds >= 0
+		and wall.Scale.SlashToJumpMaximumSeconds > wall.Scale.SlashToJumpMinimumSeconds,
+	"Wall scale Slash-to-Jump window must be positive and ordered"
+)
+assert(
+	wall.Scale.MinimumDashIntoWallDot > 0 and wall.Scale.MinimumDashIntoWallDot <= 1,
+	"Wall scale approach dash must require meaningful inward direction"
+)
+assert(
+	wall.Scale.ReturnDashAvailabilitySeconds >= wall.ReturnDashAvailabilitySeconds,
+	"Slash-first wall scale must preserve at least the classic return-dash window"
+)
+assert(
+	wall.SlashCancelWindowSeconds <= wall.RecoveryDurationSeconds,
+	"Wall slash-cancel window must remain inside wall-jump recovery"
+)
+assert(
+	wall.UpwardSpeedStudsPerSecond > wall.OutwardSpeedStudsPerSecond,
+	"Classic wall cancel must retain enough lift to hold wall-posting elevation"
+)
+assert(
+	wall.Scale.UpwardSpeedStudsPerSecond >= wall.UpwardSpeedStudsPerSecond + 10,
+	"Slash-first wall scaling must remain the fastest vertical wall route"
+)
+assert(
+	wall.VerticalRun.GroundEntryWindowSeconds > 0
+		and wall.VerticalRun.GroundEntryWindowSeconds <= wall.JumpInputBufferSeconds,
+	"Vertical wall run must retain a short ground-origin Jump window"
+)
+assert(
+	wall.VerticalRun.GroundContactToleranceStuds >= 0
+		and wall.VerticalRun.GroundContactToleranceStuds <= wall.ContactMaintenanceDistanceStuds,
+	"Vertical wall run ground contact tolerance must remain inside maintained contact"
+)
 
 return TechniqueConfig

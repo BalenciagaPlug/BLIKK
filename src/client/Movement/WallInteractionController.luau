@@ -162,7 +162,7 @@ end
 
 local function applyWallPose()
 	local isRun = state == "VerticalWallRun" or state == "HorizontalWallRun" or state == "WallPost"
-	local isJump = state == "WallJumpRecovery"
+	local isJump = state == "WallJumpRecovery" or state == "WallScaleLaunch"
 	if not isRun and not isJump and state ~= "WallApproach" then resetOwnedPose(); return end
 	local side = if contactSide == "Left" then -1 elseif contactSide == "Right" then 1 else 0
 	local presentation = Config.Presentation
@@ -266,6 +266,7 @@ function Controller:Init(inputManager, movementEngineValue, gameplayCamera)
 			or nextState == "HorizontalWallRun"
 			or nextState == "WallPost"
 			or nextState == "WallJumpRecovery"
+			or nextState == "WallScaleLaunch"
 			or nextState == "WallCancelFreedom"
 			or nextState == "RecontactLocked"
 		state = if isWallState then nextState else "None"

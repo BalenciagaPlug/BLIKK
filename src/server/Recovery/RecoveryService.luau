@@ -106,6 +106,15 @@ local function applyRecovery(character, humanoid, resource, amount)
 	return after - before
 end
 
+local function hasRecoveryCapacity(character, humanoid, resource)
+	if resource == "Health" then
+		return humanoid.Health < humanoid.MaxHealth
+	end
+	local maximum = character:GetAttribute(FighterVitalsConfig.Attributes.MaximumArmour)
+	local current = character:GetAttribute(FighterVitalsConfig.Attributes.Armour)
+	return type(maximum) == "number" and type(current) == "number" and current < maximum
+end
+
 local function publishObserverEffect(character, root, resource, color)
 	local highlight = Instance.new("Highlight")
 	highlight.Name = "BLIKK" .. resource .. "RecoveryPulse"
@@ -344,6 +353,12 @@ local function handleIntent(player, payload)
 	local now = os.clock()
 	if now < state.NextUseAt then
 		sendResult(player, "Use", false, "COOLDOWN", { ItemId = payload.ItemId })
+		return
+	end
+	-- Capacity is authoritative for both self-use and deployable patches. A full
+	-- owner cannot spend inventory merely to create a pickup for later use.
+	if not hasRecoveryCapacity(character, humanoid, definition.Resource) then
+		sendResult(player, "Use", false, "RESOURCE_FULL", { ItemId = payload.ItemId })
 		return
 	end
 

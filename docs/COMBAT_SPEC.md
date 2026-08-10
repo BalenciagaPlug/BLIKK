@@ -311,8 +311,10 @@ shell joints remain internal to their presentation model. No pose changes root p
 velocity, dash timing, camera rotation, or FOV.
 
 Every accepted directional double tap while a firearm slot is active presents a distinct tumble on
-ground or in air. Its 0.500-second movement commitment, 0.42-stud presentation-only lift, compact
-weapon carry, and mid-rotation float keep it slower and more readable than katana dash. The lower
+ground or in air. Its 0.500-second movement commitment, 0.42-stud base presentation lift, additional
+0.20-stud mid-flip hangtime lift, compact weapon carry, and mid-rotation float keep it slower and
+more readable than katana dash. Rotation slows through the inverted Matrix beat, accelerates through
+recovery, reaches upright at 88 percent progress, and holds the remaining action as landing settle. The lower
 body owns the full roll while inverse-waist stabilisation preserves the crosshair-driven weapon
 platform. This is original BLIKK calibration informed by GunZ's documented tumble vocabulary and
 archival half-second delay; it is not a copied retail animation.
@@ -432,7 +434,8 @@ Every fresh life receives the same four-slot BLIKK recovery belt in Movement Lab
 | `6` | Vital Amp | Immediate self-use | 20 HP | 2 |
 | `7` | Aegis Amp | Immediate self-use | 20 AP | 2 |
 
-All four share a one-second use delay. Patch deployment consumes stock and creates a bounded
+All four share a one-second use delay. Patch deployment is rejected before inventory consumption or
+pickup creation when the owner already has full matching HP or AP. Otherwise it consumes stock and creates a bounded
 12-second pickup that any eligible fighter in the same combat context may claim. Ampoules are
 rejected without consuming stock when their resource is already full. Counts, use timing,
 pickup collection, HP, and AP are server-owned and reset only through the fresh-life lifecycle.

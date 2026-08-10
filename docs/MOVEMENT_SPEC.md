@@ -51,7 +51,9 @@ The procedural dash silhouette is phase-driven rather than a fixed lean. Shoulde
 before delayed hip motion, then a direction-specific lead foot clears into the travel phase and
 recovers before the dash ends. Firearm-equipped directional double taps use a distinct 0.500-second,
 direction-aware 360-degree tumble with a readable mid-rotation float, compact limb tuck, and
-inverse-waist aim stabilisation. It travels 12.5 studs grounded or 11 studs airborne and cannot
+inverse-waist aim stabilisation. Its half-second commitment is unchanged: the initial dive eases into
+a slower inversion, recovery rotation accelerates, and the avatar reaches upright by 88 percent so
+the final segment settles cleanly before presentation release. It travels 12.5 studs grounded or 11 studs airborne and cannot
 match the katana dash's burst speed. Presentation does not alter the authored movement curve,
 captured direction, or air allowance.
 
@@ -101,13 +103,13 @@ Training Katana cancel timing is owned by the per-weapon profile in `TechniqueCo
 
 ### 11.1 Movement Truth Wall Interaction
 
-Wall contact is sensed by bounded forward, angled, and pure-side spherecasts using authored wall metadata where available and a conservative vertical-geometry fallback. Contact scoring values tangent travel as well as inward approach, so an established side run is not replaced by an adhesion crawl. Head-on entry may begin a vertical run; a 15–45 degree approach to the wall plane may begin a horizontal run; other eligible airborne contact produces a standard wall jump. Horizontal runs retain accepted tangent momentum, accelerate toward their authored traversal speed, and follow a short vertical arc. During a run, signed wall-plane distance maintains a rig-relative safety radius using bounded velocity correction rather than position changes. Manual jump exits, missing or changed contact, ceiling obstruction, clearance loss, height caps, and duration caps transfer once to an outward/upward recovery launch.
+Wall contact is sensed by bounded forward, angled, and pure-side spherecasts using authored wall metadata where available and a conservative vertical-geometry fallback. Contact scoring values tangent travel as well as inward approach, so an established side run is not replaced by an adhesion crawl. Only a ground-origin Jump made while running head-on into close wall contact may begin a vertical run; the same head-on Jump pressed after the character is already airborne produces a standard wall jump. An 8–58 degree approach to the wall plane may begin BLIKK's horizontal multi-run path. Horizontal runs retain accepted tangent momentum, accelerate toward their authored traversal speed, and follow a short vertical arc. During a run, signed wall-plane distance maintains a rig-relative safety radius using bounded velocity correction rather than position changes. Manual jump exits, missing or changed contact, ceiling obstruction, clearance loss, height caps, and duration caps transfer once to an outward/upward recovery launch.
 
 With melee equipped, holding airborne Secondary on accepted contact enters a capped `WallPost` rather
 than the grounded katana alternate. Releasing drops the player away; a fresh Jump uses the normal
 wall launch. Posting never grants an extra dash and respects same-wall separation evidence.
 
-The input edge that begins a wall run is consumed. Manual exit requires a newer Jump edge after the configured freshness delay. An accepted katana slash during the short wall-jump recovery cancels only that recovery and earns one time-limited return dash; it does not restore the normal air dash. Exit clears active contact, and same-wall reuse requires elapsed time, measured separation, a moved contact point, inward return velocity, a new spherecast contact, and another buffered Jump. See `WALL_INTERACTION.md` for calibration and diagnostics.
+The input edge that begins a wall run is consumed. Manual exit requires a newer Jump edge after the configured freshness delay. The classic wall-cancel profile is reserved for accessible wall posting: 54 studs/second upward versus 48 outward, a 0.22-second slash-cancel window inside 0.26 seconds of recovery, and one 0.68-second return dash. It preserves elevation and near-wall control rather than competing for maximum climb speed. BLIKK's slash-first GunZ wall-raid order remains the hard-locked fastest vertical route after a dash into fresh wall contact or during an active wall run/post: Slash followed by Jump inside its 0.34-second window produces a 66-stud/second upward scale launch and a single 0.70-second return resource. Exit clears active contact, and same-wall reuse requires elapsed time, measured separation, a moved contact point, inward return velocity, a new spherecast contact, and another buffered Jump. See `WALL_INTERACTION.md` for calibration and diagnostics.
 
 A fresh exit Jump entered just before the minimum run/post exit delay is retained for at most `0.180`
 seconds and executes when that delay opens. This preserves a deliberate high-APM rhythm without
