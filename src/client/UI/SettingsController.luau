@@ -125,6 +125,13 @@ local soundSliders = {
 		Suffix = "%",
 		DisplayMultiplier = 100,
 	},
+	{
+		Key = "UISoundVolume",
+		Label = "BLIKK UI SOUNDS",
+		Decimals = 0,
+		Suffix = "%",
+		DisplayMultiplier = 100,
+	},
 }
 
 local displaySliders = {
@@ -228,8 +235,12 @@ local function setSliderFromScreenX(control, screenX)
 		+ math.round((rawValue - range.Minimum) / range.Step) * range.Step
 	value = math.clamp(value, range.Minimum, range.Maximum)
 
+	local previousValue = control.Source:Get(control.Key)
 	control.Source:Set(control.Key, value)
 	updateSliderVisual(control)
+	if value ~= previousValue then
+		UINavigationController:EmitAudioEvent("SliderStep", control.Row)
+	end
 end
 
 local function cancelPendingSliderCommit(control)
@@ -255,6 +266,7 @@ local function adjustSlider(control, direction)
 		range.Minimum,
 		range.Maximum
 	)
+	if value == control.Source:Get(control.Key) then return false end
 	control.Source:Set(control.Key, value)
 	updateSliderVisual(control)
 	scheduleSliderCommit(control, value)
@@ -514,13 +526,13 @@ local function createSoundPage(parent)
 	for index, definition in soundSliders do
 		createSlider(parent, definition, index, SessionSettings, SettingsConfig.AudioRanges)
 	end
-	createToggle(parent, "MusicMuted", "MUTE MUSIC", 1, SessionSettings, 252)
+	createToggle(parent, "MusicMuted", "MUTE MUSIC", 1, SessionSettings, 313)
 
 	createLabel(
 		parent,
 		"SoundNote",
-		"These controls affect BLIKK_Master, BLIKK_Music and BLIKK_SoundEffects.\nRoblox platform and CoreGui audio are not modified.",
-		UDim2.fromOffset(16, 312),
+		"Combat cues use BLIKK_SoundEffects; menu feedback has its own BLIKK_UI trim.\nRoblox platform and CoreGui audio are not modified.",
+		UDim2.fromOffset(16, 373),
 		UDim2.new(1, -32, 0, 54),
 		11,
 		colors.TextMuted
@@ -1155,6 +1167,7 @@ local function createInterface()
 	for _, control in sliderControls do
 		settingsScope:Register(control.Row, {
 			Adjust = function(direction) return adjustSlider(control, direction) end,
+			AdjustAudioRole = "SliderStep",
 		})
 		if control.AllowNumericEntry then settingsScope:Register(control.ValueLabel) end
 	end
@@ -1168,8 +1181,14 @@ local function createInterface()
 		end,
 		AllowSettingsAction = true,
 	})
-	conflictScope:Register(conflictReplaceButton, { Activate = activationCallbacks[conflictReplaceButton] })
-	conflictScope:Register(conflictCancelButton, { Activate = activationCallbacks[conflictCancelButton] })
+	conflictScope:Register(conflictReplaceButton, {
+		Activate = activationCallbacks[conflictReplaceButton],
+		AudioRole = "Confirm",
+	})
+	conflictScope:Register(conflictCancelButton, {
+		Activate = activationCallbacks[conflictCancelButton],
+		AudioRole = "Back",
+	})
 	confirmationScope = UINavigationController:CreateScope("SettingsReturnConfirmation", {
 		Root = confirmationFrame,
 		Default = confirmationNoButton,
@@ -1179,8 +1198,14 @@ local function createInterface()
 		end,
 		AllowSettingsAction = true,
 	})
-	confirmationScope:Register(confirmationYesButton, { Activate = activationCallbacks[confirmationYesButton] })
-	confirmationScope:Register(confirmationNoButton, { Activate = activationCallbacks[confirmationNoButton] })
+	confirmationScope:Register(confirmationYesButton, {
+		Activate = activationCallbacks[confirmationYesButton],
+		AudioRole = "Confirm",
+	})
+	confirmationScope:Register(confirmationNoButton, {
+		Activate = activationCallbacks[confirmationNoButton],
+		AudioRole = "Back",
+	})
 	captureScope = UINavigationController:CreateScope("SettingsBindingCapture", {
 		Root = panel,
 		Back = function() cancelCapture() end,

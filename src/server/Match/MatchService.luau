@@ -112,6 +112,7 @@ local function snapshot(match)
 		Generation = match.Generation,
 		Revision = match.Revision,
 		ModeId = match.ModeId,
+		ExperienceRewardsEnabled = GameModeRegistry.Get(match.ModeId).ExperienceRewardsEnabled == true,
 		MapId = match.MapId,
 		EndsAtUnix = match.EndsAtUnix,
 		EndsAtServerTime = match.EndsAtServerTime,
@@ -685,7 +686,10 @@ end
 
 local function onCharacterDied(player, identity)
 	local match = playerMatch[player]
-	if not match or not isCurrent(match) then return end
+	if not match or not isCurrent(match) then
+		if identity and identity.Context == "MovementLab" then damageSources[player] = nil end
+		return
+	end
 	local victim = findStats(match, player.UserId)
 	if not victim or not identitiesMatch(victim.Identity, identity) then return end
 	local preparationDied = (victim.PreparationKind == "Shared"
@@ -858,7 +862,29 @@ end
 
 function MatchService:RegisterDamageSource(victimPlayer, attackerPlayer)
 	local match = playerMatch[victimPlayer]
-	if not match or playerMatch[attackerPlayer] ~= match or not isCurrent(match) then return false end
+	if not match then
+		local victimInMovementLab = victimPlayer:GetAttribute("BLIKK_CharacterContext")
+			== "MovementLab"
+			and victimPlayer:GetAttribute("BLIKK_GameplayReleased") == true
+			and playerMatch[victimPlayer] == nil
+			and roomService:GetRoom(victimPlayer) == nil
+		local attackerInMovementLab = attackerPlayer:GetAttribute("BLIKK_CharacterContext")
+			== "MovementLab"
+			and attackerPlayer:GetAttribute("BLIKK_GameplayReleased") == true
+			and playerMatch[attackerPlayer] == nil
+			and roomService:GetRoom(attackerPlayer) == nil
+		if not victimInMovementLab or not attackerInMovementLab
+			or victimPlayer:GetAttribute("BLIKK_SpawnProtected") == true then return false end
+		damageSources[victimPlayer] = {
+			UserId = attackerPlayer.UserId,
+			At = os.clock(),
+			Context = "MovementLab",
+		}
+		spawnService:ClearSpawnProtection(attackerPlayer)
+		return true
+	end
+	if playerMatch[attackerPlayer] ~= match or not isCurrent(match)
+		or victimPlayer:GetAttribute("BLIKK_SpawnProtected") == true then return false end
 	local victim = findStats(match, victimPlayer.UserId)
 	local attacker = findStats(match, attackerPlayer.UserId)
 	if match.Phase ~= "Fighting" or not victim or not attacker
@@ -898,7 +924,10 @@ end
 
 function MatchService:RemovePlayer(player)
 	local match = playerMatch[player]
-	if not match then return end
+	if not match then
+		damageSources[player] = nil
+		return
+	end
 	local mode = GameModeRegistry.Get(match.ModeId)
 	local wasCompetitive = match.CompetitiveResolutionActive
 	match.Players[player] = nil

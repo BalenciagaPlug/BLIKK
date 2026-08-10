@@ -13,9 +13,17 @@ local SettingsConfig = {
 
 	AudioDefaults = {
 		MasterVolume = 1,
-		MusicVolume = 0.7,
+		MusicVolume = 1,
 		MusicMuted = false,
 		SoundEffectsVolume = 1,
+		UISoundVolume = 1,
+	},
+	AudioMix = {
+		RepresentativeIntegratedTargetLUFS = -23,
+		RepresentativeIntegratedToleranceLU = 2,
+		MusicGainDecibels = -8,
+		SoundEffectsGainDecibels = -2,
+		UISoundGainDecibels = -1,
 	},
 
 	AudioRanges = {
@@ -30,6 +38,11 @@ local SettingsConfig = {
 			Step = 0.05,
 		},
 		SoundEffectsVolume = {
+			Minimum = 0,
+			Maximum = 1,
+			Step = 0.05,
+		},
+		UISoundVolume = {
 			Minimum = 0,
 			Maximum = 1,
 			Step = 0.05,

@@ -21,6 +21,17 @@ local CameraConfig = {
 		ReturnDurationSeconds = 0,
 	},
 
+	DeathCamera = {
+		PitchMinDegrees = -70,
+		PitchMaxDegrees = 55,
+		MinimumDistanceStuds = 5,
+		MaximumDistanceStuds = 18,
+		FallbackDistanceStuds = 11,
+		TargetVerticalOffsetStuds = 2.25,
+		ZoomStepStuds = 1.5,
+		SensitivityMultiplier = 1,
+	},
+
 	Obstruction = {
 		FadeLocalTransparency = 0.72,
 		FadeInSpeed = 18,

@@ -76,19 +76,23 @@ function Controller:CreatePage(parent, navigation, callbacks)
 	callbacks = callbacks or {}
 	local multiplayerScope = nil
 	local activationCallbacks = {}
+	local activationAudioRoles = {}
 	local adjustCallbacks = {}
+	local pendingTransportAudioControl = nil
 	local directoryRows = {}
 	local directoryRowsById = {}
 	local directoryRowEntries = {}
-	local function bindActivation(control, callback)
+	local function bindActivation(control, callback, audioRole)
 		control.Activated:Connect(callback)
 		if multiplayerScope then
 			multiplayerScope:Register(control, {
 				Activate = callback,
 				Adjust = adjustCallbacks[control],
+				AudioRole = audioRole,
 			})
 		else
 			activationCallbacks[control] = callback
+			activationAudioRoles[control] = audioRole
 		end
 	end
 	local player = Players.LocalPlayer
@@ -161,6 +165,13 @@ function Controller:CreatePage(parent, navigation, callbacks)
 		UDim2.new(1, -32, 0, 42)
 	)
 	createButton.TextColor3 = COLORS.Acid
+	local publicDeathmatchButton = button(
+		createPanel,
+		"QUICK PLAY // PUBLIC FFA",
+		UDim2.fromOffset(16, 267),
+		UDim2.new(1, -32, 0, 42)
+	)
+	publicDeathmatchButton.TextColor3 = COLORS.Purple
 
 	local roomPanel = Instance.new("Frame")
 	roomPanel.BackgroundColor3 = COLORS.Panel
@@ -380,11 +391,16 @@ function Controller:CreatePage(parent, navigation, callbacks)
 		end
 		roster.Text = table.concat(lines, "\n")
 		local ownMember = getCurrentMember(snapshotValue)
+		local isSystemRoom = snapshotValue.SystemKind
+			== MultiplayerConfig.PublicDeathmatch.SystemKind
 		currentPlayerRoomState = ownMember and ownMember.State or "NotInRoom"
 		readyButton.Text = ownMember and ownMember.IsReady and "UNREADY" or "READY"
 		teamButton.Text = "TEAM // " .. (ownMember and ownMember.TeamId or "ALPHA")
 		local canLead = snapshotValue.RoomLeaderUserId == player.UserId
-			and snapshotValue.State == "Lobby"
+			and snapshotValue.State == "Lobby" and not isSystemRoom
+		readyButton.Active = not isSystemRoom
+		teamButton.Active = not isSystemRoom
+		startButton.Text = if isSystemRoom then "AUTO MATCH" else "START MATCH"
 		startButton.Active = canLead
 		startButton.TextColor3 = canLead and COLORS.Acid or COLORS.Muted
 		kickButton.Active = canLead
@@ -597,10 +613,16 @@ function Controller:CreatePage(parent, navigation, callbacks)
 	end
 
 	local function handleTransportResult(result)
+		local function emitTransportAudio(role)
+			local control = pendingTransportAudioControl
+			pendingTransportAudioControl = nil
+			if control then UINavigationController:EmitAudioEvent(role, control) end
+		end
 		requestState = "Idle"
 		if result.TransportAttemptId and result.TransportAttemptId == failedTransportAttemptId then
 			transportState = "Failed"
 			activeTransportAttemptId = nil
+			emitTransportAudio("Denied")
 			return
 		end
 		if not result.Success or result.Transport == "Failure" then
@@ -608,6 +630,7 @@ function Controller:CreatePage(parent, navigation, callbacks)
 			activeTransportAttemptId = nil
 			hasRetryableFailure = true
 			showStatus("ROOM REQUEST FAILED // " .. tostring(result.Code or "FAILED"), COLORS.Warning)
+			emitTransportAudio("Denied")
 			return
 		end
 		if result.Transport == "LocalRoom" and type(result.RoomSnapshot) == "table" then
@@ -616,6 +639,7 @@ function Controller:CreatePage(parent, navigation, callbacks)
 			adoptRoomSnapshot(result.RoomSnapshot, true)
 			if result.MatchSnapshot then adoptMatchSnapshot(result.MatchSnapshot) end
 			showStatus("LOCAL ROOM READY", COLORS.Acid)
+			emitTransportAudio("Confirm")
 			return
 		end
 		if result.Transport == "ReservedServerTeleport" and result.Status == "Teleporting" then
@@ -623,22 +647,25 @@ function Controller:CreatePage(parent, navigation, callbacks)
 			activeTransportAttemptId = result.TransportAttemptId
 			hasRetryableFailure = false
 			showStatus("TELEPORTING TO RESERVED ROOM...", COLORS.Acid)
+			emitTransportAudio("Confirm")
 			return
 		end
 		transportState = "Failed"
 		activeTransportAttemptId = nil
 		hasRetryableFailure = true
 		showStatus("ROOM REQUEST FAILED // INVALID_TRANSPORT", COLORS.Warning)
+		emitTransportAudio("Denied")
 		warn("[BLIKK ROOM] Client request failed: INVALID_TRANSPORT")
 	end
 
-	local function beginTransport(operation, payload, nextTransportState)
-		if not directoryRequest or requestState ~= "Idle" or currentRoomId
-			or transportState == "Teleporting" then return false end
+	local function beginTransport(operation, payload, nextTransportState, audioControl)
+		if requestState ~= "Idle" then return "Busy" end
+		if not directoryRequest or currentRoomId or transportState == "Teleporting" then return "Denied" end
 		membershipGeneration += 1
 		local generation = membershipGeneration
 		requestState = operation
 		transportState = nextTransportState
+		pendingTransportAudioControl = audioControl
 		hasRetryableFailure = false
 		showStatus(if operation == "Create" then "CREATING ROOM..." else "JOINING ROOM...", COLORS.Muted)
 		invokeBounded(directoryRequest, operation, payload, function(result)
@@ -647,7 +674,7 @@ function Controller:CreatePage(parent, navigation, callbacks)
 		end, MultiplayerConfig.Directory.TransportPrecommitDeadlineSeconds
 			+ MultiplayerConfig.Directory.CommittedTransportAbortDelaySeconds
 			+ 5)
-		return true
+		return "Started"
 	end
 
 	local function mutateRoom(operation, payload)
@@ -732,7 +759,7 @@ function Controller:CreatePage(parent, navigation, callbacks)
 		return false
 	end
 	bindActivation(createButton, function()
-		beginTransport("Create", {
+		local result = beginTransport("Create", {
 			Name = nameBox.Text,
 			IsPublic = isPublic,
 			MapId = "DistrictZero",
@@ -741,8 +768,20 @@ function Controller:CreatePage(parent, navigation, callbacks)
 			SpectatorSlots = 4,
 			JoinInProgressEnabled = true,
 			Mutators = {},
-		}, "Creating")
-	end)
+		}, "Creating", createButton)
+		if result == "Denied" then UINavigationController:EmitAudioEvent("Denied", createButton) end
+	end, "Silent")
+	bindActivation(publicDeathmatchButton, function()
+		local result = beginTransport(
+			"QuickPlayPublicDeathmatch",
+			nil,
+			"Joining",
+			publicDeathmatchButton
+		)
+		if result == "Denied" then
+			UINavigationController:EmitAudioEvent("Denied", publicDeathmatchButton)
+		end
+	end, "Silent")
 	bindActivation(readyButton, function()
 		local member = getCurrentMember(currentRoomSnapshot)
 		mutateRoom("SetReady", not (member and member.IsReady))
@@ -771,20 +810,25 @@ function Controller:CreatePage(parent, navigation, callbacks)
 	bindActivation(join, function()
 		if not selectedDirectoryRoomId then
 			showStatus("SELECT A ROOM", COLORS.Warning)
+			UINavigationController:EmitAudioEvent("Denied", join)
 			return
 		end
 		if not selectedDirectoryRoomJoinable then
 			showStatus("ROOM NOT JOINABLE", COLORS.Warning)
+			UINavigationController:EmitAudioEvent("Denied", join)
 			return
 		end
-		beginTransport("Join", {
+		local result = beginTransport("Join", {
 			RoomId = selectedDirectoryRoomId,
 			RequestedRole = "Player",
-		}, "Joining")
-	end)
+		}, "Joining", join)
+		if result == "Denied" then UINavigationController:EmitAudioEvent("Denied", join) end
+	end, "Silent")
 	bindActivation(joinCodeButton, function()
-		beginTransport("JoinCode", joinCode.Text, "Joining")
-	end)
+		if beginTransport("JoinCode", joinCode.Text, "Joining", joinCodeButton) == "Denied" then
+			UINavigationController:EmitAudioEvent("Denied", joinCodeButton)
+		end
+	end, "Silent")
 	bindActivation(back, leaveCurrentRoom)
 
 	if roomUpdated and roomUpdated:IsA("RemoteEvent") then
@@ -832,6 +876,7 @@ function Controller:CreatePage(parent, navigation, callbacks)
 		multiplayerScope:Register(control, {
 			Activate = callback,
 			Adjust = adjustCallbacks[control],
+			AudioRole = activationAudioRoles[control],
 		})
 	end
 	for _, textBox in { nameBox, memberBox, joinCode } do multiplayerScope:Register(textBox) end

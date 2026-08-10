@@ -133,6 +133,18 @@ end
 local function publishAcceptedShot(player, payload)
 	local match = matchService:GetMatch(player)
 	local room = roomService:GetRoom(player)
+	if player:GetAttribute("BLIKK_CharacterContext") == "MovementLab"
+		and not match and not room then
+		for _, recipient in Players:GetPlayers() do
+			if recipient:GetAttribute("BLIKK_CharacterContext") == "MovementLab"
+				and recipient:GetAttribute("BLIKK_GameplayReleased") == true
+				and not matchService:GetMatch(recipient)
+				and not roomService:GetRoom(recipient) then
+				shotRemote:FireClient(recipient, payload)
+			end
+		end
+		return
+	end
 	if not match or not room or match.RoomId ~= room.RoomId or not match.Players[player] then
 		shotRemote:FireClient(player, payload)
 		return

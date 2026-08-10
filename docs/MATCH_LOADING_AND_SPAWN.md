@@ -4,7 +4,8 @@ This document is the canonical Sprint 024.4 contract for character creation,
 spawn placement, client preparation, match loading, and synchronized gameplay
 release. The current implementation is split across
 `CharacterLifecycleService`, `DistrictZeroSpawnService`, `MatchService`,
-`MatchPreparationController`, and `LoadingScreenController`.
+`MatchPreparationController`, `LoadingScreenController`, and
+`DeathCameraController`.
 
 The server owns character creation, placement, match membership, preparation,
 and release. The client may prepare local systems and acknowledge an exact
@@ -21,6 +22,7 @@ round, or release itself.
 | Spawn selection and placement | `DistrictZeroSpawnService` | Selects a valid District Zero spawn and pivots the exact character supplied by the lifecycle service. It does not observe `CharacterAdded`, handle a client remote, set `RespawnLocation`, or request a character. |
 | Client readiness | `MatchPreparationController` | Waits for the exact character and required local binders, performs the bounded world check, and sends `MatchReady`. |
 | Loading presentation and local UI ownership | `LoadingScreenController` | Covers transitions, preloads a finite presentation manifest, and owns named input, camera, and navigation blockers while active. |
+| Death/respawn presentation | `DeathCameraController` | Replaces loading artwork after an authoritative released fighter dies, blocks gameplay input, and owns a collision-aware live orbit around the corpse until a newer character generation is released. |
 | Earliest boot cover | `ReplicatedFirst/LoadingBootstrap.client.luau` | Replaces Roblox's default loading screen only after a safe black fallback exists, then hands the view to the normal client controller. |
 
 `CharacterAdded` consumers may initialize or observe a character. They must
@@ -281,8 +283,10 @@ must be explicitly connected to `MatchPreparationController` before the
 There is no artificial minimum display time and no fake percentage. The
 initial `ReplicatedFirst` cover uses bounded replication and handoff waits; if
 the shared artwork cannot load, the black fallback remains readable. The
-current FIGHT sound field is `LoadingScreenConfig.Fight.SoundAssetId`; it is
-empty, so no FIGHT SFX plays until a valid `rbxassetid://<number>` is approved.
+central `SoundEffectsConfig.Sounds.FightStart` cue uses the configured one-second voiced FIGHT
+Creator Store candidate. It fires from the exact rendered `FightPresented` frame and remains silent
+if bounded preload or target-experience asset access fails; that optional presentation failure cannot
+authorize or block gameplay release.
 
 ## Streaming and world readiness
 
@@ -312,6 +316,13 @@ explicit, finite sentinel owned by that map.
 | Elimination join in progress | Player remains `WaitingForRound` and spectating. | Entry occurs through the next shared round generation. If competitive resolution was inactive and the arriving roster restores a valid distribution, the server starts a fresh round. |
 | Elimination death | No mid-round respawn while competitive resolution is active. Death contributes to round resolution. | Winner advances the series or all participants enter `PostRound`. In a non-competitive solo warm-up, the configured one-second fallback uses individual respawn. |
 | Movement Lab | Individual lifecycle request with match generation and round `0`; the client marker budget is `12` seconds and the server lifecycle budget is `15` seconds. Every frontend attempt has a monotonic client attempt generation echoed with lifecycle updates. | Releases immediately after exact readiness. A readiness timeout cancels rather than silently releasing an incomplete fighter. Death requests a clean new spawn generation within the same attempt. Exit carries the current attempt plus expected spawn generation, so a stale exit cannot cancel a newer entry. |
+
+After a released fighter dies, respawn and next-round readiness continue through the same exact-
+generation protocol without painting the loading screen over the world. The death camera follows the
+corpse while it exists, retains its last valid position if character replacement removes it, and
+accepts mouse orbit plus bounded wheel zoom. It stops only for a newer released spawn generation or
+an authoritative cancellation/failure. `Dead` match members use this camera; `WaitingForRound`,
+timed-out, failed, and explicit room spectators continue to use spectator policy.
 
 At a shared timeout, players without both server and client readiness are
 cancelled and moved to spectating. A non-competitive match may proceed with at
@@ -350,10 +361,13 @@ releases. Successful release unanchors the root, zeros velocity, sets
 `BLIKK_GameplayReleased = true`, marks the participant alive, and enables spawn
 protection.
 
-For individual entry, the server supplies a player-specific timestamp
-`IndividualFightLeadSeconds` (`1.25` seconds) in the future. The same client
-FIGHT scheduling and exact lifecycle release rules apply without delaying the
-rest of the match.
+For individual join-in-progress entry, the server supplies a player-specific
+timestamp `IndividualFightLeadSeconds` (`1.25` seconds) in the future. The same
+client FIGHT scheduling and exact lifecycle release rules apply without
+delaying the rest of the match. A death respawn uses that authoritative release
+timestamp without replaying FIGHT or loading artwork: the death camera remains
+the local presentation owner until the newer character generation reports its
+successful lifecycle release.
 
 FIGHT presentation is not authority. A delayed render frame may display it
 late, but never changes the server timestamp. A client cannot advance the
@@ -365,6 +379,7 @@ match or unanchor its root by sending readiness early.
 | --- | --- | --- |
 | Input | Loading adds the named `LoadingScreen` blocker to `InputManager`, which clears buffered gameplay actions and prevents semantic gameplay dispatch. | Removes only that named blocker at FIGHT or bounded dismissal. Other menu, text, spectator, or settings ownership remains effective. |
 | Camera | Loading adds the named `LoadingScreen` blocker to `GameplayCamera`, preventing gameplay camera activation and mouse capture. | Removes only that named blocker. Existing frontend or spectator requests still decide effective camera state. |
+| Death camera | Death adds named `DeathCamera` blockers to input and the gameplay camera, then runs a collision-aware Scriptable orbit without authorizing gameplay. | Removes only its own blockers after a strictly newer released spawn generation, allowing the next valid camera owner to resume. |
 | UI navigation | Loading owns a topmost `LoadingScreen` navigation scope. | Deactivates that scope before releasing camera and input blockers, restoring the next valid scope. |
 | Character root | Lifecycle anchors the exact root and zeros both assembly velocities. | Only exact-generation `ReleaseCharacter` may unanchor it. Post-round and post-match holding anchors it again when still live. |
 | Combat and targetability | Match stats remain unreleased/not alive and `BLIKK_GameplayReleased` is false. Server damage-source registration rejects non-Fighting, unreleased, dead, or attribute-gated participants. | Successful server release sets all required match and lifecycle gates. Spawn protection is applied separately. |

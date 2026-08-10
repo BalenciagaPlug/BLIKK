@@ -1,10 +1,8 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local SoundService = game:GetService("SoundService")
 local Workspace = game:GetService("Workspace")
 
-local AudioPreloadController = require(script.Parent.Parent.Audio.AudioPreloadController)
 local CombatFeedbackConfig = require(ReplicatedStorage.Shared.Combat.CombatFeedbackConfig)
 local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
 
@@ -19,17 +17,11 @@ local damageNumberPool = {}
 local remoteConnection = nil
 local updateConnection = nil
 local generationConnection = nil
-local preloadStatusConnection = nil
 local destroyingConnection = nil
 local markerStartedAt = -math.huge
 local markerColor = CombatFeedbackConfig.Colors.Mixed
-local soundFolder = nil
-local confirmedHitSound = nil
-local reloadInitiatedSound = nil
-local disabledSounds = {}
+local soundEffectsController = nil
 local hasWarnedMalformed = false
-local hasWarnedMissingSoundGroup = false
-local warnedPlaybackFailure = {}
 local acceptedSpawnGeneration = nil
 local lastAcceptedSequence = 0
 
@@ -227,87 +219,6 @@ local function createInterface()
 	end
 end
 
-local function createSound(definition)
-	if definition.Enabled ~= true then return nil end
-	local soundGroup = SoundService:FindFirstChild(CombatFeedbackConfig.Sounds.SoundGroupName)
-	if not soundGroup or not soundGroup:IsA("SoundGroup") then
-		if not hasWarnedMissingSoundGroup then
-			hasWarnedMissingSoundGroup = true
-			warn("[BLIKK COMBAT FEEDBACK] Sound-effects group is unavailable; combat cues are disabled.")
-		end
-		return nil
-	end
-	local sound = Instance.new("Sound")
-	sound.Name = definition.Name
-	sound.SoundId = ""
-	sound.Volume = math.clamp(definition.Volume, 0, 1)
-	sound.PlaybackSpeed = math.clamp(definition.PlaybackSpeed, 0.5, 2)
-	sound.SoundGroup = soundGroup
-	sound.Parent = soundFolder
-	return sound
-end
-
-local function prepareSounds()
-	local existing = SoundService:FindFirstChild(CombatFeedbackConfig.Sounds.FolderName)
-	if existing then existing:Destroy() end
-	soundFolder = Instance.new("Folder")
-	soundFolder.Name = CombatFeedbackConfig.Sounds.FolderName
-	soundFolder.Parent = SoundService
-	confirmedHitSound = createSound(CombatFeedbackConfig.Sounds.ConfirmedHit)
-	reloadInitiatedSound = createSound(CombatFeedbackConfig.Sounds.ReloadInitiated)
-
-	local function handlePreloadStatus(key, status)
-		local isConfirmedHit = key == CombatFeedbackConfig.Sounds.ConfirmedHit.Key
-		local isReload = key == CombatFeedbackConfig.Sounds.ReloadInitiated.Key
-		if not isConfirmedHit and not isReload then return end
-		local definition = if isConfirmedHit
-			then CombatFeedbackConfig.Sounds.ConfirmedHit
-			else CombatFeedbackConfig.Sounds.ReloadInitiated
-		local sound = if isConfirmedHit then confirmedHitSound else reloadInitiatedSound
-		if status == "Success" then
-			disabledSounds[key] = nil
-			if sound and sound.Parent then sound.SoundId = definition.SoundId end
-		elseif status == "Failure" or status == "Disabled" then
-			disabledSounds[key] = true
-			if not sound or not sound.Parent then return end
-			sound:Stop()
-			sound.SoundId = ""
-		end
-	end
-	preloadStatusConnection = AudioPreloadController.StatusChanged.Event:Connect(handlePreloadStatus)
-	handlePreloadStatus(
-		CombatFeedbackConfig.Sounds.ConfirmedHit.Key,
-		AudioPreloadController:GetStatus(CombatFeedbackConfig.Sounds.ConfirmedHit.Key)
-	)
-	handlePreloadStatus(
-		CombatFeedbackConfig.Sounds.ReloadInitiated.Key,
-		AudioPreloadController:GetStatus(CombatFeedbackConfig.Sounds.ReloadInitiated.Key)
-	)
-end
-
-local function playConfiguredSound(definition, sound)
-	if not sound or disabledSounds[definition.Key]
-		or AudioPreloadController:GetStatus(definition.Key) ~= "Success" then return end
-	local succeeded, playError = pcall(function()
-		if definition.RestartOnRetrigger then
-			sound:Stop()
-			sound.TimePosition = 0
-		end
-		sound:Play()
-	end)
-	if succeeded then return end
-	disabledSounds[definition.Key] = true
-	sound.SoundId = ""
-	if not warnedPlaybackFailure[definition.Key] then
-		warnedPlaybackFailure[definition.Key] = true
-		warn(string.format(
-			"[BLIKK COMBAT FEEDBACK] %s disabled after playback failure: %s",
-			definition.Key,
-			tostring(playError)
-		))
-	end
-end
-
 local function triggerDamageNumber(result, now)
 	local selected = nil
 	for _, record in damageNumberPool do
@@ -372,19 +283,25 @@ local function handleConfirmation(payload)
 	if payload.Sequence <= lastAcceptedSequence then return end
 	lastAcceptedSequence = payload.Sequence
 	if operation == "ReloadAccepted" then
-		playConfiguredSound(
-			CombatFeedbackConfig.Sounds.ReloadInitiated,
-			reloadInitiatedSound
-		)
+		soundEffectsController:Play("ReloadInitiated")
 		return
 	end
 	local now = os.clock()
 	for _, result in payload.HitResults do triggerDamageNumber(result, now) end
 	triggerHitmarker(payload.HitResults, now)
 	local appliedDamage = 0
-	for _, result in payload.HitResults do appliedDamage += result.AppliedDamage end
+	local eliminatedPracticeDummyPosition = nil
+	for _, result in payload.HitResults do
+		appliedDamage += result.AppliedDamage
+		if result.TargetKind == "PracticeDummy" and result.Eliminated then
+			eliminatedPracticeDummyPosition = result.WorldPosition
+		end
+	end
 	if appliedDamage > 0 then
-		playConfiguredSound(CombatFeedbackConfig.Sounds.ConfirmedHit, confirmedHitSound)
+		soundEffectsController:Play("FirearmHitConfirm")
+	end
+	if eliminatedPracticeDummyPosition then
+		soundEffectsController:PlayAtPosition("PracticeDummyDeath", eliminatedPracticeDummyPosition)
 	end
 end
 
@@ -442,12 +359,12 @@ local function updateHitmarker(now)
 	for _, line in hitmarkerLines do line.BackgroundTransparency = transparency end
 end
 
-function CombatFeedbackController:Init()
+function CombatFeedbackController:Init(soundEffectsControllerValue)
 	if isInitialised then return end
 	isInitialised = true
 	isDestroyed = false
+	soundEffectsController = soundEffectsControllerValue
 	createInterface()
-	prepareSounds()
 	local remotes = ReplicatedStorage:WaitForChild(
 		"BLIKKRemotes",
 		MultiplayerConfig.RemoteLookupTimeoutSeconds
@@ -486,11 +403,8 @@ function CombatFeedbackController:Destroy()
 	if remoteConnection then remoteConnection:Disconnect(); remoteConnection = nil end
 	if updateConnection then updateConnection:Disconnect(); updateConnection = nil end
 	if generationConnection then generationConnection:Disconnect(); generationConnection = nil end
-	if preloadStatusConnection then preloadStatusConnection:Disconnect(); preloadStatusConnection = nil end
 	if destroyingConnection then destroyingConnection:Disconnect(); destroyingConnection = nil end
-	if soundFolder then soundFolder:Destroy(); soundFolder = nil end
-	confirmedHitSound = nil
-	reloadInitiatedSound = nil
+	soundEffectsController = nil
 	if screenGui then screenGui:Destroy(); screenGui = nil end
 	table.clear(hitmarkerLines)
 	table.clear(damageNumberPool)

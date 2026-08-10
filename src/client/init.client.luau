@@ -24,8 +24,10 @@ end
 local AudioController = requireRequired(script.Audio.AudioController)
 local AudioPreloadController = requireRequired(script.Audio.AudioPreloadController)
 local MusicController = requireRequired(script.Audio.MusicController)
+local SoundEffectsController = requireRequired(script.Audio.SoundEffectsController)
 local PlayerPreferencesController = requireRequired(script.Settings.PlayerPreferencesController)
 local GameplayCamera = requireRequired(script.Camera.GameplayCamera)
+local DeathCameraController = requireRequired(script.Camera.DeathCameraController)
 local FighterController = requireRequired(script.Character.FighterController)
 local PoseCoordinator = requireRequired(script.Character.PoseCoordinator)
 local CombatFeedbackController = requireRequired(script.Combat.CombatFeedbackController)
@@ -71,11 +73,18 @@ local bootstrapSucceeded, bootstrapError = pcall(function()
 		GameplayCamera,
 		UINavigationController
 	)
-	initialiseRequired("MatchPreparationController", MatchPreparationController, LoadingScreenController)
+	initialiseRequired("DeathCameraController", DeathCameraController, InputManager, GameplayCamera)
+	initialiseRequired(
+		"MatchPreparationController",
+		MatchPreparationController,
+		LoadingScreenController,
+		DeathCameraController
+	)
 	initialiseRequired("ActivityController", ActivityController, InputManager)
 	initialiseRequired("PlayerPreferencesController", PlayerPreferencesController, CharacterProfilesController)
 	initialiseRequired("AudioController", AudioController)
 	initialiseRequired("AudioPreloadController", AudioPreloadController, NavigationController)
+	initialiseRequired("SoundEffectsController", SoundEffectsController, UINavigationController)
 	initialiseRequired("EnvironmentQualityController", EnvironmentQualityController)
 	initialiseRequired("FighterController", FighterController)
 	initialiseRequired("PoseCoordinator", PoseCoordinator)
@@ -103,7 +112,15 @@ local bootstrapSucceeded, bootstrapError = pcall(function()
 		InputManager,
 		FighterController,
 		MovementEngine,
-		GameplayCamera
+		GameplayCamera,
+		SoundEffectsController
+	)
+	SoundEffectsController:BindGameplay(
+		FighterController,
+		FirearmPresentationController,
+		MeleePresentationController,
+		LoadingScreenController,
+		MovementEngine
 	)
 	initialiseRequired("WeaponPresentationCoordinator", WeaponPresentationCoordinator)
 	initialiseRequired(
@@ -116,7 +133,7 @@ local bootstrapSucceeded, bootstrapError = pcall(function()
 		FighterController,
 		FirearmPresentationController
 	)
-	initialiseRequired("CombatFeedbackController", CombatFeedbackController)
+	initialiseRequired("CombatFeedbackController", CombatFeedbackController, SoundEffectsController)
 	initialiseRequired("MusicController", MusicController, NavigationController)
 	initialiseRequired("HUDController", HUDController, FighterController, FirearmPresentationController)
 	initialiseRequired("InputOverlayController", InputOverlayController, InputManager)

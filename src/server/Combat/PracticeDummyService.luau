@@ -1,6 +1,7 @@
 local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local CombatFeedbackConfig = require(ReplicatedStorage.Shared.Combat.CombatFeedbackConfig)
@@ -67,11 +68,19 @@ local function stopIdle(record)
 	record.IdleTrack = nil
 end
 
+local function destroyRecoveryPresentation(record)
+	record.RecoveryPresentationGeneration += 1
+	local attachment = record.RecoveryAttachment
+	record.RecoveryAttachment = nil
+	if attachment then attachment:Destroy() end
+end
+
 local function destroyRecord()
 	local record = activeRecord
 	if not record then return end
 	activeRecord = nil
 	cancelReset(record)
+	destroyRecoveryPresentation(record)
 	disconnectConnections(record.Connections)
 	stopIdle(record)
 	if record.Model.Parent then record.Model:Destroy() end
@@ -386,6 +395,9 @@ local function createReadout(record)
 	local function update()
 		if activeRecord ~= record then return end
 		local attributes = FighterVitalsConfig.Attributes
+		title.Text = if record.Model:GetAttribute(PracticeDummyConfig.Attributes.IsRecovering) == true
+			then "RECOVERING"
+			else "DAMAGE DUMMY"
 		armour.Text = string.format(
 			"AP %d / %d",
 			math.round(record.Model:GetAttribute(attributes.Armour) or 0),
@@ -402,7 +414,96 @@ local function createReadout(record)
 		record.Model:GetAttributeChangedSignal(FighterVitalsConfig.Attributes.Armour):Connect(update)
 	)
 	table.insert(record.Connections, record.Humanoid.HealthChanged:Connect(update))
+	table.insert(
+		record.Connections,
+		record.Model:GetAttributeChangedSignal(
+			PracticeDummyConfig.Attributes.IsRecovering
+		):Connect(update)
+	)
 	update()
+end
+
+local function startRecoveryPresentation(record)
+	local config = PracticeDummyConfig.RecoveryPresentation
+	if not config.Enabled or activeRecord ~= record or not record.Root.Parent then return end
+	destroyRecoveryPresentation(record)
+	local generation = record.RecoveryPresentationGeneration
+	local rig = Instance.new("Part")
+	rig.Name = "BLIKKDummyRecoveryScan"
+	rig.Anchored = true
+	rig.CanCollide = false
+	rig.CanQuery = false
+	rig.CanTouch = false
+	rig.CastShadow = false
+	rig.Size = Vector3.one * 0.05
+	rig.Transparency = 1
+	rig.CFrame = record.Root.CFrame
+	rig.Parent = record.Model
+	record.RecoveryAttachment = rig
+
+	local fullTurn = math.pi * 2
+	for ringIndex = 1, config.RingCount do
+		local attachments = {}
+		for segmentIndex = 1, config.SegmentsPerRing do
+			local angle = (segmentIndex - 1) / config.SegmentsPerRing * fullTurn
+			local point = Instance.new("Attachment")
+			point.Name = string.format("ScanRing%dPoint%d", ringIndex, segmentIndex)
+			point.Position = Vector3.new(
+				math.cos(angle) * config.InitialRadiusStuds,
+				config.InitialHeightStuds,
+				math.sin(angle) * config.InitialRadiusStuds
+			)
+			point.Parent = rig
+			attachments[segmentIndex] = point
+		end
+		local beams = {}
+		for segmentIndex = 1, config.SegmentsPerRing do
+			local beam = Instance.new("Beam")
+			beam.Name = string.format("ScanRing%dSegment%d", ringIndex, segmentIndex)
+			beam.Attachment0 = attachments[segmentIndex]
+			beam.Attachment1 = attachments[segmentIndex % config.SegmentsPerRing + 1]
+			beam.Color = ColorSequence.new(config.PrimaryColor, config.SecondaryColor)
+			beam.FaceCamera = true
+			beam.LightEmission = 0.9
+			beam.Width0 = config.LineThicknessStuds
+			beam.Width1 = config.LineThicknessStuds
+			beam.Enabled = false
+			beam.Parent = rig
+			beams[segmentIndex] = beam
+		end
+		local delaySeconds = (ringIndex - 1) * config.RingStaggerSeconds
+		task.delay(delaySeconds, function()
+			if activeRecord ~= record or record.RecoveryPresentationGeneration ~= generation
+				or record.RecoveryAttachment ~= rig then return end
+			for _, beam in beams do beam.Enabled = true end
+			local tweenInfo = TweenInfo.new(
+				config.RingTravelSeconds,
+				Enum.EasingStyle.Quad,
+				Enum.EasingDirection.Out
+			)
+			for segmentIndex, point in attachments do
+				local angle = (segmentIndex - 1) / config.SegmentsPerRing * fullTurn
+				TweenService:Create(point, tweenInfo, {
+					Position = Vector3.new(
+						math.cos(angle) * config.FinalRadiusStuds,
+						config.InitialHeightStuds + config.RiseStuds,
+						math.sin(angle) * config.FinalRadiusStuds
+					),
+				}):Play()
+			end
+			for _, beam in beams do
+				TweenService:Create(beam, tweenInfo, {
+					Width0 = 0.01,
+					Width1 = 0.01,
+				}):Play()
+			end
+		end)
+	end
+	task.delay(config.TotalLifetimeSeconds, function()
+		if activeRecord ~= record or record.RecoveryPresentationGeneration ~= generation
+			or record.RecoveryAttachment ~= rig then return end
+		destroyRecoveryPresentation(record)
+	end)
 end
 
 local function restoreRecord(record)
@@ -415,6 +516,7 @@ local function restoreRecord(record)
 	record.Model:SetAttribute(attributes.Armour, FighterVitalsConfig.MaximumArmour)
 	record.IsActive = true
 	record.Model:SetAttribute(PracticeDummyConfig.Attributes.IsActive, true)
+	record.Model:SetAttribute(PracticeDummyConfig.Attributes.IsRecovering, false)
 	record.Root.Anchored = true
 	record.Root.AssemblyLinearVelocity = Vector3.zero
 	record.Root.AssemblyAngularVelocity = Vector3.zero
@@ -527,6 +629,7 @@ local function beginDummyBuild(district)
 		model:SetAttribute(attributes.AvatarUserId, PracticeDummyConfig.AvatarUserId)
 		model:SetAttribute(attributes.Generation, generation)
 		model:SetAttribute(attributes.IsActive, true)
+		model:SetAttribute(attributes.IsRecovering, false)
 		model:SetAttribute(FighterVitalsConfig.Attributes.MaximumArmour, FighterVitalsConfig.MaximumArmour)
 		model:SetAttribute(FighterVitalsConfig.Attributes.Armour, FighterVitalsConfig.MaximumArmour)
 		humanoid.MaxHealth = FighterVitalsConfig.MaximumHealth
@@ -541,6 +644,8 @@ local function beginDummyBuild(district)
 			ResetToken = 0,
 			ResetThread = nil,
 			IdleTrack = nil,
+			RecoveryAttachment = nil,
+			RecoveryPresentationGeneration = 0,
 			Connections = {},
 		}
 		activeRecord = record
@@ -615,15 +720,14 @@ function PracticeDummyService:OnDamageApplied(target, damageResult)
 	if not record or activeRecord ~= record or type(damageResult) ~= "table" then return end
 	cancelReset(record)
 	local eliminated = damageResult.HealthAfter <= 0
-	if eliminated then
-		record.IsActive = false
-		record.Model:SetAttribute(PracticeDummyConfig.Attributes.IsActive, false)
-	end
+	if not eliminated then return end
+	record.IsActive = false
+	record.Model:SetAttribute(PracticeDummyConfig.Attributes.IsActive, false)
+	record.Model:SetAttribute(PracticeDummyConfig.Attributes.IsRecovering, true)
+	if record.IdleTrack then pcall(function() record.IdleTrack:Stop(0.12) end) end
+	startRecoveryPresentation(record)
 	local token = record.ResetToken
-	local delaySeconds = if eliminated
-		then PracticeDummyConfig.Vitals.LethalRecoverySeconds
-		else PracticeDummyConfig.Vitals.ResetAfterInactivitySeconds
-	record.ResetThread = task.delay(delaySeconds, function()
+	record.ResetThread = task.delay(PracticeDummyConfig.Vitals.LethalRecoverySeconds, function()
 		if activeRecord ~= record or record.ResetToken ~= token then return end
 		record.ResetThread = nil
 		restoreRecord(record)

@@ -1,3 +1,4 @@
+local DataStoreService = game:GetService("DataStoreService")
 local MemoryStoreService = game:GetService("MemoryStoreService")
 local MessagingService = game:GetService("MessagingService")
 local HttpService = game:GetService("HttpService")
@@ -17,6 +18,13 @@ local secretMap = MemoryStoreService:GetHashMap(directoryConfig.SecretMapName)
 local privateLookup = MemoryStoreService:GetHashMap(directoryConfig.PrivateServerLookupName)
 local codeLookup = MemoryStoreService:GetHashMap(directoryConfig.JoinCodeLookupName)
 local nonceMap = MemoryStoreService:GetHashMap(directoryConfig.JoinNonceMapName)
+local publicDeathmatchConfig = Config.PublicDeathmatch
+local publicDeathmatchReservationStore = DataStoreService:GetDataStore(
+	publicDeathmatchConfig.ReservationStoreName
+)
+local publicDeathmatchAnchorMap = MemoryStoreService:GetHashMap(
+	publicDeathmatchConfig.AnchorMapName
+)
 local limiter = RateLimiter.New()
 local roomService = nil
 local subscription = nil
@@ -24,6 +32,28 @@ local ownedRoom = nil
 local heartbeatGeneration = 0
 local reservedRoomMetadata = {}
 local transportAttempts = {}
+
+local function publicDeathmatchRoomId()
+	return "BLIKK-PUBLIC-FFA-" .. game.MatchmakingType.Name
+end
+
+local function publicDeathmatchAnchorKey()
+	return "PARTITION-" .. game.MatchmakingType.Name
+end
+
+local function publicDeathmatchRoomConfig()
+	return {
+		MapId = publicDeathmatchConfig.MapId,
+		ModeId = publicDeathmatchConfig.ModeId,
+		MaximumPlayers = publicDeathmatchConfig.MaximumPlayers,
+		IsPublic = true,
+		Mutators = {},
+		TeamAssignmentMode = "NONE",
+		JoinInProgressEnabled = true,
+		SpectatorSlots = publicDeathmatchConfig.SpectatorSlots,
+		ReadyRequired = false,
+	}
+end
 
 local function retry(callback, shouldContinue)
 	local lastError = nil
@@ -97,7 +127,9 @@ local function publicRecord(room)
 		or (room.Config.JoinInProgressEnabled
 			and (room.State == "LoadingMatch" or room.State == "Countdown"
 				or room.State == "InProgress" or room.State == "RoundIntermission"))
-	return { DirectoryVersion = 1, RoomId = room.RoomId, Name = room.Name, LeaderUserId = room.RoomLeaderUserId, LeaderDisplayName = leader and leader.DisplayName or "", LeaderClanTag = leader and leader:GetAttribute("BLIKK_ClanTag") or nil, ModeId = room.Config.ModeId, MapId = room.Config.MapId, Mutators = table.clone(room.Config.Mutators), CurrentPlayers = count, MaximumPlayers = room.Config.MaximumPlayers, State = room.State, IsPublic = room.Config.IsPublic, JoinInProgressEnabled = room.Config.JoinInProgressEnabled, Joinable = joinable, LateJoinBehavior = mode and mode.LateJoinBehavior or nil, MatchmakingType = game.MatchmakingType.Name, Revision = room.Revision, UpdatedAtUnix = os.time() }
+		or (room.SystemKind == publicDeathmatchConfig.SystemKind
+			and (room.State == "PostMatch" or room.State == "ReturningToLobby"))
+	return { DirectoryVersion = 1, RoomId = room.RoomId, Name = room.Name, LeaderUserId = room.RoomLeaderUserId, LeaderDisplayName = leader and leader.DisplayName or "", LeaderClanTag = leader and leader:GetAttribute("BLIKK_ClanTag") or nil, ModeId = room.Config.ModeId, MapId = room.Config.MapId, Mutators = table.clone(room.Config.Mutators), CurrentPlayers = count, MaximumPlayers = room.Config.MaximumPlayers, State = room.State, IsPublic = room.Config.IsPublic, JoinInProgressEnabled = room.Config.JoinInProgressEnabled, Joinable = joinable, LateJoinBehavior = mode and mode.LateJoinBehavior or nil, MatchmakingType = game.MatchmakingType.Name, Revision = room.Revision, UpdatedAtUnix = os.time(), SystemKind = room.SystemKind }
 end
 
 function Directory:UpdateRoom(room)
@@ -141,6 +173,7 @@ function Directory:UpdateRoom(room)
 		secret.Config = room.Config
 		secret.RoomLeaderUserId = room.RoomLeaderUserId
 		secret.JoinCode = room.JoinCode
+		secret.SystemKind = room.SystemKind
 		if metadata then metadata.Secret = secret end
 		secretMap:SetAsync(room.RoomId, secret, directoryConfig.SecretTtlSeconds)
 		if abortStaleDestination(secret) then return end
@@ -149,6 +182,22 @@ function Directory:UpdateRoom(room)
 		if room.JoinCode then
 			codeLookup:SetAsync(room.JoinCode, room.RoomId, directoryConfig.SecretTtlSeconds)
 			if abortStaleDestination(secret) then return end
+		end
+		if room.SystemKind == publicDeathmatchConfig.SystemKind then
+			local now = os.time()
+			publicDeathmatchAnchorMap:UpdateAsync(publicDeathmatchAnchorKey(), function(current)
+				local bootstrapId = type(current) == "table" and current.BootstrapId or nil
+				return {
+					BootstrapId = bootstrapId,
+					RoomId = room.RoomId,
+					PrivateServerId = secret.PrivateServerId,
+					LeaderUserId = room.RoomLeaderUserId,
+					ServerJobId = game.JobId,
+					MatchmakingType = game.MatchmakingType.Name,
+					UpdatedAtUnix = now,
+					ExpiresAtUnix = now + publicDeathmatchConfig.AnchorTtlSeconds,
+				}
+			end, publicDeathmatchConfig.AnchorTtlSeconds)
 		end
 	end)
 	if not ok then warn("[BLIKK ROOM] Directory heartbeat failed: DIRECTORY_UNAVAILABLE") end
@@ -172,6 +221,7 @@ function Directory:CloseRoom(roomOrId)
 		or metadata and metadata.PrivateServerId
 		or (wasOwnedRoom and game.PrivateServerId)
 	local joinCode = room and room.JoinCode or metadata and metadata.JoinCode
+	local systemKind = room and room.SystemKind
 	local listingRemoved = retry(function() return listingMap:RemoveAsync(roomId) end)
 	local secretRemoved = retry(function() return secretMap:RemoveAsync(roomId) end)
 	local privateLookupRemoved = true
@@ -181,6 +231,19 @@ function Directory:CloseRoom(roomOrId)
 	end
 	if type(joinCode) == "string" and joinCode ~= "" then
 		joinCodeRemoved = retry(function() return codeLookup:RemoveAsync(joinCode) end)
+	end
+	if systemKind == publicDeathmatchConfig.SystemKind then
+		retry(function()
+			return publicDeathmatchAnchorMap:UpdateAsync(
+				publicDeathmatchAnchorKey(),
+				function(current)
+					if type(current) == "table" and current.RoomId == roomId
+						and current.ServerJobId == game.JobId then return nil end
+					return current
+				end,
+				publicDeathmatchConfig.AnchorTtlSeconds
+			)
+		end)
 	end
 	reservedRoomMetadata[roomId] = nil
 	if not listingRemoved or not secretRemoved or not privateLookupRemoved or not joinCodeRemoved then
@@ -204,6 +267,173 @@ local function listRooms()
 		end
 	end
 	return results
+end
+
+local function validPublicReservation(value)
+	return type(value) == "table"
+		and value.SchemaVersion == 1
+		and value.PlaceId == game.PlaceId
+		and type(value.AccessCode) == "string" and value.AccessCode ~= ""
+		and type(value.PrivateServerId) == "string" and value.PrivateServerId ~= ""
+end
+
+local function ensurePublicDeathmatchReservation(player, attempt)
+	local function attemptCurrent()
+		return isTransportAttemptCurrent(player, attempt)
+	end
+	local readOk, stored = retry(function()
+		return publicDeathmatchReservationStore:GetAsync(
+			publicDeathmatchConfig.ReservationStoreKey
+		)
+	end, attemptCurrent)
+	if readOk and validPublicReservation(stored) then return stored end
+	if not attemptCurrent() then return nil, "TRANSPORT_CANCELLED" end
+	attempt.Stage = "ReservingPublicDeathmatch"
+	local reserved, accessCode, privateServerId = retry(function()
+		return TeleportService:ReserveServerAsync(game.PlaceId)
+	end, attemptCurrent)
+	if not reserved or type(accessCode) ~= "string" or type(privateServerId) ~= "string" then
+		return nil, "PUBLIC_FFA_RESERVE_FAILED"
+	end
+	local candidate = {
+		SchemaVersion = 1,
+		PlaceId = game.PlaceId,
+		AccessCode = accessCode,
+		PrivateServerId = privateServerId,
+		CreatedAtUnix = os.time(),
+	}
+	local storedOk, authoritative = retry(function()
+		return publicDeathmatchReservationStore:UpdateAsync(
+			publicDeathmatchConfig.ReservationStoreKey,
+			function(current)
+				return if validPublicReservation(current) then current else candidate
+			end
+		)
+	end, attemptCurrent)
+	if not storedOk or not validPublicReservation(authoritative) then
+		return nil, "PUBLIC_FFA_RESERVATION_STORE_FAILED"
+	end
+	return authoritative
+end
+
+local function publicDeathmatchListing(leaderUserId)
+	local mode = Modes.Get(publicDeathmatchConfig.ModeId)
+	return {
+		DirectoryVersion = 1,
+		RoomId = publicDeathmatchRoomId(),
+		Name = publicDeathmatchConfig.DisplayName,
+		LeaderUserId = leaderUserId,
+		LeaderDisplayName = "",
+		ModeId = publicDeathmatchConfig.ModeId,
+		MapId = publicDeathmatchConfig.MapId,
+		Mutators = {},
+		CurrentPlayers = 0,
+		MaximumPlayers = publicDeathmatchConfig.MaximumPlayers,
+		State = "Lobby",
+		IsPublic = true,
+		JoinInProgressEnabled = true,
+		Joinable = true,
+		LateJoinBehavior = mode and mode.LateJoinBehavior or "SPAWN_IMMEDIATELY",
+		MatchmakingType = game.MatchmakingType.Name,
+		Revision = 0,
+		UpdatedAtUnix = os.time(),
+		SystemKind = publicDeathmatchConfig.SystemKind,
+	}
+end
+
+local function preparePublicDeathmatch(player, attempt, reservation)
+	local roomId = publicDeathmatchRoomId()
+	local now = os.time()
+	local proposed = {
+		BootstrapId = attempt.Id,
+		RoomId = roomId,
+		PrivateServerId = reservation.PrivateServerId,
+		LeaderUserId = player.UserId,
+		ServerJobId = "",
+		MatchmakingType = game.MatchmakingType.Name,
+		UpdatedAtUnix = now,
+		ExpiresAtUnix = now + publicDeathmatchConfig.AnchorTtlSeconds,
+	}
+	local anchorOk, anchor = retry(function()
+		return publicDeathmatchAnchorMap:UpdateAsync(
+			publicDeathmatchAnchorKey(),
+			function(current)
+				local isLive = type(current) == "table"
+					and current.RoomId == roomId
+					and current.PrivateServerId == reservation.PrivateServerId
+					and current.MatchmakingType == game.MatchmakingType.Name
+					and (current.ExpiresAtUnix or 0) > os.time()
+				return if isLive then current else proposed
+			end,
+			publicDeathmatchConfig.AnchorTtlSeconds
+		)
+	end, function()
+		return isTransportAttemptCurrent(player, attempt)
+	end)
+	if not anchorOk or type(anchor) ~= "table" then
+		return nil, "PUBLIC_FFA_DIRECTORY_UNAVAILABLE"
+	end
+	attempt.RoomId = roomId
+	attempt.PrivateServerId = reservation.PrivateServerId
+	attempt.PublicBootstrapId = anchor.BootstrapId
+	if anchor.BootstrapId == attempt.Id then
+		attempt.OwnsPublicBootstrap = true
+		attempt.Stage = "WritingPublicDeathmatch"
+		local secret = {
+			RoomId = roomId,
+			Name = publicDeathmatchConfig.DisplayName,
+			Config = publicDeathmatchRoomConfig(),
+			RoomLeaderUserId = player.UserId,
+			JoinCode = nil,
+			AccessCode = reservation.AccessCode,
+			PrivateServerId = reservation.PrivateServerId,
+			MatchmakingType = game.MatchmakingType.Name,
+			CreatedAtUnix = os.time(),
+			SystemKind = publicDeathmatchConfig.SystemKind,
+		}
+		local function attemptCurrent()
+			return isTransportAttemptCurrent(player, attempt)
+		end
+		local secretStored = retry(function()
+			return secretMap:SetAsync(roomId, secret, directoryConfig.SecretTtlSeconds)
+		end, attemptCurrent)
+		markAttemptResourcesChanged(attempt)
+		local lookupStored = secretStored and retry(function()
+			return privateLookup:SetAsync(
+				reservation.PrivateServerId,
+				roomId,
+				directoryConfig.SecretTtlSeconds
+			)
+		end, attemptCurrent)
+		if lookupStored then markAttemptResourcesChanged(attempt) end
+		local listingStored = lookupStored and retry(function()
+			local listing = publicDeathmatchListing(player.UserId)
+			return listingMap:SetAsync(
+				roomId,
+				listing,
+				directoryConfig.ListingTtlSeconds,
+				listing.UpdatedAtUnix
+			)
+		end, attemptCurrent)
+		if listingStored then markAttemptResourcesChanged(attempt) end
+		if not secretStored or not lookupStored or not listingStored then
+			return nil, "PUBLIC_FFA_DIRECTORY_WRITE_FAILED"
+		end
+		return secret
+	end
+
+	local deadline = os.clock() + publicDeathmatchConfig.BootstrapWaitSeconds
+	repeat
+		if not isTransportAttemptCurrent(player, attempt) then
+			return nil, "TRANSPORT_CANCELLED"
+		end
+		local secretOk, secret = pcall(secretMap.GetAsync, secretMap, roomId)
+		if secretOk and type(secret) == "table"
+			and secret.PrivateServerId == reservation.PrivateServerId
+			and secret.SystemKind == publicDeathmatchConfig.SystemKind then return secret end
+		task.wait(0.25)
+	until os.clock() >= deadline
+	return nil, "PUBLIC_FFA_BOOTSTRAP_TIMEOUT"
 end
 
 local function closeAttemptRoom(attempt)
@@ -436,6 +666,12 @@ local function validateArrival(player)
 		Secret = secret,
 	}
 	ownedRoom = roomService:GetRoom(player)
+	local admittedRoom = ownedRoom
+	if admittedRoom then
+		task.defer(function()
+			if ownedRoom == admittedRoom then Directory:UpdateRoom(admittedRoom) end
+		end)
+	end
 end
 
 local function failure(code)
@@ -533,6 +769,38 @@ function Directory:Init(remoteRegistry, rooms)
 	remoteRegistry.DirectoryRequest.OnServerInvoke = function(player, operation, payload)
 		if not RateLimiter.Allow(limiter, player, "Directory", Config.BrowserQueryCooldownSeconds, 2) then return failure("RATE_LIMITED") end
 		if operation == "List" then local result, code = listRooms(); return { Success = result ~= nil, Code = code or "OK", Rooms = result } end
+		if operation == "QuickPlayPublicDeathmatch" then
+			if not roomService:CanEnterDirectoryRoom(player) then
+				return failure("PLAYER_UNAVAILABLE")
+			end
+			if RunService:IsStudio() then
+				local roomSnapshot, code = roomService:JoinPublicDeathmatchLocal(player)
+				return localRoomResult(roomSnapshot, code, roomService:GetMatchSnapshot(player))
+			end
+			local attempt = beginTransportAttempt(player, operation)
+			if not attempt then return failure("TRANSPORT_IN_PROGRESS") end
+			armTransportDeadline(player, attempt)
+			local reservation, reservationCode = ensurePublicDeathmatchReservation(player, attempt)
+			if not reservation then
+				cancelTransportWithoutNotice(player, attempt)
+				return failure(reservationCode)
+			end
+			local secret, bootstrapCode = preparePublicDeathmatch(player, attempt, reservation)
+			if not secret then
+				cancelTransportWithoutNotice(player, attempt)
+				return failure(bootstrapCode)
+			end
+			local success, code = teleportToRoom(
+				player,
+				secret.RoomId,
+				"Player",
+				attempt,
+				true
+			)
+			if not success then cancelTransportWithoutNotice(player, attempt) end
+			if success and player.Parent ~= Players then clearTransportAttempt(player, attempt) end
+			return teleportResult(success, code, attempt)
+		end
 		if operation == "Create" then
 			if RunService:IsStudio() then
 				local roomSnapshot, code = roomService:CreateForPlayer(player, payload)

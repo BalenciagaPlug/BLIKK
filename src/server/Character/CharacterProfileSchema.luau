@@ -20,6 +20,7 @@ local function newNormalizationDiagnostics(schemaVersion)
 		DefaultedBindingCount = 0,
 		RemovedBindingCount = 0,
 		AddedMissingPreferenceDefaultCount = 0,
+		MigratedPreferenceCount = 0,
 		ReplacedInvalidPreferenceCount = 0,
 		RemovedUnknownPreferenceCount = 0,
 		MetadataWasNormalized = false,
@@ -235,6 +236,7 @@ function Schema.NormalizeAccount(source)
 	diagnostics.AddedMissingPreferenceDefaultCount = (
 		preferenceDiagnostics.AddedMissingPreferenceDefaultCount
 	)
+	diagnostics.MigratedPreferenceCount = preferenceDiagnostics.MigratedPreferenceCount
 	diagnostics.ReplacedInvalidPreferenceCount = preferenceDiagnostics.ReplacedInvalidPreferenceCount
 	diagnostics.RemovedUnknownPreferenceCount = preferenceDiagnostics.RemovedUnknownPreferenceCount
 	return account, diagnostics
@@ -247,6 +249,7 @@ function Schema.DiagnosticsRequireSave(diagnostics)
 		or diagnostics.DefaultedBindingCount > 0
 		or diagnostics.RemovedBindingCount > 0
 		or diagnostics.AddedMissingPreferenceDefaultCount > 0
+		or diagnostics.MigratedPreferenceCount > 0
 		or diagnostics.ReplacedInvalidPreferenceCount > 0
 		or diagnostics.RemovedUnknownPreferenceCount > 0
 		or diagnostics.MetadataWasNormalized

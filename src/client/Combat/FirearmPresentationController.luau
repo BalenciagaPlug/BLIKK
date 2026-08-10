@@ -418,8 +418,13 @@ local function fireActive()
 	local slot = slots[activeSlot]
 	if pendingSwitch or not gameplayEnabled or inputSuppressed or not slot or slot.State ~= "Ready"
 		or not slot.IsRendered or slot.Model.Parent ~= character
-		or chamberCount(slot) <= 0 or os.clock() < slot.NextFireAt then return false end
+		then return false end
 	if not gameplayCamera or not gameplayCamera:IsGameplayActive() then return false end
+	if chamberCount(slot) <= 0 then
+		Controller.SemanticEvent:Fire("DryFire", os.clock(), { Slot = slot.Id })
+		return false
+	end
+	if os.clock() < slot.NextFireAt then return false end
 	local muzzleAttachment = slot.Model.PrimaryPart:FindFirstChild("MuzzleAttachment")
 	local aim = readFreshGameplayAim(slot)
 	if not aim or not muzzleAttachment or not muzzleAttachment:IsA("Attachment") then return false end
@@ -778,7 +783,13 @@ function Controller:GetActiveStatus()
 	}
 end
 
-function Controller:Init(inputManagerValue, fighterControllerValue, movementEngine, gameplayCameraValue)
+function Controller:Init(
+	inputManagerValue,
+	fighterControllerValue,
+	movementEngine,
+	gameplayCameraValue,
+	soundEffectsController
+)
 	if isInitialised then return end
 	isInitialised = true
 	inputManager = inputManagerValue
@@ -792,7 +803,7 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 	if not firearmIntent or not firearmResult or not firearmShot then
 		error("[BLIKK FIREARM] Combat remotes unavailable", 0)
 	end
-	shotEffects = FirearmShotEffects.Create(firearmShot)
+	shotEffects = FirearmShotEffects.Create(firearmShot, soundEffectsController)
 	script.Destroying:Connect(function()
 		if shotEffects then shotEffects:Destroy(); shotEffects = nil end
 	end)
