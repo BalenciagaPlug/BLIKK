@@ -8,6 +8,7 @@ local Workspace = game:GetService("Workspace")
 local Shared = ReplicatedStorage:FindFirstChild("Shared")
 assert(Shared, "Shared must be acquired by the client composition root before the gameplay camera")
 local CameraConfig = require(Shared.Camera.CameraConfig)
+local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 local CharacterDependency = require(Shared.Character.CharacterDependency)
 local MultiplayerConfig = require(Shared.Multiplayer.MultiplayerConfig)
 local CameraObstruction = require(script.Parent.CameraObstruction)
@@ -55,16 +56,35 @@ local function clearStableAim()
 	stableAimCamera = nil
 end
 
-local function createCrosshairLine(name, size, position)
+local function crosshairNumber(key, fallback)
+	local value = SessionSettings:Get(key)
+	return if type(value) == "number" then value else fallback
+end
+
+local function createCrosshairLine(parent, name, size, offset, rotation, opacity)
+	local shadow = Instance.new("Frame")
+	shadow.Name = name .. "Shadow"
+	shadow.AnchorPoint = Vector2.new(0.5, 0.5)
+	shadow.BackgroundColor3 = Color3.new(0, 0, 0)
+	shadow.BackgroundTransparency = math.clamp(0.18 + (1 - opacity), 0.18, 0.82)
+	shadow.BorderSizePixel = 0
+	shadow.Position = UDim2.new(0.5, offset.X, 0.5, offset.Y)
+	shadow.Rotation = rotation or 0
+	shadow.Size = UDim2.fromOffset(size.X + 2, size.Y + 2)
+	shadow.ZIndex = 1
+	shadow.Parent = parent
+
 	local line = Instance.new("Frame")
 	line.Name = name
 	line.AnchorPoint = Vector2.new(0.5, 0.5)
-	line.Position = position
-	line.Size = size
 	line.BackgroundColor3 = CameraConfig.Crosshair.Color
-	line.BackgroundTransparency = CameraConfig.Crosshair.Transparency
+	line.BackgroundTransparency = math.clamp(1 - opacity, 0, 0.75)
 	line.BorderSizePixel = 0
-	return line
+	line.Position = shadow.Position
+	line.Rotation = shadow.Rotation
+	line.Size = UDim2.fromOffset(size.X, size.Y)
+	line.ZIndex = 2
+	line.Parent = parent
 end
 
 local function createCrosshair()
@@ -82,31 +102,46 @@ local function createCrosshair()
 	screenGui.IgnoreGuiInset = true
 	screenGui.ResetOnSpawn = false
 	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	local style = SessionSettings:Get("CrosshairStyle") or "PRECISION"
+	local gap = crosshairNumber("CrosshairGap", CameraConfig.Crosshair.GapPixels)
+	local length = crosshairNumber("CrosshairLength", CameraConfig.Crosshair.LineLengthPixels)
+	local thickness = crosshairNumber("CrosshairThickness", CameraConfig.Crosshair.ThicknessPixels)
+	local dotSize = math.clamp(math.round(crosshairNumber("CrosshairDotSize", CameraConfig.Crosshair.DotSizePixels)), 1, 10)
+	local opacity = crosshairNumber("CrosshairOpacity", CameraConfig.Crosshair.Opacity)
 
-	local gap = CameraConfig.Crosshair.GapPixels
-	local length = CameraConfig.Crosshair.LineLengthPixels
-	local thickness = CameraConfig.Crosshair.ThicknessPixels
+	if style == "SHOTGUN" then
+		-- Four complete brackets keep the centre readable while giving spread
+		-- weapons a stronger peripheral reference.
+		for _, definition in {
+			{ "TLH", Vector2.new(length, thickness), Vector2.new(-(gap + length / 2), -gap), 0 },
+			{ "TLV", Vector2.new(thickness, length), Vector2.new(-gap, -(gap + length / 2)), 0 },
+			{ "TRH", Vector2.new(length, thickness), Vector2.new(gap + length / 2, -gap), 0 },
+			{ "TRV", Vector2.new(thickness, length), Vector2.new(gap, -(gap + length / 2)), 0 },
+			{ "BLH", Vector2.new(length, thickness), Vector2.new(-(gap + length / 2), gap), 0 },
+			{ "BLV", Vector2.new(thickness, length), Vector2.new(-gap, gap + length / 2), 0 },
+			{ "BRH", Vector2.new(length, thickness), Vector2.new(gap + length / 2, gap), 0 },
+			{ "BRV", Vector2.new(thickness, length), Vector2.new(gap, gap + length / 2), 0 },
+		} do
+			createCrosshairLine(screenGui, definition[1], definition[2], definition[3], definition[4], opacity)
+		end
+	elseif style == "MELEE" then
+		local radius = gap + length * 0.58
+		createCrosshairLine(screenGui, "LeftUpper", Vector2.new(length, thickness), Vector2.new(-radius, -gap * 0.45), 28, opacity)
+		createCrosshairLine(screenGui, "LeftLower", Vector2.new(length, thickness), Vector2.new(-radius, gap * 0.45), -28, opacity)
+		createCrosshairLine(screenGui, "RightUpper", Vector2.new(length, thickness), Vector2.new(radius, -gap * 0.45), -28, opacity)
+		createCrosshairLine(screenGui, "RightLower", Vector2.new(length, thickness), Vector2.new(radius, gap * 0.45), 28, opacity)
+	else
+		createCrosshairLine(screenGui, "Top", Vector2.new(thickness, length), Vector2.new(0, -(gap + length / 2)), 0, opacity)
+		createCrosshairLine(screenGui, "Bottom", Vector2.new(thickness, length), Vector2.new(0, gap + length / 2), 0, opacity)
+		createCrosshairLine(screenGui, "Left", Vector2.new(length, thickness), Vector2.new(-(gap + length / 2), 0), 0, opacity)
+		createCrosshairLine(screenGui, "Right", Vector2.new(length, thickness), Vector2.new(gap + length / 2, 0), 0, opacity)
+	end
 
-	createCrosshairLine(
-		"Top",
-		UDim2.fromOffset(thickness, length),
-		UDim2.new(0.5, 0, 0.5, -(gap + length / 2))
-	).Parent = screenGui
-	createCrosshairLine(
-		"Bottom",
-		UDim2.fromOffset(thickness, length),
-		UDim2.new(0.5, 0, 0.5, gap + length / 2)
-	).Parent = screenGui
-	createCrosshairLine(
-		"Left",
-		UDim2.fromOffset(length, thickness),
-		UDim2.new(0.5, -(gap + length / 2), 0.5, 0)
-	).Parent = screenGui
-	createCrosshairLine(
-		"Right",
-		UDim2.fromOffset(length, thickness),
-		UDim2.new(0.5, gap + length / 2, 0.5, 0)
-	).Parent = screenGui
+	if SessionSettings:Get("CrosshairCenterDot") ~= false then
+		-- This is deliberately independent from line thickness. The common
+		-- centre anchor keeps every odd or even pixel size exactly on reticle centre.
+		createCrosshairLine(screenGui, "CenterDot", Vector2.new(dotSize, dotSize), Vector2.zero, 0, opacity)
+	end
 
 	screenGui.Parent = playerGui
 	crosshairGui = screenGui
@@ -495,6 +530,14 @@ function GameplayCamera:Init(inputManager)
 	isInitialised = true
 	MouseLookInput:Init()
 	createCrosshair()
+	SessionSettings.Changed.Event:Connect(function(key)
+		if table.find({
+			"CrosshairStyle", "CrosshairLength", "CrosshairThickness", "CrosshairDotSize",
+			"CrosshairGap", "CrosshairOpacity", "CrosshairCenterDot",
+		}, key) then
+			createCrosshair()
+		end
+	end)
 
 	UserInputService.WindowFocusReleased:Connect(function()
 		hasWindowFocus = false

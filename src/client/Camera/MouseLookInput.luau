@@ -14,6 +14,9 @@ local accumulatedDeltaX = 0
 local accumulatedDeltaY = 0
 local baselineDeltaSensitivity = 1
 local inputChangedConnection: RBXScriptConnection? = nil
+local inputBeganConnection: RBXScriptConnection? = nil
+local inputEndedConnection: RBXScriptConnection? = nil
+local activeTouch: InputObject? = nil
 local isInitialised = false
 
 local function isFinite(value: number): boolean
@@ -30,11 +33,21 @@ function MouseLookInput:Init()
 	if isInitialised then return end
 	isInitialised = true
 	baselineDeltaSensitivity = UserInputService.MouseDeltaSensitivity
+	inputBeganConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if activeOwner == nil or gameProcessed or activeTouch
+			or input.UserInputType ~= Enum.UserInputType.Touch then return end
+		local camera = workspace.CurrentCamera
+		if camera and input.Position.X >= camera.ViewportSize.X * 0.42 then activeTouch = input end
+	end)
+	inputEndedConnection = UserInputService.InputEnded:Connect(function(input)
+		if input == activeTouch then activeTouch = nil end
+	end)
 
 	inputChangedConnection = UserInputService.InputChanged:Connect(function(input)
-		if activeOwner == nil or input.UserInputType ~= Enum.UserInputType.MouseMovement then
-			return
-		end
+		if activeOwner == nil then return end
+		local isMouse = input.UserInputType == Enum.UserInputType.MouseMovement
+		local isTrackedTouch = input.UserInputType == Enum.UserInputType.Touch and input == activeTouch
+		if not isMouse and not isTrackedTouch then return end
 
 		local deltaX = input.Delta.X
 		local deltaY = input.Delta.Y
@@ -52,6 +65,7 @@ function MouseLookInput:Acquire(owner: string)
 	end
 	if activeOwner ~= owner then
 		activeOwner = owner
+		activeTouch = nil
 		accumulatedDeltaX = 0
 		accumulatedDeltaY = 0
 	end
@@ -65,6 +79,7 @@ end
 function MouseLookInput:Release(owner: string)
 	if activeOwner ~= owner then return end
 	activeOwner = nil
+	activeTouch = nil
 	accumulatedDeltaX = 0
 	accumulatedDeltaY = 0
 	restoreBaselineSensitivity()
@@ -91,7 +106,10 @@ function MouseLookInput:Destroy()
 		inputChangedConnection:Disconnect()
 		inputChangedConnection = nil
 	end
+	if inputBeganConnection then inputBeganConnection:Disconnect(); inputBeganConnection = nil end
+	if inputEndedConnection then inputEndedConnection:Disconnect(); inputEndedConnection = nil end
 	activeOwner = nil
+	activeTouch = nil
 	accumulatedDeltaX = 0
 	accumulatedDeltaY = 0
 	if wasActive then restoreBaselineSensitivity() end

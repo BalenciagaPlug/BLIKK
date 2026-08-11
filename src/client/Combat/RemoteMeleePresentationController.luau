@@ -4,6 +4,7 @@ local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
 local MeleePresentationConfig = require(ReplicatedStorage.Shared.Combat.MeleePresentationConfig)
+local MeleeCombatConfig = require(ReplicatedStorage.Shared.Combat.MeleeCombatConfig)
 local MeleePoseSampler = require(ReplicatedStorage.Shared.Combat.MeleePoseSampler)
 local MultiplayerConfig = require(ReplicatedStorage.Shared.Multiplayer.MultiplayerConfig)
 local SlashPoseSampler = require(ReplicatedStorage.Shared.Combat.SlashPoseSampler)
@@ -110,6 +111,7 @@ local function validPayload(payload)
 	end
 	return payload.Operation == "SlashCancel" or payload.Operation == "BlockBegin"
 		or payload.Operation == "BlockEnd" or payload.Operation == "AltFire"
+		or payload.Operation == "AirTossRecover"
 end
 
 local function showSlashImpact(payload)
@@ -211,13 +213,18 @@ local function beginRemotePresentation(payload)
 	if not shooter or not character or not humanoid or humanoid.Health <= 0
 		or shooter:GetAttribute("BLIKK_SpawnGeneration") ~= payload.SpawnGeneration
 		or character:GetAttribute("BLIKK_SpawnGeneration") ~= payload.SpawnGeneration then return end
-	local mode = if payload.Operation == "BlockBegin" then "Block" else payload.Operation
+	local mode = if payload.Operation == "BlockBegin" then "Block"
+		elseif payload.Operation == "AirTossRecover" then "SafeFall"
+		else payload.Operation
 	local existing = active[payload.ShooterUserId]
 	if existing and existing.Mode == mode
 		and payload.Sequence <= existing.Sequence then return end
 	clearRecord(payload.ShooterUserId)
-	local model, trail, grip = attachKatana(character, humanoid)
-	if not model then return end
+	local model, trail, grip
+	if mode ~= "SafeFall" then
+		model, trail, grip = attachKatana(character, humanoid)
+		if not model then return end
+	end
 	local root = character:FindFirstChild("HumanoidRootPart")
 	if root and root:IsA("BasePart")
 		and (payload.Operation == "Slash" or payload.Operation == "AltFire") then
@@ -229,6 +236,7 @@ local function beginRemotePresentation(payload)
 		Humanoid = humanoid,
 		Joints = collectJoints(character),
 		Applied = {},
+		Resolved = {},
 		Model = model,
 		Grip = grip,
 		Trail = trail,
@@ -238,8 +246,9 @@ local function beginRemotePresentation(payload)
 	}
 end
 
-local function updateRemoteSlashes()
+local function updateRemoteSlashes(deltaTime)
 	local now = os.clock()
+	local actionBlend = 1 - math.exp(-MeleePresentationConfig.Pose.ActionBlendSpeed * deltaTime)
 	local slash = MeleePresentationConfig.Slash
 	local activeStart = slash.AnticipationSeconds
 	local activeEnd = activeStart + slash.ActiveSeconds
@@ -250,6 +259,8 @@ local function updateRemoteSlashes()
 			then MeleePresentationConfig.Block.MaximumDurationSeconds
 			elseif record.Mode == "AltFire"
 			then MeleePresentationConfig.AltFire.TotalDurationSeconds
+			elseif record.Mode == "SafeFall"
+			then MeleeCombatConfig.AltFire.SafeFallAnimationDurationSeconds
 			else total
 		if not record.Character.Parent or record.Humanoid.Health <= 0 or elapsed >= duration then
 			clearRecord(userId)
@@ -276,13 +287,15 @@ local function updateRemoteSlashes()
 				weaponPose.EdgeRollDegrees,
 				blockWeaponBlend
 			)
-		else
+		elseif record.Grip then
 			SlashPoseSampler.ResetWeaponArc(record.Grip)
 		end
 		local poses = if record.Mode == "Block"
 			then MeleePoseSampler.SampleBlock(elapsed)
 			elseif record.Mode == "AltFire"
 			then MeleePoseSampler.SampleAltFire(elapsed)
+			elseif record.Mode == "SafeFall"
+			then MeleePoseSampler.SampleSafeFall(elapsed)
 			else SlashPoseSampler.Sample(record.Variant, elapsed)
 		for alias, pose in poses do
 			local joint = record.Joints[alias]
@@ -293,11 +306,13 @@ local function updateRemoteSlashes()
 				-- Remote weapon limbs use the accepted weapon pose as their absolute
 				-- presentation for this frame; the remote walk cycle remains on the
 				-- torso and lower body without dragging the attached katana.
-				joint.Transform = pose
+				local resolved = (record.Resolved[alias] or joint.Transform):Lerp(pose, actionBlend)
+				joint.Transform = resolved
+				record.Resolved[alias] = resolved
 			elseif joint:IsA("AnimationConstraint") then
-				joint.Transform = pose * joint.Transform
+				joint.Transform = CFrame.identity:Lerp(pose, actionBlend) * joint.Transform
 			else
-				joint.Transform = joint.Transform:Lerp(pose, 1)
+				joint.Transform = joint.Transform:Lerp(pose, actionBlend)
 			end
 			if joint:IsA("Motor6D") then record.Applied[alias] = true end
 		end

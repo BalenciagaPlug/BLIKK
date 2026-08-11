@@ -18,6 +18,7 @@ local FirearmCombatConfig = {
 		MovementStateAffectsSpread = false,
 		PresentationRecoilAffectsSpread = false,
 		RepeatedFireBloomEnabled = false,
+		GuaranteedCenterPellets = 1,
 	},
 	MaximumRangeStuds = 300, -- BLIKK prototype tuning; not a historical GunZ value.
 	Aim = {
@@ -27,6 +28,11 @@ local FirearmCombatConfig = {
 		MaximumRequestsPerSecond = 12,
 		MuzzleForwardStuds = 1.4,
 		MuzzleUpStuds = 1.1,
+		MinimumAimPointDistanceStuds = 1,
+		-- The camera's 300-stud miss point can be several studs farther from the
+		-- authoritative root muzzle; rays themselves remain clamped to weapon range.
+		MaximumAimPointDistanceStuds = 325,
+		MinimumAimPointDirectionDot = 0.90,
 	},
 	Reload = {
 		StartSeconds = RELOAD_START_SECONDS,
@@ -35,5 +41,15 @@ local FirearmCombatConfig = {
 		CommitSeconds = RELOAD_START_SECONDS + RELOAD_INSERT_SECONDS,
 	},
 }
+
+assert(
+	FirearmCombatConfig.Accuracy.GuaranteedCenterPellets >= 1
+		and FirearmCombatConfig.Accuracy.GuaranteedCenterPellets <= FirearmCombatConfig.PelletsPerShot,
+	"At least one shotgun pellet must preserve exact crosshair intent"
+)
+assert(
+	FirearmCombatConfig.Aim.MaximumAimPointDistanceStuds <= FirearmCombatConfig.MaximumRangeStuds + 25,
+	"Aim-point tolerance must stay tightly bounded around weapon range"
+)
 
 return FirearmCombatConfig

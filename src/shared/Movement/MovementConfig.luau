@@ -22,15 +22,15 @@ local MovementConfig = {
 		},
 		Presentation = {
 			Enabled = true,
-			CharacterLeanDegrees = 11,
-			CounterTwistDegrees = 8,
+			CharacterLeanDegrees = 14,
+			CounterTwistDegrees = 6,
 			ArmBraceDegrees = 18,
 			LeadShoulderDegrees = 22,
-			LeadStepDegrees = 34,
-			TrailStepDegrees = 18,
-			StepPeakProgress = 0.46,
-			StepRecoveryStartProgress = 0.72,
-			HipMotionDelayProgress = 0.10,
+			LeadStepDegrees = 21,
+			TrailStepDegrees = 24,
+			StepPeakProgress = 0.42,
+			StepRecoveryStartProgress = 0.80,
+			HipMotionDelayProgress = 0.06,
 			-- Air dashes are a separate flight silhouette: both legs remain balanced
 			-- instead of borrowing the grounded dash's lead-step animation.
 			AirCharacterLeanDegrees = 8,
@@ -87,7 +87,22 @@ local MovementConfig = {
 		HeightStuds = 7.5,
 		InputBufferSeconds = 0.18,
 		GroundedGraceSeconds = 0.10,
+		AirborneFloat = {
+			Enabled = true,
+			AscentWindowStudsPerSecond = 16,
+			DescentWindowStudsPerSecond = -48,
+			GravityScaleAtApex = 0.58,
+			GravityScaleAtDescentExit = 0.88,
+			MaximumCompensationStudsPerSecondPerFrame = 4.5,
+		},
 	},
 }
+
+assert(
+	MovementConfig.Jump.AirborneFloat.GravityScaleAtApex > 0
+		and MovementConfig.Jump.AirborneFloat.GravityScaleAtApex <= 1
+		and MovementConfig.Jump.AirborneFloat.GravityScaleAtDescentExit <= 1,
+	"General airborne float must retain meaningful gravity"
+)
 
 return MovementConfig

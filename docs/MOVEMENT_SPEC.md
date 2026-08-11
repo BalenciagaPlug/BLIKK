@@ -4,6 +4,11 @@
 
 This document is the movement source of truth for BLIKK. Gameplay feel is authoritative: responsiveness, predictable direction, and player expression take priority over realism or visual polish. Current behaviour is distinguished from provisional tuning and planned systems.
 
+Ordinary airborne movement retains full gravity outside a narrow `+16` through `-48` studs/second
+window. Inside it, gravity eases to `0.58` at the apex and progressively returns to `0.88` before
+normal fall acceleration resumes. This adds a restrained trick-shot beat without increasing configured
+jump height, changing weapon accuracy, or creating a low-gravity map.
+
 ## 2. Movement Pillars
 
 - **Responsiveness:** accepted input affects play immediately.
@@ -109,7 +114,7 @@ With melee equipped, holding airborne Secondary on accepted contact enters a cap
 than the grounded katana alternate. Releasing drops the player away; a fresh Jump uses the normal
 wall launch. Posting never grants an extra dash and respects same-wall separation evidence.
 
-The input edge that begins a wall run is consumed. Manual exit requires a newer Jump edge after the configured freshness delay. The classic wall-cancel profile is reserved for accessible wall posting: 54 studs/second upward versus 48 outward, a 0.22-second slash-cancel window inside 0.26 seconds of recovery, and one 0.68-second return dash. It preserves elevation and near-wall control rather than competing for maximum climb speed. BLIKK's slash-first GunZ wall-raid order remains the hard-locked fastest vertical route after a dash into fresh wall contact or during an active wall run/post: Slash followed by Jump inside its 0.34-second window produces a 66-stud/second upward scale launch and a single 0.70-second return resource. Exit clears active contact, and same-wall reuse requires elapsed time, measured separation, a moved contact point, inward return velocity, a new spherecast contact, and another buffered Jump. See `WALL_INTERACTION.md` for calibration and diagnostics.
+The input edge that begins a wall run is consumed. Manual exit requires a newer Jump edge after the configured freshness delay. Classic posting launches at 68 studs/second upward and 32 outward, then uses 65 percent gravity for 0.14 seconds; Slash earns a return dash after a 0.12-second breathing beat, with 0.22 seconds of early-input buffering. Slash-first scaling remains fastest: Jump is accepted 0.075-0.38 seconds after Slash, launches at 82 upward and 30 outward, uses 60 percent gravity for 0.16 seconds, and unlocks its return dash after 0.14 seconds. Same-wall reuse requires 0.28 seconds, 0.45 studs of separation, 0.25 studs of contact movement, inward velocity, a new spherecast contact, and another buffered Jump. See `WALL_INTERACTION.md` for the paired-recording calibration.
 
 A fresh exit Jump entered just before the minimum run/post exit delay is retained for at most `0.180`
 seconds and executes when that delay opens. This preserves a deliberate high-APM rhythm without

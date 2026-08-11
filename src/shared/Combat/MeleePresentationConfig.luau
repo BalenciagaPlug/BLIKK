@@ -13,6 +13,7 @@ local HARD_LOCKED_IDLE_RIGHT_SHOULDER = Vector3.new(-15, -5, 8)
 local HARD_LOCKED_IDLE_RIGHT_ELBOW = Vector3.new(-30, 0, 0)
 local HARD_LOCKED_IDLE_RIGHT_WRIST = Vector3.new(4, -4, 6)
 local HARD_LOCKED_AIRBORNE_RIGHT_SHOULDER_OFFSET = Vector3.new(-1, 0, -1)
+local HARD_LOCKED_IDLE_BLEND_SPEED = 18
 local MINIMUM_BLADE_FORWARD_DOT = 0.55
 local MAXIMUM_FRONT_SHOULDER_PITCH_DEGREES = 110
 
@@ -90,7 +91,7 @@ local MeleePresentationConfig = {
 
 	Pose = {
 		WeaponArmPriority = 40,
-		IdleBlendSpeed = 18,
+		IdleBlendSpeed = HARD_LOCKED_IDLE_BLEND_SPEED,
 		AirborneBlendSpeed = 20,
 		ActionBlendSpeed = 28,
 		AirReadyTorsoDegrees = -7,
@@ -290,6 +291,10 @@ assert(
 	"Training Katana equipped idle must retain every approved hard-locked arm coordinate"
 )
 assert(
+	MeleePresentationConfig.Pose.IdleBlendSpeed == HARD_LOCKED_IDLE_BLEND_SPEED,
+	"Training Katana equipped idle must retain its approved stable-reference blend response"
+)
+assert(
 	MeleePresentationConfig.TrainingKatana.EquippedAttachment.Offset
 		== CFrame.new(HARD_LOCKED_EQUIPPED_GRIP_POSITION) * HARD_LOCKED_EQUIPPED_GRIP_ROTATION
 		and MeleePresentationConfig.TrainingKatana.EquippedAttachment.GripPivot
@@ -369,5 +374,10 @@ for keyframeIndex = 2, #MeleePresentationConfig.Pose.ProceduralAltFire - 1 do
 	local keyframe = MeleePresentationConfig.Pose.ProceduralAltFire[keyframeIndex]
 	validateActionFrontFacingPose(keyframe.Pose, string.format("Alt-fire keyframe %d", keyframeIndex))
 end
+
+-- Owner-approved contract: neither runtime presentation nor imported content may
+-- mutate the ready-pose coordinates or equipped attachment after validation.
+table.freeze(MeleePresentationConfig.Pose.EquippedIdle)
+table.freeze(MeleePresentationConfig.TrainingKatana.EquippedAttachment)
 
 return MeleePresentationConfig

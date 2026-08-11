@@ -1,7 +1,10 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
 
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
+local UIAtlas = require(script.Parent.UIAtlas)
 local UIStyle = require(script.Parent.UIStyle)
 local Branding = require(ReplicatedStorage.Shared.Branding.Branding)
 local CharacterDependency = require(ReplicatedStorage.Shared.Character.CharacterDependency)
@@ -46,13 +49,31 @@ local addStroke
 local createLabel
 
 local function applyHudScale()
-	local scale = SessionSettings:Get("UIScale") * SessionSettings:Get("HudScale")
-	for _, target in { statusRoot, weaponRoot, recoveryRoot } do
+	local baseScale = SessionSettings:Get("UIScale") * SessionSettings:Get("HudScale")
+	local touch = UserInputService.TouchEnabled
+		and UserInputService.PreferredInput == Enum.PreferredInput.Touch
+	local camera = Workspace.CurrentCamera
+	local viewport = camera and camera.ViewportSize or Vector2.new(1280, 720)
+	local shortestSide = math.min(viewport.X, viewport.Y)
+	local deviceScale = if not touch then 1 elseif shortestSide < 560 then 0.46 elseif shortestSide < 760 then 0.52 else 0.58
+	if touch then baseScale = math.clamp(baseScale, 0.75, 1.12) end
+	for _, target in { statusRoot, weaponRoot } do
 		if target then
 			local scaler = target:FindFirstChildOfClass("UIScale") or Instance.new("UIScale")
-			scaler.Scale = scale
+			scaler.Scale = baseScale * deviceScale
 			scaler.Parent = target
 		end
+	end
+	if recoveryRoot then recoveryRoot.Visible = not touch end
+	if statusRoot then
+		local prototypeState = statusRoot:FindFirstChild("PrototypeState")
+		if prototypeState then prototypeState.Visible = not touch end
+	end
+	if weaponSilhouette then weaponSilhouette.Visible = not touch end
+	if weaponRoot then
+		weaponRoot.Position = if touch
+			then UDim2.fromOffset(8, math.floor(style.StatusSize.Y * deviceScale) + 10)
+			else UDim2.new(1, -(style.WeaponSize.X + 20), 1, -(style.WeaponSize.Y + 18))
 	end
 end
 
@@ -185,6 +206,20 @@ local function createEmblem(parent)
 	holder.Size = UDim2.fromOffset(style.EmblemSizePixels, style.EmblemSizePixels)
 	holder.ZIndex = 4
 	holder.Parent = parent
+	if UIAtlas:IsAvailable("HudVitals") then
+		-- The production vitals image already owns the metal octagon. Only place the
+		-- approved mark in its clear center; a second procedural shell caused the old
+		-- HUD to sit on top of the new artwork.
+		Branding.CreateIconLogo(holder, {
+			Name = "Brand",
+			Color = colors.Text,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromScale(0.84, 0.84),
+			ZIndex = 6,
+		})
+		return
+	end
 
 	local diamond = Instance.new("Frame")
 	diamond.Name = "MetalDiamond"
@@ -230,60 +265,87 @@ end
 
 local function createMeter(parent, name, positionY, height, fillColor, darkColor, initialScale)
 	local railStart = style.StatusRailStartPixels
+	local usingProductionVitals = UIAtlas:IsAvailable("HudVitals")
 	local track = Instance.new("Frame")
 	track.Name = name .. "Track"
 	track.BackgroundColor3 = colors.Backdrop
+	track.BackgroundTransparency = if usingProductionVitals then 1 else 0
 	track.BorderSizePixel = 0
 	track.Position = UDim2.fromOffset(railStart, positionY)
 	track.Size = UDim2.fromOffset(style.StatusRailWidthPixels, height)
+	track.ClipsDescendants = true
+	track.ZIndex = 1
 	track.Parent = parent
-	addStroke(track, colors.Metal, 2)
+	if not usingProductionVitals then addStroke(track, colors.Metal, 2) end
 
 	local inset = Instance.new("Frame")
 	inset.Name = "Inset"
 	inset.BackgroundColor3 = colors.EdgeDark
+	inset.BackgroundTransparency = if usingProductionVitals then 1 else 0
 	inset.BorderSizePixel = 0
-	inset.Position = UDim2.fromOffset(4, 4)
-	inset.Size = UDim2.new(1, -8, 1, -8)
+	inset.Position = UDim2.fromOffset(3, 3)
+	inset.Size = UDim2.new(1, -6, 1, -6)
 	inset.ClipsDescendants = true
+	inset.ZIndex = 1
 	inset.Parent = track
 
 	local fill = Instance.new("Frame")
-	fill.Name = "Fill"
-	fill.BackgroundColor3 = fillColor
+	fill.Name = "FillClip"
+	fill.BackgroundTransparency = 1
 	fill.BorderSizePixel = 0
+	fill.ClipsDescendants = true
 	fill.Size = UDim2.fromScale(initialScale, 1)
+	fill.ZIndex = 1
 	fill.Parent = inset
-	local gradient = Instance.new("UIGradient")
-	gradient.Color = ColorSequence.new(darkColor, fillColor)
-	gradient.Rotation = 90
-	gradient.Parent = fill
 
-	createLine(
-		track,
-		"LowerWear",
-		UDim2.new(0, 4, 1, -5),
-		UDim2.new(1, -8, 0, 1),
-		colors.TextDark
-	)
-	for index = 1, 5 do
+	local fillRegion = if name == "Armour" then "HudArmourFill" else "HudHealthFill"
+	local texture = UIAtlas:CreateSprite(fill, fillRegion, "AuthoredMeterFill")
+	if texture then
+		texture.Position = UDim2.fromOffset(0, 0)
+		texture.Size = UDim2.new(0, style.StatusRailWidthPixels - 6, 1, 0)
+		texture.ZIndex = fill.ZIndex
+	else
+		-- Safe fallback while a newly imported fill is moderating. The shape and
+		-- metalwork still come from the authored frame; this layer only carries data.
+		local fallback = Instance.new("Frame")
+		fallback.Name = "FallbackFill"
+		fallback.BackgroundColor3 = fillColor
+		fallback.BorderSizePixel = 0
+		fallback.Size = UDim2.new(0, style.StatusRailWidthPixels - 6, 1, 0)
+		fallback.Parent = fill
+		local gradient = Instance.new("UIGradient")
+		gradient.Color = ColorSequence.new(darkColor, fillColor)
+		gradient.Rotation = 90
+		gradient.Parent = fallback
+	end
+
+	if not usingProductionVitals then
 		createLine(
 			track,
-			"Wear" .. index,
-			UDim2.fromOffset(28 + index * 67, 4 + (index % 2) * 7),
-			UDim2.fromOffset(18 + (index % 3) * 5, 1),
-			colors.TextMuted,
-			-8 + index * 3
-		).BackgroundTransparency = 0.72
+			"LowerWear",
+			UDim2.new(0, 4, 1, -5),
+			UDim2.new(1, -8, 0, 1),
+			colors.TextDark
+		)
+		for index = 1, 5 do
+			createLine(
+				track,
+				"Wear" .. index,
+				UDim2.fromOffset(28 + index * 67, 4 + (index % 2) * 7),
+				UDim2.fromOffset(18 + (index % 3) * 5, 1),
+				colors.TextMuted,
+				-8 + index * 3
+			).BackgroundTransparency = 0.72
+		end
+		createLine(
+			track,
+			"EndCap",
+			UDim2.new(1, -12, 0, 2),
+			UDim2.fromOffset(8, height - 4),
+			colors.Metal,
+			-20
+		)
 	end
-	createLine(
-		track,
-		"EndCap",
-		UDim2.new(1, -12, 0, 2),
-		UDim2.fromOffset(8, height - 4),
-		colors.Metal,
-		-20
-	)
 
 	return fill, track
 end
@@ -296,15 +358,23 @@ local function createStatusBlock(parent)
 	root.Size = UDim2.fromOffset(style.StatusSize.X, style.StatusSize.Y)
 	root.Parent = parent
 	statusRoot = root
+	local authoredFrame = UIAtlas:SkinPanel(root, "HudVitals", 0.02)
+	if authoredFrame then
+		-- The authored metalwork is a mask over the live AP/HP fills. Keeping the
+		-- frame above the clipped meters prevents either fill escaping its slot.
+		authoredFrame.ZIndex = 3
+	end
 	Instance.new("UIScale").Parent = root
 
-	createLine(
-		root,
-		"TopBrace",
-		UDim2.fromOffset(style.StatusRailStartPixels - 9, 25),
-		UDim2.fromOffset(style.StatusRailWidthPixels + 18, 5),
-		colors.Metal
-	)
+	if not UIAtlas:IsAvailable("HudVitals") then
+		createLine(
+			root,
+			"TopBrace",
+			UDim2.fromOffset(style.StatusRailStartPixels - 9, 25),
+			UDim2.fromOffset(style.StatusRailWidthPixels + 18, 5),
+			colors.Metal
+		)
+	end
 	local level = createLabel(
 		root,
 		"Level",
@@ -315,7 +385,8 @@ local function createStatusBlock(parent)
 		colors.TextMuted
 	)
 	level.Font = UIStyle.Fonts.Gothic
-	createLabel(
+	level.ZIndex = 4
+	local playerName = createLabel(
 		root,
 		"PlayerName",
 		string.upper(player.DisplayName),
@@ -324,14 +395,15 @@ local function createStatusBlock(parent)
 		15,
 		colors.Text
 	)
+	playerName.ZIndex = 4
 
 	armourFill = createMeter(
 		root,
 		"Armour",
 		31,
 		style.PrimaryBarHeightPixels,
-		Color3.fromRGB(31, 142, 221),
-		Color3.fromRGB(13, 66, 118),
+		colors.Defence,
+		colors.DefenceDark,
 		1
 	)
 	healthFill = createMeter(
@@ -339,8 +411,8 @@ local function createStatusBlock(parent)
 		"Health",
 		61,
 		style.PrimaryBarHeightPixels,
-		colors.Accent,
-		colors.TechniqueDark,
+		colors.Health,
+		colors.HealthDark,
 		1
 	)
 
@@ -354,6 +426,7 @@ local function createStatusBlock(parent)
 		colors.Text,
 		Enum.TextXAlignment.Center
 	)
+	armourValue.ZIndex = 4
 	healthValue = createLabel(
 		root,
 		"HealthValue",
@@ -364,7 +437,8 @@ local function createStatusBlock(parent)
 		colors.TextMuted,
 		Enum.TextXAlignment.Center
 	)
-	createLabel(
+	healthValue.ZIndex = 4
+	local prototypeState = createLabel(
 		root,
 		"PrototypeState",
 		"MOVEMENT LAB // LOCAL PROTOTYPE",
@@ -373,24 +447,25 @@ local function createStatusBlock(parent)
 		9,
 		colors.TextMuted
 	)
+	prototypeState.ZIndex = 4
 	createEmblem(root)
 end
 
 local function createWeaponSilhouette(parent)
 	local metal = colors.Metal
-	createLine(parent, "Receiver", UDim2.fromOffset(28, 18), UDim2.fromOffset(150, 14), metal, -2)
-	createLine(parent, "Rail", UDim2.fromOffset(52, 10), UDim2.fromOffset(92, 5), colors.TextMuted, -2)
-	createLine(parent, "Barrel", UDim2.fromOffset(174, 20), UDim2.fromOffset(104, 6), metal, -2)
-	createLine(parent, "Stock", UDim2.fromOffset(2, 20), UDim2.fromOffset(45, 10), colors.TextMuted, 10)
-	createLine(parent, "Grip", UDim2.fromOffset(119, 30), UDim2.fromOffset(16, 31), metal, -14)
+	createLine(parent, "Receiver", UDim2.fromOffset(25, 14), UDim2.fromOffset(140, 12), metal, -2)
+	createLine(parent, "Rail", UDim2.fromOffset(48, 7), UDim2.fromOffset(84, 4), colors.TextMuted, -2)
+	createLine(parent, "Barrel", UDim2.fromOffset(160, 16), UDim2.fromOffset(96, 5), metal, -2)
+	createLine(parent, "Stock", UDim2.fromOffset(1, 16), UDim2.fromOffset(40, 8), colors.TextMuted, 10)
+	createLine(parent, "Grip", UDim2.fromOffset(108, 24), UDim2.fromOffset(14, 21), metal, -14)
 end
 
 local function createKatanaSilhouette(parent)
-	createLine(parent, "Blade", UDim2.fromOffset(69, 27), UDim2.fromOffset(202, 7), colors.TextMuted, -8)
-	createLine(parent, "Edge", UDim2.fromOffset(72, 24), UDim2.fromOffset(198, 2), colors.Text, -8)
-	createLine(parent, "Guard", UDim2.fromOffset(54, 27), UDim2.fromOffset(31, 5), colors.Accent, -8)
-	createLine(parent, "Grip", UDim2.fromOffset(7, 33), UDim2.fromOffset(55, 9), colors.Metal, -8)
-	createLine(parent, "Pommel", UDim2.fromOffset(3, 36), UDim2.fromOffset(10, 13), colors.TechniqueDark, -8)
+	createLine(parent, "Blade", UDim2.fromOffset(67, 21), UDim2.fromOffset(194, 6), colors.TextMuted, -6)
+	createLine(parent, "Edge", UDim2.fromOffset(69, 19), UDim2.fromOffset(190, 2), colors.Text, -6)
+	createLine(parent, "Guard", UDim2.fromOffset(51, 22), UDim2.fromOffset(28, 4), colors.Accent, -6)
+	createLine(parent, "Grip", UDim2.fromOffset(8, 26), UDim2.fromOffset(50, 8), colors.Metal, -6)
+	createLine(parent, "Pommel", UDim2.fromOffset(3, 29), UDim2.fromOffset(9, 11), colors.TechniqueDark, -6)
 end
 
 local function createRecoverySilhouette(parent, definition)
@@ -408,6 +483,9 @@ end
 
 local function createWeaponBlock(parent)
 	local size = style.WeaponSize
+	local contentLeft = style.WeaponContentLeftPixels
+	local contentWidth = size.X - contentLeft - style.WeaponContentRightPixels
+	local ammoRailWidth = style.WeaponAmmoRailWidthPixels
 	local root = Instance.new("Frame")
 	root.Name = "WeaponStatus"
 	root.BackgroundTransparency = 1
@@ -415,15 +493,16 @@ local function createWeaponBlock(parent)
 	root.Size = UDim2.fromOffset(size.X, size.Y)
 	root.Parent = parent
 	weaponRoot = root
+	UIAtlas:SkinPanel(root, "HudWeapon", 0.04)
 	Instance.new("UIScale").Parent = root
 
-	weaponSlotLabel = createLabel(root, "Slot", "SLOT --", UDim2.fromOffset(4, 0), UDim2.fromOffset(110, 18), 10, colors.Accent)
+	weaponSlotLabel = createLabel(root, "Slot", "SLOT --", UDim2.fromOffset(contentLeft, 18), UDim2.fromOffset(130, 16), 9, colors.Accent)
 	weaponNameLabel = createLabel(
 		root,
 		"WeaponName",
 		"UNARMED",
-		UDim2.fromOffset(4, 17),
-		UDim2.fromOffset(250, 24),
+		UDim2.fromOffset(contentLeft, 34),
+		UDim2.fromOffset(contentWidth, 22),
 		style.WeaponNameTextSize,
 		colors.Text
 	)
@@ -434,8 +513,8 @@ local function createWeaponBlock(parent)
 		root,
 		"WeaponStats",
 		"DAMAGE --  |  DELAY --",
-		UDim2.fromOffset(4, 42),
-		UDim2.fromOffset(260, 18),
+		UDim2.fromOffset(contentLeft, 57),
+		UDim2.fromOffset(contentWidth, 16),
 		11,
 		colors.TextMuted
 	)
@@ -444,16 +523,16 @@ local function createWeaponBlock(parent)
 	ammoTrack.Name = "AmmoTrack"
 	ammoTrack.BackgroundColor3 = colors.Text
 	ammoTrack.BorderSizePixel = 0
-	ammoTrack.Position = UDim2.fromOffset(4, 66)
-	ammoTrack.Size = UDim2.fromOffset(218, 13)
+	ammoTrack.Position = UDim2.fromOffset(contentLeft, 78)
+	ammoTrack.Size = UDim2.fromOffset(ammoRailWidth, 11)
 	ammoTrack.Parent = root
 	addStroke(ammoTrack, colors.EdgeDark, 2)
 	ammoLabel = createLabel(
 		root,
 		"Ammo",
 		"-- / --",
-		UDim2.fromOffset(233, 62),
-		UDim2.fromOffset(103, 22),
+		UDim2.fromOffset(contentLeft + ammoRailWidth + 8, 73),
+		UDim2.fromOffset(contentWidth - ammoRailWidth - 8, 20),
 		15,
 		colors.Text,
 		Enum.TextXAlignment.Right
@@ -462,16 +541,17 @@ local function createWeaponBlock(parent)
 	weaponSilhouette = Instance.new("Frame")
 	weaponSilhouette.Name = "WeaponIconPlaceholder"
 	weaponSilhouette.BackgroundTransparency = 1
-	weaponSilhouette.Position = UDim2.fromOffset(34, 88)
-	weaponSilhouette.Size = UDim2.fromOffset(288, 62)
+	weaponSilhouette.Position = UDim2.fromOffset(style.WeaponSilhouettePosition.X, style.WeaponSilhouettePosition.Y)
+	weaponSilhouette.Size = UDim2.fromOffset(style.WeaponSilhouetteSize.X, style.WeaponSilhouetteSize.Y)
+	weaponSilhouette.ClipsDescendants = true
 	weaponSilhouette.Parent = root
 	createWeaponSilhouette(weaponSilhouette)
 	dataStateLabel = createLabel(
 		root,
 		"DataState",
 		"WEAPON DATA // PLACEHOLDER READY",
-		UDim2.fromOffset(4, 136),
-		UDim2.fromOffset(250, 14),
+		UDim2.fromOffset(contentLeft, style.WeaponStatePositionY),
+		UDim2.fromOffset(contentWidth, 12),
 		8,
 		colors.TextMuted
 	)
@@ -496,7 +576,7 @@ local function updateWeapon(fighterController, firearmController, recoveryContro
 		ammoTrack.Visible = true
 		ammoLabel.Visible = true
 		ammoLabel.Text = string.format("X%d", count)
-		ammoTrack.Size = UDim2.fromOffset(218 * math.clamp(count / recoveryDefinition.StockPerLife, 0, 1), 13)
+		ammoTrack.Size = UDim2.fromOffset(style.WeaponAmmoRailWidthPixels * math.clamp(count / recoveryDefinition.StockPerLife, 0, 1), 11)
 		ammoTrack.BackgroundColor3 = if count > 0 then recoveryDefinition.Color else colors.Blood
 		dataStateLabel.Text = if recoveryDefinition.Delivery == "Self" then "LMB // APPLY" else "LMB // DEPLOY"
 		clearSilhouette()
@@ -526,7 +606,7 @@ local function updateWeapon(fighterController, firearmController, recoveryContro
 			ammoLabel.Text = if status.UnlimitedReserve
 				then string.format("%d / ∞", status.Chambered)
 				else string.format("%d / %d", status.Chambered, status.Reserve)
-			ammoTrack.Size = UDim2.fromOffset(218 * status.Chambered / 5, 13)
+			ammoTrack.Size = UDim2.fromOffset(style.WeaponAmmoRailWidthPixels * status.Chambered / 5, 11)
 			ammoTrack.BackgroundColor3 = if status.Chambered == 0 then colors.Blood else colors.Text
 			dataStateLabel.Text = if status.Chambered == 0 and status.State == "Ready"
 				then "EMPTY // RELOAD"
@@ -652,6 +732,9 @@ function HUDController:Init(fighterController, firearmController, recoveryContro
 	applyHudScale()
 	screenGui.Enabled = SessionSettings:Get("HudVisible")
 	screenGui.Parent = playerGui
+	UserInputService:GetPropertyChangedSignal("PreferredInput"):Connect(applyHudScale)
+	local currentCamera = Workspace.CurrentCamera
+	if currentCamera then currentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(applyHudScale) end
 
 	SessionSettings.Changed.Event:Connect(function(key, value)
 		if key == "HudVisible" then

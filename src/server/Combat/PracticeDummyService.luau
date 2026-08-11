@@ -541,7 +541,7 @@ function PracticeDummyService:LaunchTarget(target, desiredVelocity)
 	record.Root:ApplyImpulse(
 		(desiredVelocity - record.Root.AssemblyLinearVelocity) * record.Root.AssemblyMass
 	)
-	task.delay(1.35, function()
+	task.delay(PracticeDummyConfig.Toss.MaximumAirborneSeconds, function()
 		if activeRecord ~= record or record.TossToken ~= tossToken or not record.Root.Parent then return end
 		record.Root.AssemblyLinearVelocity = Vector3.zero
 		record.Root.AssemblyAngularVelocity = Vector3.zero

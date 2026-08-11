@@ -1,10 +1,11 @@
 local ContentProvider = game:GetService("ContentProvider")
+local TweenService = game:GetService("TweenService")
 
 local Branding = {}
 
 Branding.Assets = {
-	FullLogoImage = "rbxassetid://118197165577599",
-	IconLogoImage = "rbxassetid://129295702792396",
+	FullLogoImage = "rbxassetid://77188572994526",
+	IconLogoImage = "rbxassetid://107670090696780",
 	Repository = {
 		FullLogo = "Branding/BLIKK_Logo_Full.png",
 		IconLogo = "Branding/BLIKK_Logo_Icon.png",
@@ -41,10 +42,11 @@ Branding.Animation = {
 	FadeInSeconds = 0.65,
 	BreathSeconds = 2.8,
 	BreathScale = 1.025,
+	ShimmerSweepSeconds = 1.05,
+	ShimmerIntervalSeconds = 7.25,
 	TransitionFadeSeconds = 0.22,
 }
 
-local IMAGE_ASPECT_RATIO = 1.5
 local diagnosticsEnabled = false
 
 function Branding.SetDiagnosticsEnabled(isEnabled)
@@ -96,6 +98,8 @@ local function createLogo(parent, options, assetKey)
 	local imageSource = assetIdUri(configuredImage)
 	local image = nil
 	local fallback = nil
+	local shimmer = nil
+	local shimmerTween = nil
 	local loadedConnection = nil
 	local isDestroyed = false
 	local color = options.Color or Color3.new(1, 1, 1)
@@ -111,6 +115,7 @@ local function createLogo(parent, options, assetKey)
 	local function showImage()
 		if isDestroyed or not image then return end
 		image.Visible = true
+		if shimmer then shimmer.Visible = true end
 		if fallback then fallback:Destroy(); fallback = nil end
 		setState("Loaded")
 		if loadedConnection then loadedConnection:Disconnect(); loadedConnection = nil end
@@ -119,6 +124,7 @@ local function createLogo(parent, options, assetKey)
 	local function showFallback()
 		if isDestroyed or holder:GetAttribute("LoadState") == "Loaded" then return end
 		if image then image.Visible = false end
+		if shimmer then shimmer.Visible = false end
 		if not fallback then
 			fallback = createFallback(holder, Branding.Fallback[assetKey], options.Color or Branding.Colors.Silver, zIndex)
 		end
@@ -133,14 +139,50 @@ local function createLogo(parent, options, assetKey)
 		image.Image = imageSource
 		image.ImageColor3 = color
 		image.Position = UDim2.fromScale(0.5, 0.5)
-		image.ScaleType = Enum.ScaleType.Fit
+		-- The approved uploads use a 3:2 transparent canvas around a much wider
+		-- visible mark. Crop removes only that authored clear padding and lets each
+		-- reserved header box display the logo at its intended visual size.
+		image.ScaleType = Enum.ScaleType.Crop
 		image.Size = UDim2.fromScale(1, 1)
 		image.ZIndex = zIndex
 		image.Parent = holder
-		local aspect = Instance.new("UIAspectRatioConstraint")
-		aspect.AspectRatio = IMAGE_ASPECT_RATIO
-		aspect.AspectType = Enum.AspectType.FitWithinMaxSize
-		aspect.Parent = image
+		if assetKey == "FullLogo" and options.Animated ~= false then
+			-- A duplicate alpha-masked logo lets the highlight touch only the mark,
+			-- never the transparent rectangle around it.
+			shimmer = image:Clone()
+			shimmer.Name = "Shimmer"
+			shimmer.ImageColor3 = Color3.fromRGB(250, 240, 255)
+			shimmer.ImageTransparency = 0.12
+			shimmer.Visible = false
+			shimmer.ZIndex = zIndex + 1
+			shimmer.Parent = holder
+			local sweep = Instance.new("UIGradient")
+			sweep.Name = "Sweep"
+			sweep.Offset = Vector2.new(-1.2, 0)
+			sweep.Rotation = 18
+			sweep.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1),
+				NumberSequenceKeypoint.new(0.44, 1),
+				NumberSequenceKeypoint.new(0.5, 0.18),
+				NumberSequenceKeypoint.new(0.56, 1),
+				NumberSequenceKeypoint.new(1, 1),
+			})
+			sweep.Parent = shimmer
+			shimmerTween = TweenService:Create(
+				sweep,
+				TweenInfo.new(
+					Branding.Animation.ShimmerSweepSeconds,
+					Enum.EasingStyle.Quad,
+					Enum.EasingDirection.InOut,
+					-1,
+					false,
+					Branding.Animation.ShimmerIntervalSeconds
+						- Branding.Animation.ShimmerSweepSeconds
+				),
+				{ Offset = Vector2.new(1.2, 0) }
+			)
+			shimmerTween:Play()
+		end
 		loadedConnection = image:GetPropertyChangedSignal("IsLoaded"):Connect(function()
 			if image.IsLoaded then showImage() end
 		end)
@@ -161,6 +203,7 @@ local function createLogo(parent, options, assetKey)
 	holder.Destroying:Connect(function()
 		isDestroyed = true
 		if loadedConnection then loadedConnection:Disconnect(); loadedConnection = nil end
+		if shimmerTween then shimmerTween:Cancel(); shimmerTween:Destroy(); shimmerTween = nil end
 	end)
 	return holder
 end

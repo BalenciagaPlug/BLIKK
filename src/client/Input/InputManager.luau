@@ -322,6 +322,44 @@ function InputManager:Init()
 	end)
 end
 
+function InputManager:BeginVirtualAction(action, owner)
+	if type(action) ~= "string" or not ActionCatalogue.ById[action]
+		or type(owner) ~= "string" or owner == "" then return false end
+	local dispatchKey = "Virtual:" .. owner
+	if dispatchedTokens[dispatchKey] or not canDispatchAction(action, dispatchKey) then return false end
+	local timestamp = os.clock()
+	dispatchSequence += 1
+	dispatchedTokens[dispatchKey] = action
+	dispatchedRawTokens[dispatchKey] = dispatchKey
+	dispatchSequences[dispatchKey] = dispatchSequence
+	local heldTokens = heldTokensByAction[action]
+	if not heldTokens then heldTokens = {}; heldTokensByAction[action] = heldTokens end
+	heldTokens[dispatchKey] = true
+	ActionBuffer:Push(action, timestamp)
+	InputManager.InputBegan:Fire(dispatchKey)
+	InputManager.ActionBegan:Fire(action, timestamp)
+	return true
+end
+
+function InputManager:EndVirtualAction(owner)
+	if type(owner) ~= "string" or owner == "" then return false end
+	local dispatchKey = "Virtual:" .. owner
+	if not dispatchedTokens[dispatchKey] then return false end
+	InputManager.InputEnded:Fire(dispatchKey)
+	finishDispatch(dispatchKey, false)
+	return true
+end
+
+function InputManager:PulseVirtualAction(action, owner)
+	if not self:BeginVirtualAction(action, owner) then return false end
+	task.defer(function() self:EndVirtualAction(owner) end)
+	return true
+end
+
+function InputManager:IsGameplayEnabled()
+	return isGameplayEnabled
+end
+
 function InputManager:SetGameplayEnabled(isEnabled)
 	local nextRequestedEnabled = isEnabled == true
 	if isGameplayRequestedEnabled == nextRequestedEnabled then

@@ -135,11 +135,30 @@ It applies 18 damage
 AP first, then HP, to eligible players or the registered practice dummy. Client-supplied targets,
 positions, damage, and hit claims are never accepted.
 
+The grounded alternate launch applies `80` studs/second upward and `16` studs/second forward. A
+bounded force curve retains full gravity outside the `+22` through `-52` studs/second apex band,
+scales to `0.24` gravity at the peak, then progressively restores gravity during descent. It ends on
+landing or after `2.25` seconds and never suspends a target indefinitely. A tossed player may press
+Jump from launch through `0.860` seconds;
+the server validates the toss sequence, character generation, airborne state, and deadline before
+accepting one safe fall. An accepted safe fall plays a repository-authored `0.520`-second backflip
+locally and for observers while preserving the authoritative flight path and weapon accuracy. Missing
+the window does not recover automatically. Practice dummies receive the stronger launch but do not
+synthesize player input or recovery.
+
 The equipped melee ready pose is independently hard-locked to the previously approved silhouette:
 `-15` degrees of right-shoulder pitch, a `-1`-degree airborne right-shoulder offset, and the original
 `190`-degree equipped attachment roll. Slash and block begin from that exact baseline, apply only their
 action-specific forward arm/blade solve, and return to it at recovery. Block interpolates its blade
 direction over the existing `0.100`-second enter presentation rather than snapping the grip.
+The approved idle is resolved from an explicit identity reference using the original idle-blend
+response, then held while weapon poses are active. It never samples a live walk, dash, slash, or block
+frame as its reference. A state-transition token re-resolves that baseline after every action,
+preventing both locomotion arm twitch and a stale slash/block recovery from replacing the approved
+silhouette. The coordinates, attachment basis, and stable-reference blend
+speed are guarded by runtime assertions. Action poses retain their full authored range but approach
+their sampled keyframes through the configured action response locally and on remote observers, which
+removes one-frame pose blocks without changing authoritative impact or cancel timing.
 
 Melee intent and private hit results are reliable. Accepted slash presentation is a bounded
 `UnreliableRemoteEvent`; remote clients construct a temporary clean Training Katana and apply the same
@@ -167,13 +186,17 @@ spread or steer that basis. The B-8's intrinsic 4.5-degree half-angle remains id
 movement state. Its visible muzzle still owns local flash and streak alignment, but never becomes
 client-authoritative shot geometry.
 
-The client predicts bounded presentation and sends only slot, monotonic sequence, aim direction, and
-diagnostic timestamp. The server owns ammunition, shell commits, cooldowns, deterministic cone rays,
+The client predicts bounded presentation and sends slot, monotonic sequence, unit aim direction,
+crosshair world aim point, and diagnostic timestamp. The server rejects non-finite, out-of-range, or
+direction-inconsistent aim points, derives the current authoritative muzzle origin, and reconverges
+that origin onto the validated crosshair point. The server owns ammunition, shell commits, cooldowns, deterministic cone rays,
 hit resolution, and damage. It derives its muzzle origin and never accepts client targets, hits,
 damage, ammunition, cooldown completion, or ray origin. Valid attackers are registered through
 `MatchService:RegisterDamageSource` before aggregated pellet damage is applied. The retained shared
-spread generator uses one server-owned seed to produce exactly twelve unit directions uniformly over
-the circular 4.5-degree cone; there is no guaranteed centre pellet.
+spread generator uses one server-owned seed to produce exactly twelve unit directions. One pellet
+preserves the validated crosshair direction and the remaining eleven are uniformly distributed over
+the circular 4.5-degree cone. This guarantees aim intent, not damage: range, line of sight, target
+geometry, server position, and all remaining spread still apply.
 
 The same registration API has a separate Movement Lab branch. It accepts player-versus-player damage
 only when both characters are current, released Movement Lab identities, neither player belongs to a

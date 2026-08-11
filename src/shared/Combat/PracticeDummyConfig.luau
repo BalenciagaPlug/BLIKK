@@ -30,6 +30,9 @@ local PracticeDummyConfig = {
 	Vitals = {
 		LethalRecoverySeconds = 1.35,
 	},
+	Toss = {
+		MaximumAirborneSeconds = 2.35,
+	},
 	RecoveryPresentation = {
 		Enabled = true,
 		TotalLifetimeSeconds = 1.25,

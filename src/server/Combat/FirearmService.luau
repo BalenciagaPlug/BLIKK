@@ -214,6 +214,26 @@ local function handleFire(player, state, payload)
 		warnOnce(player, "INVALID_SHOT_REQUEST", "non-unit aim"); send(player, "Fire", false, sequence, slotId, slot); return
 	end
 	aim = aim.Unit
+	local origin = root.Position + Vector3.new(0, Config.Aim.MuzzleUpStuds, 0)
+		+ root.CFrame.LookVector * Config.Aim.MuzzleForwardStuds
+	local aimPoint = payload.AimPoint
+	if not finiteVector(aimPoint) then
+		warnOnce(player, "INVALID_SHOT_REQUEST", "missing aim point"); send(player, "Fire", false, sequence, slotId, slot); return
+	end
+	local toAimPoint = aimPoint - origin
+	local aimPointDistance = toAimPoint.Magnitude
+	if aimPointDistance < Config.Aim.MinimumAimPointDistanceStuds
+		or aimPointDistance > Config.Aim.MaximumAimPointDistanceStuds then
+		warnOnce(player, "INVALID_SHOT_REQUEST", "aim point outside range"); send(player, "Fire", false, sequence, slotId, slot); return
+	end
+	local convergedAim = toAimPoint.Unit
+	if convergedAim:Dot(aim) < Config.Aim.MinimumAimPointDirectionDot then
+		warnOnce(player, "INVALID_SHOT_REQUEST", "aim point disagrees with direction"); send(player, "Fire", false, sequence, slotId, slot); return
+	end
+	-- The client identifies the crosshair point; the server owns the current
+	-- muzzle origin and reconverges to it. This removes moving/airborne parallax
+	-- without trusting a client-supplied ray origin.
+	aim = convergedAim
 	local flatAim = Vector3.new(aim.X, 0, aim.Z)
 	local flatFacing = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
 	if flatAim.Magnitude < 0.001 or flatFacing.Magnitude < 0.001
@@ -229,8 +249,6 @@ local function handleFire(player, state, payload)
 	slot.NextFireAt = now + Config.FireIntervalSeconds
 	techniqueService:RegisterFire(player, slotId, now)
 	local seed = seedRandom:NextInteger(1, 2147483646)
-	local origin = root.Position + Vector3.new(0, Config.Aim.MuzzleUpStuds, 0)
-		+ root.CFrame.LookVector * Config.Aim.MuzzleForwardStuds
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { character }
@@ -242,7 +260,8 @@ local function handleFire(player, state, payload)
 		aim,
 		Config.PelletsPerShot,
 		Config.Accuracy.SpreadHalfAngleDegrees,
-		seed
+		seed,
+		Config.Accuracy.GuaranteedCenterPellets
 	)
 	for index = 1, Config.PelletsPerShot do
 		local direction = directions[index]

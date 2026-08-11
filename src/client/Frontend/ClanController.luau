@@ -14,7 +14,9 @@ end
 
 local function button(parent, text, position, size)
 	local value = Instance.new("TextButton"); value.BackgroundColor3 = Color3.fromRGB(24, 25, 29); value.Font = Enum.Font.Code
-	value.TextColor3 = Color3.fromRGB(230, 227, 215); value.Text = text; value.Position = position; value.Size = size; value.TextSize = 12; value.Parent = parent; return value
+	value.TextColor3 = Color3.fromRGB(230, 227, 215); value.Text = text; value.Position = position; value.Size = size; value.TextSize = 12; value.Parent = parent
+	FrontendLayout:SkinButton(value)
+	return value
 end
 
 function Controller:CreatePage(parent, navigation)

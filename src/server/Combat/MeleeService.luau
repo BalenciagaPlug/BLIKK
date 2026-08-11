@@ -1,5 +1,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage.Shared.Combat.MeleeCombatConfig)
@@ -14,6 +15,7 @@ local firearmService
 local techniqueService
 local resultRemote
 local swingRemote
+local activeTossFloats = {}
 
 local function finiteInteger(value)
 	return type(value) == "number" and value == value and value > -math.huge
@@ -60,6 +62,11 @@ local function resetPlayer(player)
 		CancelledSequence = 0,
 		SlashAcceptedAt = -math.huge,
 		GuardCharacter = nil,
+		AirTossSequence = 0,
+		AirTossStartedAt = -math.huge,
+		AirTossExpiresAt = -math.huge,
+		AirTossCharacter = nil,
+		AirTossRecovered = false,
 	}
 end
 
@@ -407,6 +414,99 @@ local function clearGuard(state)
 	if state then state.GuardCharacter = nil end
 end
 
+local function clearAirToss(state)
+	local tossCharacter = state and state.AirTossCharacter
+	if tossCharacter and tossCharacter.Parent then
+		tossCharacter:SetAttribute("BLIKK_AirTossActive", false)
+	end
+	if state then
+		state.AirTossStartedAt = -math.huge
+		state.AirTossExpiresAt = -math.huge
+		state.AirTossCharacter = nil
+	end
+end
+
+local function beginAirToss(targetPlayer, targetCharacter, now)
+	local state = states[targetPlayer]
+	if not state then resetPlayer(targetPlayer); state = states[targetPlayer] end
+	clearAirToss(state)
+	state.AirTossSequence += 1
+	state.AirTossStartedAt = now + Config.AltFire.SafeFallWindowOpenSeconds
+	state.AirTossExpiresAt = now + Config.AltFire.SafeFallWindowCloseSeconds
+	state.AirTossCharacter = targetCharacter
+	state.AirTossRecovered = false
+	targetCharacter:SetAttribute("BLIKK_AirTossActive", true)
+	targetCharacter:SetAttribute("BLIKK_AirTossSequence", state.AirTossSequence)
+	targetCharacter:SetAttribute("BLIKK_AirTossStartedAt", now)
+	targetCharacter:SetAttribute("BLIKK_AirTossExpiresAt", state.AirTossExpiresAt)
+	local sequence = state.AirTossSequence
+	task.delay(Config.AltFire.SafeFallWindowCloseSeconds + 0.06, function()
+		if states[targetPlayer] == state and state.AirTossSequence == sequence
+			and state.AirTossCharacter == targetCharacter then clearAirToss(state) end
+	end)
+end
+
+local function clearTossFloat(model)
+	local record = activeTossFloats[model]
+	if not record then return end
+	activeTossFloats[model] = nil
+	if model.Parent then model:SetAttribute("BLIKK_AirTossFloatActive", false) end
+	if record.Force and record.Force.Parent then record.Force:Destroy() end
+	if record.Attachment and record.Attachment.Parent then record.Attachment:Destroy() end
+end
+
+local function beginTossFloat(model, humanoid, root, now)
+	clearTossFloat(model)
+	local attachment = Instance.new("Attachment")
+	attachment.Name = "BLIKK_AirTossFloatAttachment"
+	attachment.Parent = root
+	local force = Instance.new("VectorForce")
+	force.Name = "BLIKK_AirTossFloatForce"
+	force.Attachment0 = attachment
+	force.ApplyAtCenterOfMass = true
+	force.RelativeTo = Enum.ActuatorRelativeTo.World
+	force.Force = Vector3.zero
+	force.Parent = root
+	model:SetAttribute("BLIKK_AirTossFloatActive", true)
+	activeTossFloats[model] = {
+		Humanoid = humanoid,
+		Root = root,
+		Attachment = attachment,
+		Force = force,
+		StartedAt = now,
+		ExpiresAt = now + Config.AltFire.Float.MaximumDurationSeconds,
+	}
+end
+
+local function stepTossFloats()
+	local now = os.clock()
+	local float = Config.AltFire.Float
+	for model, record in activeTossFloats do
+		local humanoid, root, force = record.Humanoid, record.Root, record.Force
+		if now >= record.ExpiresAt or not model.Parent or not humanoid.Parent
+			or humanoid.Health <= 0 or not root.Parent or root.Anchored or not force.Parent
+			or (now - record.StartedAt >= float.MinimumAirborneCheckDelaySeconds
+				and humanoid.FloorMaterial ~= Enum.Material.Air) then
+			clearTossFloat(model)
+			continue
+		end
+		local vertical = root.AssemblyLinearVelocity.Y
+		local gravityScale = 1
+		if vertical <= float.AscentWindowStudsPerSecond
+			and vertical >= float.DescentWindowStudsPerSecond then
+			if vertical >= 0 then
+				gravityScale = float.GravityScaleAtApex + (1 - float.GravityScaleAtApex)
+					* math.clamp(vertical / math.max(float.AscentWindowStudsPerSecond, 0.001), 0, 1)
+			else
+				gravityScale = float.GravityScaleAtApex
+					+ (float.GravityScaleAtDescentExit - float.GravityScaleAtApex)
+						* math.clamp(vertical / math.min(float.DescentWindowStudsPerSecond, -0.001), 0, 1)
+			end
+		end
+		force.Force = Vector3.new(0, root.AssemblyMass * Workspace.Gravity * (1 - gravityScale), 0)
+	end
+end
+
 local function beginGuard(state, character, sequence, now)
 	clearGuard(state)
 	state.GuardCharacter = character
@@ -739,10 +839,36 @@ local function resolveAltFire(
 			targetRoot:ApplyImpulse(
 				(desiredVelocity - targetRoot.AssemblyLinearVelocity) * targetRoot.AssemblyMass
 			)
+			beginAirToss(target.Player, target.Model, os.clock())
 		end
+		beginTossFloat(target.Model, target.Humanoid, targetRoot, os.clock())
 		launchedCount += 1
 	end
 	sendActionResult(player, "AltFireResolved", sequence, { TargetCount = launchedCount })
+end
+
+local function handleAirTossRecover(player, payload)
+	local state = states[player]
+	local sequence = payload.Sequence
+	if not state or not finiteInteger(sequence) or sequence ~= state.AirTossSequence
+		or state.AirTossRecovered then return end
+	local now = os.clock()
+	local eligible, character, humanoid = isEligible(player)
+	if not eligible or character ~= state.AirTossCharacter
+		or humanoid.FloorMaterial ~= Enum.Material.Air
+		or now < state.AirTossStartedAt or now > state.AirTossExpiresAt then return end
+	state.AirTossRecovered = true
+	clearAirToss(state)
+	character:SetAttribute("BLIKK_AirTossRecoverySequence", sequence)
+	character:SetAttribute("BLIKK_AirTossRecoveryStartedAt", now)
+	humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+	sendActionResult(player, "AirTossRecovered", sequence, { RecoveryStartedAt = now })
+	publishAcceptedPresentation(player, {
+		Operation = "AirTossRecover",
+		ShooterUserId = player.UserId,
+		SpawnGeneration = player:GetAttribute("BLIKK_SpawnGeneration"),
+		Sequence = sequence,
+	})
 end
 
 local function handleAltFire(player, payload)
@@ -792,24 +918,32 @@ function MeleeService:Init(
 	techniqueService = techniqueServiceValue
 	resultRemote = remoteRegistry.MeleeResult
 	swingRemote = remoteRegistry.MeleeSwing
+	RunService.Heartbeat:Connect(stepTossFloats)
 	remoteRegistry.MeleeIntent.OnServerEvent:Connect(function(player, payload)
 		if type(payload) ~= "table" then return end
 		if payload.Operation == "Slash" then handleSlash(player, payload)
 		elseif payload.Operation == "CancelSlash" then handleCancel(player, payload)
 		elseif payload.Operation == "BlockBegin" then handleBlockBegin(player, payload)
 		elseif payload.Operation == "BlockEnd" then handleBlockEnd(player, payload)
-		elseif payload.Operation == "AltFire" then handleAltFire(player, payload) end
+		elseif payload.Operation == "AltFire" then handleAltFire(player, payload)
+		elseif payload.Operation == "AirTossRecover" then handleAirTossRecover(player, payload) end
 	end)
 	local function setupPlayer(player)
 		resetPlayer(player)
+		player.CharacterRemoving:Connect(function(character)
+			clearTossFloat(character)
+		end)
 		player.CharacterAdded:Connect(function()
 			clearGuard(states[player])
+			clearAirToss(states[player])
 			resetPlayer(player)
 		end)
 	end
 	Players.PlayerAdded:Connect(setupPlayer)
 	Players.PlayerRemoving:Connect(function(player)
+		if player.Character then clearTossFloat(player.Character) end
 		clearGuard(states[player])
+		clearAirToss(states[player])
 		states[player] = nil
 	end)
 	for _, player in Players:GetPlayers() do setupPlayer(player) end
