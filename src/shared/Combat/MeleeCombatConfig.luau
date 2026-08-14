@@ -54,8 +54,21 @@ local MeleeCombatConfig = {
 		TotalDurationSeconds = 0.420,
 		MinimumIntervalSeconds = 0.420,
 		MaximumTargets = 8,
-		LaunchUpSpeedStudsPerSecond = 52,
+		-- 80 studs/s produces approximately 2.37x the ballistic height of the
+		-- previous 52-stud launch under the same world gravity.
+		LaunchUpSpeedStudsPerSecond = 80,
 		LaunchForwardSpeedStudsPerSecond = 16,
+		SafeFallWindowOpenSeconds = 0.000,
+		SafeFallWindowCloseSeconds = 0.860,
+		SafeFallAnimationDurationSeconds = 0.520,
+		Float = {
+			MaximumDurationSeconds = 2.25,
+			MinimumAirborneCheckDelaySeconds = 0.12,
+			AscentWindowStudsPerSecond = 22,
+			DescentWindowStudsPerSecond = -52,
+			GravityScaleAtApex = 0.24,
+			GravityScaleAtDescentExit = 0.72,
+		},
 		HitVolume = {
 			SizeStuds = Vector3.new(6.5, 5.5, 6.0),
 			ForwardOffsetStuds = 3.0,
@@ -67,6 +80,24 @@ local MeleeCombatConfig = {
 	},
 	DiagnosticsEnabled = false,
 }
+
+assert(
+	MeleeCombatConfig.AltFire.SafeFallWindowOpenSeconds >= 0
+		and MeleeCombatConfig.AltFire.SafeFallWindowCloseSeconds
+			> MeleeCombatConfig.AltFire.SafeFallWindowOpenSeconds
+		and MeleeCombatConfig.AltFire.SafeFallWindowCloseSeconds
+			>= (MeleeCombatConfig.AltFire.LaunchUpSpeedStudsPerSecond
+				- MeleeCombatConfig.AltFire.Float.AscentWindowStudsPerSecond) / workspace.Gravity
+				+ MeleeCombatConfig.AltFire.Float.AscentWindowStudsPerSecond
+					/ (workspace.Gravity * MeleeCombatConfig.AltFire.Float.GravityScaleAtApex),
+	"Training Katana safe-fall window must include the authoritative launch apex"
+)
+assert(
+	MeleeCombatConfig.AltFire.Float.GravityScaleAtApex > 0
+		and MeleeCombatConfig.AltFire.Float.GravityScaleAtApex < 1
+		and MeleeCombatConfig.AltFire.Float.GravityScaleAtDescentExit <= 1,
+	"Air toss float must slow the apex without disabling gravity"
+)
 
 assert(
 	MeleeCombatConfig.HitVolume.KatanaTipReachFromGripStuds > 0,

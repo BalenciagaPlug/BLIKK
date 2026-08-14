@@ -1,0 +1,19 @@
+{
+  "name": "BLIKK_UI_ATLAS_V1",
+  "source": "blikk_ui_atlas_v1.png",
+  "size": [1536, 1024],
+  "regions": {
+    "menu_panel_wide": [20, 25, 935, 290],
+    "hud_panel_compact": [990, 95, 520, 225],
+    "button_idle": [25, 375, 455, 135],
+    "button_active_purple": [520, 375, 470, 135],
+    "button_active_acid": [1025, 375, 485, 135],
+    "mobile_combat_ring": [45, 520, 290, 285],
+    "mobile_dash_diamond": [450, 525, 275, 285],
+    "tab_angular": [770, 605, 325, 160],
+    "notification_compact": [1135, 590, 365, 175],
+    "meter_segmented": [50, 830, 590, 165],
+    "crosshair_ornament": [730, 790, 175, 200],
+    "corner_brackets": [980, 790, 370, 220]
+  }
+}

@@ -49,6 +49,7 @@ local function button(parent, text, position, size)
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = COLORS.Border
 	stroke.Parent = value
+	FrontendLayout:SkinButton(value)
 	return value
 end
 
@@ -314,8 +315,9 @@ function Controller:CreatePage(parent, navigation, callbacks)
 
 	local function updateDirectorySelectionPresentation()
 		for _, entry in directoryRowEntries do
-			entry.Row.BackgroundColor3 = if entry.Room.RoomId == selectedDirectoryRoomId
-				then UIStyle.Colors.AccentDim else COLORS.Raised
+			local isSelected = entry.Room.RoomId == selectedDirectoryRoomId
+			entry.Row.BackgroundColor3 = if isSelected then UIStyle.Colors.AccentDim else COLORS.Raised
+			FrontendLayout:SetButtonRegion(entry.Row, if isSelected then "ButtonActivePurple" else "ButtonIdle")
 		end
 		local canJoin = selectedDirectoryRoomId ~= nil
 			and selectedDirectoryRoomJoinable

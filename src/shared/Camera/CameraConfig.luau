@@ -85,12 +85,22 @@ local CameraConfig = {
 	},
 
 	Crosshair = {
-		GapPixels = 4,
-		LineLengthPixels = 7,
+		GapPixels = 5,
+		LineLengthPixels = 14,
 		ThicknessPixels = 2,
+		DotSizePixels = 2,
+		Opacity = 1,
+		CenterDotEnabled = true,
 		Color = Color3.fromRGB(255, 255, 255),
 		Transparency = 0,
 		DisplayOrder = 10,
+		SettingsRanges = {
+			LineLengthPixels = { Minimum = 4, Maximum = 30, Step = 1 },
+			ThicknessPixels = { Minimum = 1, Maximum = 6, Step = 1 },
+			DotSizePixels = { Minimum = 1, Maximum = 10, Step = 1 },
+			GapPixels = { Minimum = 0, Maximum = 18, Step = 1 },
+			Opacity = { Minimum = 0.25, Maximum = 1, Step = 0.05 },
+		},
 	},
 }
 

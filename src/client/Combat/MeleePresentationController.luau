@@ -52,6 +52,18 @@ local WEAPON_ARM_POSE_OPTIONS = {
 	},
 }
 
+local MELEE_IDLE_POSE_OPTIONS = {
+	SuppressAnimator = WEAPON_ARM_POSE_OPTIONS.SuppressAnimator,
+	StableReference = WEAPON_ARM_POSE_OPTIONS.StableReference,
+	-- Never capture a walk, block, dash, or slash frame as the ready-pose basis.
+	-- The approved coordinates are resolved from neutral on every transition.
+	StableReferenceIdentity = WEAPON_ARM_POSE_OPTIONS.SuppressAnimator,
+	PriorityOverrides = WEAPON_ARM_POSE_OPTIONS.PriorityOverrides,
+	-- Preserve the exact approved idle silhouette created by the original
+	-- stable-reference blend; action poses still resolve at their full authored range.
+	HoldBlendSource = WEAPON_ARM_POSE_OPTIONS.SuppressAnimator,
+}
+
 local CHARACTER_PART_WAIT_SECONDS = 3
 
 local player = Players.LocalPlayer
@@ -92,6 +104,7 @@ local nextSlashAcceptedAt = -math.huge
 local slashSequence = 0
 local blockSequence = 0
 local altSequence = 0
+local safeFallStartedAt = -math.huge
 local meleeIntent
 local guardConfirmed = false
 local visualState = "Holstered"
@@ -119,6 +132,11 @@ end
 
 local function resetPose()
 	PoseCoordinator:Release("Melee")
+end
+
+local function resetSafeFallPose()
+	safeFallStartedAt = -math.huge
+	PoseCoordinator:Release("SafeFall")
 end
 
 local function setState(nextState)
@@ -575,13 +593,27 @@ local function poseForState(now)
 	return poses
 end
 
-local function applyPose(_deltaTime)
+local function applyPose(deltaTime)
 	if not character or not humanoid or humanoid.Health <= 0 then
 		SlashPoseSampler.ResetWeaponArc(gripJoint)
 		resetPose()
+		resetSafeFallPose()
 		return
 	end
 	local now = os.clock()
+	local function applySafeFallPose()
+		local elapsed = now - safeFallStartedAt
+		if elapsed >= 0 and elapsed < MeleeCombatConfig.AltFire.SafeFallAnimationDurationSeconds then
+			PoseCoordinator:Submit(
+				"SafeFall",
+				60,
+				MeleePoseSampler.SampleSafeFall(elapsed),
+				1 - math.exp(-Config.Pose.ActionBlendSpeed * deltaTime)
+			)
+		else
+			PoseCoordinator:Release("SafeFall")
+		end
+	end
 	local poses = poseForState(now)
 	local root = character:FindFirstChild("HumanoidRootPart")
 	local blockEnterSeconds = if visualState == "AirSlashToBlockCancel"
@@ -607,21 +639,23 @@ local function applyPose(_deltaTime)
 	else
 		SlashPoseSampler.ResetWeaponArc(gripJoint)
 	end
-	if not poses then resetPose(); return end
+	if not poses then resetPose(); applySafeFallPose(); return end
 	local blockBlend = if state == "Blocking"
 		then math.clamp((now - stateStarted) / blockEnterSeconds, 0, 1)
 		else 1
-	-- Action clips already finish on the canonical ready keyframe. Resolve idle
-	-- directly so a previous block/slash pose or Animator arm swing cannot leave
-	-- the approved weapon silhouette partially blended or displaced.
-	local blend = if state == "MeleeIdle" then 1 else blockBlend
+	local blend = if state == "MeleeIdle"
+		then 1 - math.exp(-Config.Pose.IdleBlendSpeed * deltaTime)
+		elseif state == "Blocking" then blockBlend
+		else 1 - math.exp(-Config.Pose.ActionBlendSpeed * deltaTime)
+	MELEE_IDLE_POSE_OPTIONS.ResetToken = stateStarted
 	PoseCoordinator:Submit(
 		"Melee",
 		if state == "Slashing" or state == "Blocking" or state == "AltFiring" then 40 else 20,
 		poses,
 		blend,
-		WEAPON_ARM_POSE_OPTIONS
+		if state == "MeleeIdle" then MELEE_IDLE_POSE_OPTIONS else WEAPON_ARM_POSE_OPTIONS
 	)
+	applySafeFallPose()
 end
 
 local function bindCharacter(nextCharacter)
@@ -630,6 +664,7 @@ local function bindCharacter(nextCharacter)
 	slashSequence = 0
 	blockSequence = 0
 	altSequence = 0
+	resetSafeFallPose()
 	guardConfirmed = false
 	table.clear(warnedGroundSlashAnimationIds)
 	local bindCharacterGeneration = characterGeneration
@@ -727,6 +762,10 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 	ownLifetimeConnection(meleeResult.OnClientEvent:Connect(function(payload)
 		if type(payload) ~= "table"
 			or payload.SpawnGeneration ~= player:GetAttribute("BLIKK_SpawnGeneration") then return end
+		if payload.Operation == "AirTossRecovered" and payload.Accepted == true then
+			safeFallStartedAt = os.clock()
+			return
+		end
 		if payload.Operation == "GuardRejected" and payload.Accepted == false
 			and payload.Sequence == blockSequence and state == "Blocking" then
 			blockHeld = false
@@ -762,6 +801,13 @@ function Controller:Init(inputManagerValue, fighterControllerValue, movementEngi
 		end
 	end))
 	ownLifetimeConnection(inputManager.ActionBegan.Event:Connect(function(action)
+		if action == "Jump" and character
+			and character:GetAttribute("BLIKK_AirTossActive") == true then
+			local sequence = character:GetAttribute("BLIKK_AirTossSequence")
+			if type(sequence) == "number" and sequence % 1 == 0 then
+				meleeIntent:FireServer({ Operation = "AirTossRecover", Sequence = sequence })
+			end
+		end
 		local recoveryEquipped = character
 			and character:GetAttribute("BLIKK_ActiveRecoveryItem") ~= ""
 			and character:GetAttribute("BLIKK_ActiveRecoveryItem") ~= nil
@@ -856,6 +902,7 @@ function Controller:Destroy()
 	characterGeneration += 1
 	if cancelDependencyWatch then cancelDependencyWatch(); cancelDependencyWatch = nil end
 	interrupt("Interrupted")
+	resetSafeFallPose()
 	destroyGroundSlashTrack()
 	disconnectCharacterConnections()
 	disconnectLifetimeConnections()

@@ -32,9 +32,9 @@ local REMOTE_DISCOVERY_WINDOW_SECONDS = 8
 local colors = {
 	Text = Color3.fromRGB(232, 230, 216),
 	Muted = Color3.fromRGB(133, 140, 132),
-	Accent = Color3.fromRGB(157, 216, 83),
+	Accent = Color3.fromRGB(157, 69, 232),
 	Panel = Color3.fromRGB(17, 19, 19),
-	Selected = Color3.fromRGB(44, 65, 34),
+	Selected = Color3.fromRGB(45, 23, 62),
 	Error = Color3.fromRGB(194, 68, 72),
 }
 
@@ -64,6 +64,7 @@ local function button(parent, text, size)
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = Color3.fromRGB(68, 75, 69)
 	stroke.Parent = item
+	FrontendLayout:SkinButton(item, { SelectionAccent = "Side" })
 	return item
 end
 
@@ -374,8 +375,9 @@ function Controller:CreatePage(parent, navigation, fighterController)
 
 	local function updateProfileRowVisuals()
 		for _, entry in profileRowEntries do
-			entry.Row.BackgroundColor3 = if entry.Identity == selectedProfileRowIdentity
-				then colors.Selected else colors.Panel
+			local isSelected = entry.Identity == selectedProfileRowIdentity
+			entry.Row.BackgroundColor3 = if isSelected then colors.Selected else colors.Panel
+			FrontendLayout:SetButtonSelected(entry.Row, isSelected)
 		end
 	end
 

@@ -14,7 +14,7 @@ local COLORS = {
 	Border = Color3.fromRGB(55, 61, 56),
 	Text = Color3.fromRGB(235, 232, 218),
 	Muted = Color3.fromRGB(142, 146, 137),
-	Accent = Color3.fromRGB(154, 213, 83),
+	Accent = Color3.fromRGB(157, 69, 232),
 }
 
 local function makeLabel(parent, text, position, size, textSize, color)
@@ -58,8 +58,9 @@ local function makeButton(parent, text, order)
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = COLORS.Border
 	stroke.Parent = button
+	FrontendLayout:SkinButton(button)
 	button.MouseEnter:Connect(function()
-		button.BackgroundColor3 = Color3.fromRGB(25, 29, 27)
+		button.BackgroundColor3 = Color3.fromRGB(33, 18, 45)
 		stroke.Color = COLORS.Accent
 	end)
 	button.MouseLeave:Connect(function()

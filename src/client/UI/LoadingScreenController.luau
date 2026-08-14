@@ -102,6 +102,79 @@ local function startPulse()
 	)
 end
 
+local function startAmbientMotion()
+	if view.SmokeA.Visible then
+		playTween(
+			view.SmokeA,
+			TweenInfo.new(
+				LoadingScreenConfig.Timing.SmokeDriftSeconds,
+				Enum.EasingStyle.Sine,
+				Enum.EasingDirection.InOut,
+				-1,
+				true
+			),
+			{ Position = UDim2.fromScale(0.005, -0.005) }
+		)
+		playTween(
+			view.SmokeB,
+			TweenInfo.new(
+				LoadingScreenConfig.Timing.SmokeDriftSeconds
+					* LoadingScreenConfig.Timing.SecondarySmokeDurationScale,
+				Enum.EasingStyle.Sine,
+				Enum.EasingDirection.InOut,
+				-1,
+				true
+			),
+			{ Position = UDim2.fromScale(-0.025, -0.025) }
+		)
+	end
+	playTween(
+		view.LogoScale,
+		TweenInfo.new(
+			LoadingScreenConfig.Timing.LogoBreathSeconds,
+			Enum.EasingStyle.Sine,
+			Enum.EasingDirection.InOut,
+			-1,
+			true
+		),
+		{ Scale = LoadingScreenConfig.Timing.LogoBreathScale }
+	)
+	playTween(
+		view.LogoShimmerGradient,
+		TweenInfo.new(
+			LoadingScreenConfig.Timing.LogoShimmerSweepSeconds,
+			Enum.EasingStyle.Quad,
+			Enum.EasingDirection.InOut,
+			-1,
+			false,
+			math.max(
+				1,
+				LoadingScreenConfig.Timing.LogoShimmerSeconds
+					- LoadingScreenConfig.Timing.LogoShimmerSweepSeconds
+			)
+		),
+		{ Offset = Vector2.new(1.25, 0) }
+	)
+	if view.Glare.Visible then
+		playTween(
+			view.Glare,
+			TweenInfo.new(
+				LoadingScreenConfig.Timing.GlareSweepSeconds,
+				Enum.EasingStyle.Sine,
+				Enum.EasingDirection.InOut,
+				-1,
+				true,
+				math.max(
+					1,
+					LoadingScreenConfig.Timing.GlareCycleSeconds
+						- (LoadingScreenConfig.Timing.GlareSweepSeconds * 2)
+				)
+			),
+			{ ImageTransparency = 0.28 }
+		)
+	end
+end
+
 local function disconnectReleaseWatch()
 	if releaseWatchConnection then releaseWatchConnection:Disconnect() end
 	releaseWatchConnection = nil
@@ -220,18 +293,46 @@ end
 local function startFinitePreload(generation, identity)
 	local instances = {}
 	local definitions = {}
+	local seenAssetIds = {}
+	local function appendDefinition(definition, classification)
+		if type(definition) ~= "table" or tostring(definition.AssetId or "") == "" then return end
+		local assetId = canonicalAssetId(definition.AssetId)
+		if seenAssetIds[assetId] then return end
+		local instance = createManifestInstance(definition)
+		if not instance then return end
+		seenAssetIds[assetId] = true
+		table.insert(instances, instance)
+		table.insert(definitions, {
+			AssetId = definition.AssetId,
+			Classification = classification,
+		})
+	end
 	for _, classification in { "Required", "Preferred", "Cosmetic" } do
 		for _, definition in LoadingScreenConfig.AssetManifest[classification] or {} do
-			local instance = createManifestInstance(definition)
-			if instance then
-				table.insert(instances, instance)
-				table.insert(definitions, {
-					AssetId = definition.AssetId,
-					Classification = classification,
-				})
-			end
+			appendDefinition(definition, classification)
 		end
 	end
+	local layers = LoadingScreenConfig.Layers or {}
+	appendDefinition({
+		Kind = "Image",
+		AssetId = layers.Background and layers.Background.ImageAssetId,
+		Name = "PremiumLoadingBackground",
+	}, "Preferred")
+	appendDefinition({
+		Kind = "Image",
+		AssetId = layers.Logo and layers.Logo.ImageAssetId,
+		Name = "PremiumLoadingLogo",
+	}, "Preferred")
+	appendDefinition({
+		Kind = "Image",
+		AssetId = layers.Smoke and layers.Smoke.ImageAssetId,
+		Name = "PremiumLoadingSmoke",
+	}, "Cosmetic")
+	appendDefinition({
+		Kind = "Image",
+		AssetId = layers.Glare and layers.Glare.ImageAssetId,
+		Name = "PremiumLoadingGlare",
+	}, "Cosmetic")
 
 	if #instances == 0 then
 		LoadingScreenController.AssetPreloadCompleted:Fire(identity, {
@@ -260,8 +361,23 @@ local function startFinitePreload(generation, identity)
 		for _, instance in instances do instance:Destroy() end
 
 		if generation ~= activeGeneration then return end
-		if timedOut or failedLookup[canonicalAssetId(LoadingScreenConfig.Default.ImageAssetId)] then
+		local backgroundAssetId = layers.Background and layers.Background.ImageAssetId or ""
+		if backgroundAssetId ~= "" and failedLookup[canonicalAssetId(backgroundAssetId)] then
+			view.Artwork.Image = LoadingScreenConfig.Default.ImageAssetId
+		elseif failedLookup[canonicalAssetId(LoadingScreenConfig.Default.ImageAssetId)] then
 			LoadingScreenView.SetArtworkAvailable(view, false)
+		end
+		if timedOut then
+			LoadingScreenView.SetArtworkAvailable(view, false)
+		end
+		local smokeAssetId = layers.Smoke and layers.Smoke.ImageAssetId or ""
+		if smokeAssetId ~= "" and failedLookup[canonicalAssetId(smokeAssetId)] then
+			view.SmokeA.Visible = false
+			view.SmokeB.Visible = false
+		end
+		local glareAssetId = layers.Glare and layers.Glare.ImageAssetId or ""
+		if glareAssetId ~= "" and failedLookup[canonicalAssetId(glareAssetId)] then
+			view.Glare.Visible = false
 		end
 		local requiredFailureCount = 0
 		for _, definition in definitions do
@@ -486,6 +602,7 @@ function LoadingScreenController:Begin(contextName, identity)
 	setVisible(true)
 	setGameplayOwnership(true)
 	startPulse()
+	startAmbientMotion()
 	startFinitePreload(generation, activeIdentity)
 	return activeIdentity
 end

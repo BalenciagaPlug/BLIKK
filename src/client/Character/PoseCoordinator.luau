@@ -138,6 +138,9 @@ local function applyClaims()
 					Blend = claim.Blend,
 					SuppressAnimator = claim.SuppressAnimator[alias] == true,
 					StableReference = claim.StableReference[alias] == true,
+					StableReferenceIdentity = claim.StableReferenceIdentity[alias] == true,
+					HoldBlendSource = claim.HoldBlendSource[alias] == true,
+					ResetToken = claim.ResetToken,
 				}
 			end
 		end
@@ -163,12 +166,24 @@ local function applyClaims()
 				local previous = applied[alias]
 				local sameOwner = previous and previous.SuppressAnimator
 					and previous.Owner == selection.Owner
-				local reference = if sameOwner and previous.StableReference
-					then previous.StableReference else joint.Transform
-				local from = if selection.StableReference
-					then (if sameOwner then previous.ResolvedTarget else reference)
-					else if sameOwner then previous.ResolvedTarget else joint.Transform
-				local resolved = from:Lerp(selection.Target, blend)
+				local reference = if selection.StableReferenceIdentity then CFrame.identity
+					elseif sameOwner and previous.StableReference then previous.StableReference
+					else joint.Transform
+				local sameReset = sameOwner and previous.ResetToken == selection.ResetToken
+				local resolved
+				if selection.HoldBlendSource then
+					-- Approved idle silhouettes were authored as one stable-reference blend.
+					-- Cache that resolved result instead of converging it to a different,
+					-- fully-applied pose every render frame. ResetToken deliberately
+					-- re-resolves the pose after an action without releasing Animator lock.
+					resolved = if sameReset and previous.HeldTarget then previous.HeldTarget
+						else reference:Lerp(selection.Target, blend)
+				else
+					local from = if selection.StableReference
+						then (if sameOwner then previous.ResolvedTarget else reference)
+						else if sameOwner then previous.ResolvedTarget else joint.Transform
+					resolved = from:Lerp(selection.Target, blend)
+				end
 				joint.Transform = resolved
 				applied[alias] = {
 					Owner = selection.Owner,
@@ -176,6 +191,8 @@ local function applyClaims()
 					ResolvedTarget = resolved,
 					SuppressAnimator = true,
 					StableReference = if selection.StableReference then reference else nil,
+					HeldTarget = if selection.HoldBlendSource then resolved else nil,
+					ResetToken = selection.ResetToken,
 				}
 			elseif joint:IsA("AnimationConstraint") then
 				-- Animator evaluates before PreSimulation. Layering the procedural
@@ -202,6 +219,11 @@ function PoseCoordinator:Submit(owner, priority, poses, blend, options)
 			then options.SuppressAnimator else {},
 		StableReference = if type(options.StableReference) == "table"
 			then options.StableReference else {},
+		StableReferenceIdentity = if type(options.StableReferenceIdentity) == "table"
+			then options.StableReferenceIdentity else {},
+		HoldBlendSource = if type(options.HoldBlendSource) == "table"
+			then options.HoldBlendSource else {},
+		ResetToken = options.ResetToken,
 		PriorityOverrides = if type(options.PriorityOverrides) == "table"
 			then options.PriorityOverrides else {},
 	}

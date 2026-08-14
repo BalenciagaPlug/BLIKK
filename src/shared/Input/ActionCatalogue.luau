@@ -6,6 +6,7 @@ ActionCatalogue.Ordered = {
 	{ Id = "Left", Name = "Move Left", Group = "Movement", Primary = "KeyCode.A" },
 	{ Id = "Right", Name = "Move Right", Group = "Movement", Primary = "KeyCode.D" },
 	{ Id = "Jump", Name = "Jump", Group = "Movement", Primary = "KeyCode.Space" },
+	{ Id = "Dash", Name = "Dash", Group = "Movement" },
 	{ Id = "Primary", Name = "Primary Fire", Group = "Combat", Primary = "MouseButton1" },
 	{ Id = "Secondary", Name = "Alternate Fire", Group = "Combat", Primary = "MouseButton2" },
 	{ Id = "Slash", Name = "Slash / Melee Attack", Group = "Combat", Primary = "MouseButton3" },

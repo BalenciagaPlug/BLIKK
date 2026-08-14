@@ -122,8 +122,10 @@ local TechniqueConfig = {
 		-- Classic wall-jump cancel is the accessible wall-posting profile. It
 		-- preserves elevation and creates return space; slash-first Scale below
 		-- remains the deliberately faster vertical-climb profile.
-		UpwardSpeedStudsPerSecond = 54,
-		OutwardSpeedStudsPerSecond = 48,
+		UpwardSpeedStudsPerSecond = 68,
+		OutwardSpeedStudsPerSecond = 32,
+		FloatDurationSeconds = 0.14,
+		FloatGravityScale = 0.65,
 		DirectionalInfluenceStudsPerSecond = 12,
 		RetainedTangentialVelocityScale = 0.65,
 		MinimumOutwardRetentionScale = 0.50,
@@ -139,22 +141,27 @@ local TechniqueConfig = {
 		},
 		RecoveryDurationSeconds = 0.26,
 		SlashCancelWindowSeconds = 0.22,
-		ReturnDashAvailabilitySeconds = 0.68,
+		ReturnDashDelaySeconds = 0.12,
+		ReturnDashInputBufferSeconds = 0.22,
+		ReturnDashAvailabilitySeconds = 0.76,
 		Scale = {
 			-- Supports approach dash -> slash -> jump and wall run -> slash -> jump.
 			-- The reverse wall jump -> slash order remains the classic cancel path.
 			DashToWallMaximumSeconds = 0.44,
 			MinimumDashIntoWallDot = 0.42,
-			SlashToJumpMinimumSeconds = 0.000,
-			SlashToJumpMaximumSeconds = 0.34,
-			UpwardSpeedStudsPerSecond = 66,
-			OutwardSpeedStudsPerSecond = 48,
+			SlashToJumpMinimumSeconds = 0.075,
+			SlashToJumpMaximumSeconds = 0.38,
+			UpwardSpeedStudsPerSecond = 82,
+			OutwardSpeedStudsPerSecond = 30,
 			RetainedTangentialVelocityScale = 0.70,
-			ReturnDashAvailabilitySeconds = 0.70,
+			FloatDurationSeconds = 0.16,
+			FloatGravityScale = 0.60,
+			ReturnDashDelaySeconds = 0.14,
+			ReturnDashAvailabilitySeconds = 0.78,
 		},
-		SameWallMinimumRecontactSeconds = 0.10,
-		SameWallMinimumSeparationStuds = 0.55,
-		SameWallMinimumContactPointMovementStuds = 0.35,
+		SameWallMinimumRecontactSeconds = 0.28,
+		SameWallMinimumSeparationStuds = 0.45,
+		SameWallMinimumContactPointMovementStuds = 0.25,
 		SameWallMinimumReentrySpeedStudsPerSecond = 5,
 		SameWallNormalMatchDot = 0.94,
 		DiagnosticsEnabled = false,
@@ -205,6 +212,22 @@ assert(
 assert(
 	wall.Scale.UpwardSpeedStudsPerSecond >= wall.UpwardSpeedStudsPerSecond + 10,
 	"Slash-first wall scaling must remain the fastest vertical wall route"
+)
+assert(
+	wall.Scale.OutwardSpeedStudsPerSecond <= wall.OutwardSpeedStudsPerSecond,
+	"Slash-first wall scaling must not throw the fighter farther away than classic posting"
+)
+assert(
+	wall.FloatDurationSeconds > 0 and wall.FloatGravityScale > 0 and wall.FloatGravityScale < 1
+		and wall.Scale.FloatDurationSeconds >= wall.FloatDurationSeconds
+		and wall.Scale.FloatGravityScale > 0 and wall.Scale.FloatGravityScale < 1,
+	"Wall launch float must soften, never remove or reverse, Roblox gravity"
+)
+assert(
+	wall.ReturnDashDelaySeconds > 0
+		and wall.Scale.ReturnDashDelaySeconds >= wall.ReturnDashDelaySeconds
+		and wall.ReturnDashInputBufferSeconds >= wall.Scale.ReturnDashDelaySeconds,
+	"Wall return-dash breathing beats must remain positive and fully bufferable"
 )
 assert(
 	wall.VerticalRun.GroundEntryWindowSeconds > 0

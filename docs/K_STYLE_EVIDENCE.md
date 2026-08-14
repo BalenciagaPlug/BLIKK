@@ -6,6 +6,12 @@ This document freezes the evidence and BLIKK-specific decisions used for the cur
 katana foundation. It prevents later tuning from being described as authentic GunZ behavior without
 support, while leaving owner playtesting authoritative for BLIKK feel.
 
+## Owner-provided motion comparison (2026-08-11)
+
+Two local 1920x1080, approximately 120 FPS recordings provide direct visual calibration of the same wall-scaling intent in GunZ and BLIKK. Frame sampling shows GunZ's repeated wall contacts at roughly a 0.6-0.7-second cadence; the compared BLIKK build compressed them to roughly 0.4-0.5 seconds and carried the fighter farther away before return. This supports BLIKK's buffered Slash-to-Jump and return-dash breathing beats, reduced outward launch, and increased elevation retention. Exact BLIKK speeds remain project tuning rather than claims about original engine constants.
+
+A second paired set supplied on 2026-08-11 compares Slash, Block, sword alternate, left/right ground dash, Jump, and left/right Butterfly, plus separate post-change recordings of both wall routes. The action comparison supports continuous pose blending and a lower, shoulder-led ground-dash silhouette. The wall recordings show correct sequence recognition but a sharper post-launch falloff than the GunZ reference; BLIKK therefore applies a brief partial-gravity rise, never zero gravity, while widening buffered input windows. This is presentation and project physics calibration, not a claim that GunZ uses Roblox-style gravity scaling.
+
 ## Source hierarchy
 
 1. Original or current official GunZ material establishes design intent and named mechanics.
@@ -125,6 +131,15 @@ Sources reviewed on 2026-08-10:
   preserved.
 - The katana alternate is ground-only, presents contact at `0.180` seconds, launches eligible targets,
   and deals no normal weapon damage. Its Roblox reach and launch velocities are original BLIKK values.
+- GunZ control references describe pressing Jump during an uppercut/knock-up to recover with a
+  backflip and land upright, with the equipment guide placing the input at or before the flip apex.
+  They do not publish a portable numeric engine window. BLIKK therefore derives its `0.000` through
+  `0.860`-second server window from the float-adjusted `80`-stud/second launch apex and uses an
+  original `0.520`-second code-authored backflip.
+- Airborne, wall-run, wall-post, dash, and tumble state never add firearm spread. The client supplies
+  a crosshair world point, but the server owns the current firing origin, validates point/direction
+  agreement, and reconverges its ray. One of twelve B-8 pellets follows that validated centre ray;
+  this is a BLIKK responsiveness contract, not a historical GunZ pellet claim.
 - Guard is server-owned, lasts at most `2.000` seconds, and protects only the forward half-space. A
   successful melee guard ends the guard; ranged impacts may continue against a held guard.
 - Butterfly's invariant is one player-entered airborne Slash-to-Block pair inside one jump. Dash is

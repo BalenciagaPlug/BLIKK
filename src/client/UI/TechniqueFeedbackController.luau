@@ -3,12 +3,14 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
 local TechniqueConfig = require(ReplicatedStorage.Shared.Movement.TechniqueConfig)
+local UIAtlas = require(script.Parent.UIAtlas)
 local UIStyle = require(script.Parent.UIStyle)
 
 local Controller = {}
 
 local player = Players.LocalPlayer
 local label
+local notificationFrame
 local serial = 0
 local isInitialised = false
 
@@ -30,6 +32,7 @@ local function showTechnique(name)
 	label.Text = "TECH // " .. displayName
 	label.TextTransparency = 0
 	label.TextStrokeTransparency = 0.30
+	if notificationFrame then notificationFrame.ImageTransparency = 0.12 end
 	task.delay(TechniqueConfig.Feedback.VisibleSeconds, function()
 		if showSerial ~= serial or not label or not label.Parent then return end
 		local tween = TweenService:Create(
@@ -38,6 +41,13 @@ local function showTechnique(name)
 			{ TextTransparency = 1, TextStrokeTransparency = 1 }
 		)
 		tween:Play()
+		if notificationFrame then
+			TweenService:Create(
+				notificationFrame,
+				TweenInfo.new(TechniqueConfig.Feedback.FadeSeconds, Enum.EasingStyle.Quad),
+				{ ImageTransparency = 1 }
+			):Play()
+		end
 	end)
 end
 
@@ -51,6 +61,19 @@ function Controller:Init(techniqueController)
 	screenGui.IgnoreGuiInset = true
 	screenGui.DisplayOrder = UIStyle.DisplayOrders.Hud + 1
 	screenGui.Parent = playerGui
+	notificationFrame = UIAtlas:CreateSprite(screenGui, "NotificationCompact", "TechniqueFrame")
+	if notificationFrame then
+		notificationFrame.AnchorPoint = Vector2.new(0, 1)
+		notificationFrame.Position = UDim2.new(
+			0,
+			TechniqueConfig.Feedback.LeftOffsetPixels - 18,
+			1,
+			-TechniqueConfig.Feedback.BottomOffsetPixels + 18
+		)
+		notificationFrame.Size = UDim2.fromOffset(440, 70)
+		notificationFrame.ImageTransparency = 1
+		notificationFrame.ZIndex = 0
+	end
 
 	label = Instance.new("TextLabel")
 	label.Name = "TechniqueLabel"
@@ -71,6 +94,7 @@ function Controller:Init(techniqueController)
 	label.TextStrokeTransparency = 1
 	label.TextTransparency = 1
 	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.ZIndex = 1
 	label.Parent = screenGui
 
 	techniqueController.TechniqueAccepted.Event:Connect(showTechnique)

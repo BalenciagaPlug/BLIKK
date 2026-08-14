@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
 local ActionBuffer = require(ReplicatedStorage.Shared.Input.ActionBuffer)
 local CharacterDependency = require(ReplicatedStorage.Shared.Character.CharacterDependency)
@@ -23,6 +24,7 @@ MovementEngine.WallJumped = Instance.new("BindableEvent")
 local dashConfig = MovementConfig.Dash
 local tumbleConfig = MovementConfig.Tumble
 local jumpConfig = MovementConfig.Jump
+local airborneFloatConfig = jumpConfig.AirborneFloat
 local directions = {
 	Forward = Vector2.new(0, 1),
 	Backward = Vector2.new(0, -1),
@@ -61,6 +63,7 @@ local lastWallPoint = Vector3.zero
 local lastWallActionAt = -math.huge
 local hasSeparatedFromLastWall = false
 local returnDashExpiresAt = -math.huge
+local returnDashAvailableAt = -math.huge
 local returnDashAvailable = false
 local techniqueDashExpiresAt = -math.huge
 local techniqueDashAvailable = false
@@ -68,8 +71,10 @@ local wallPostHeld = false
 local lastAirDashAt = -math.huge
 local lastAirDashDirection = Vector3.zero
 local pendingWallScaleSlashAt = -math.huge
+local pendingWallScaleJumpAt = -math.huge
 local pendingWallScaleContact
 local groundVerticalRunJumpAt = -math.huge
+local wallLaunchFloat
 
 local function diagnose(message)
 	if dashConfig.Diagnostics.Enabled or WallConfig.DiagnosticsEnabled then
@@ -242,13 +247,16 @@ local function cancelOwnedMovement()
 	lastWallContactAt = -math.huge
 	returnDashAvailable = false
 	returnDashExpiresAt = -math.huge
+	returnDashAvailableAt = -math.huge
 	techniqueDashAvailable = false
 	techniqueDashExpiresAt = -math.huge
 	wallPostHeld = false
 	lastAirDashAt = -math.huge
 	lastAirDashDirection = Vector3.zero
 	pendingWallScaleSlashAt = -math.huge
+	pendingWallScaleJumpAt = -math.huge
 	pendingWallScaleContact = nil
+	wallLaunchFloat = nil
 	groundVerticalRunJumpAt = -math.huge
 
 	local isGrounded = humanoid and humanoid.Health > 0
@@ -301,13 +309,18 @@ local function tryDash(action, direction)
 	-- ordinary air dash. It must be executable in the GunZ wall-cancel rhythm
 	-- even when the approach dash's normal cooldown has not expired.
 	local hasWallReturnResource = not grounded and returnDashAvailable and now <= returnDashExpiresAt
-	local availableAt = if hasWallReturnResource then now else lastDashTime + cooldown
+	local availableAt = if hasWallReturnResource then math.max(now, returnDashAvailableAt)
+		else lastDashTime + cooldown
+	local inputBufferSeconds = if hasWallReturnResource
+		then WallConfig.ReturnDashInputBufferSeconds else dashConfig.FollowupInputBufferSeconds
 	if dashState or now < availableAt then
-		if availableAt - now <= dashConfig.FollowupInputBufferSeconds then
+		if availableAt - now <= inputBufferSeconds then
 			bufferedDash = {
 				Action = action,
 				Direction = direction,
-				ExpiresAt = availableAt + dashConfig.FollowupInputBufferSeconds,
+				AvailableAt = availableAt,
+				BypassesCooldown = hasWallReturnResource,
+				ExpiresAt = availableAt + inputBufferSeconds,
 			}
 			diagnose("dash buffered // follow-up rhythm")
 		else
@@ -321,6 +334,7 @@ local function tryDash(action, direction)
 		if returnDashAvailable and now <= returnDashExpiresAt then
 			isReturnDash = true
 			returnDashAvailable = false
+			returnDashAvailableAt = -math.huge
 		elseif techniqueDashAvailable and now <= techniqueDashExpiresAt then
 			isTechniqueDash = true
 			techniqueDashAvailable = false
@@ -470,6 +484,12 @@ local function wallLaunch(now, exitKind, exitReason)
 	lastWallContactAt = -math.huge
 	setMovementState("WallJumpRecovery")
 	rootPart.AssemblyLinearVelocity = Vector3.new(launchHorizontal.X, upward, launchHorizontal.Z)
+	wallLaunchFloat = if exitKind ~= "Automatic" then {
+		StartedAt = now,
+		InitialUpwardSpeed = upward,
+		DurationSeconds = WallConfig.FloatDurationSeconds,
+		GravityScale = WallConfig.FloatGravityScale,
+	} else nil
 	if character and WallConfig.DiagnosticsEnabled then
 		character:SetAttribute("BLIKK_WallExitReason", exitReason)
 		character:SetAttribute("BLIKK_WallExitImpulse", Vector3.new(launchHorizontal.X, upward, launchHorizontal.Z))
@@ -480,6 +500,7 @@ end
 
 local function clearPendingWallScale()
 	pendingWallScaleSlashAt = -math.huge
+	pendingWallScaleJumpAt = -math.huge
 	pendingWallScaleContact = nil
 end
 
@@ -500,6 +521,7 @@ local function wallScaleLaunch(now)
 		return false
 	end
 
+	local acceptedJumpAt = if pendingWallScaleJumpAt > -math.huge then pendingWallScaleJumpAt else now
 	finishDash(true)
 	local velocity = rootPart.AssemblyLinearVelocity
 	local horizontal = Vector3.new(velocity.X, 0, velocity.Z)
@@ -513,10 +535,19 @@ local function wallScaleLaunch(now)
 	wallRun = nil
 	wallContact = nil
 	lastWallContactAt = -math.huge
-	clearPendingWallScale()
+	pendingWallScaleSlashAt = -math.huge
+	pendingWallScaleJumpAt = -math.huge
+	pendingWallScaleContact = nil
 	ActionBuffer:Consume("Jump", WallConfig.JumpInputBufferSeconds, now)
 	returnDashAvailable = true
+	returnDashAvailableAt = now + scale.ReturnDashDelaySeconds
 	returnDashExpiresAt = now + scale.ReturnDashAvailabilitySeconds
+	wallLaunchFloat = {
+		StartedAt = now,
+		InitialUpwardSpeed = scale.UpwardSpeedStudsPerSecond,
+		DurationSeconds = scale.FloatDurationSeconds,
+		GravityScale = scale.FloatGravityScale,
+	}
 	setMovementState("WallScaleLaunch")
 	rootPart.AssemblyLinearVelocity = Vector3.new(
 		launchHorizontal.X,
@@ -533,7 +564,7 @@ local function wallScaleLaunch(now)
 	end
 	diagnose("wall scale accepted // slash -> jump -> return dash")
 	MovementEngine.WallJumped:Fire(now, lastWall, lastWallNormal, contact.Side, false)
-	MovementEngine.JumpAccepted:Fire(now, true)
+	MovementEngine.JumpAccepted:Fire(acceptedJumpAt, true)
 	return true
 end
 
@@ -634,12 +665,29 @@ local function updateWallSeparation()
 end
 
 local function stepWall(now)
+	if wallLaunchFloat and rootPart then
+		local elapsed = now - wallLaunchFloat.StartedAt
+		if elapsed <= wallLaunchFloat.DurationSeconds then
+			local velocity = rootPart.AssemblyLinearVelocity
+			local softenedUpward = wallLaunchFloat.InitialUpwardSpeed
+				- Workspace.Gravity * wallLaunchFloat.GravityScale * math.max(0, elapsed)
+			if velocity.Y < softenedUpward then
+				rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, softenedUpward, velocity.Z)
+			end
+		else
+			wallLaunchFloat = nil
+		end
+	end
 	if now - groundVerticalRunJumpAt > WallConfig.VerticalRun.GroundEntryWindowSeconds then
 		groundVerticalRunJumpAt = -math.huge
 	end
 	if pendingWallScaleContact
 		and now - pendingWallScaleSlashAt > WallConfig.Scale.SlashToJumpMaximumSeconds then
 		clearPendingWallScale()
+	end
+	if pendingWallScaleContact and pendingWallScaleJumpAt > -math.huge
+		and now - pendingWallScaleSlashAt >= WallConfig.Scale.SlashToJumpMinimumSeconds then
+		if wallScaleLaunch(now) then return end
 	end
 	updateWallSeparation()
 	if returnDashAvailable and now > returnDashExpiresAt then returnDashAvailable = false end
@@ -790,6 +838,35 @@ local function heartbeat(deltaTime)
 	if grounded then
 		lastGroundedAt = now
 	end
+	if airborneFloatConfig.Enabled and not grounded and not ownsHorizontalVelocity()
+		and character:GetAttribute("BLIKK_AirTossFloatActive") ~= true then
+		local velocity = rootPart.AssemblyLinearVelocity
+		local vertical = velocity.Y
+		local ascentWindow = airborneFloatConfig.AscentWindowStudsPerSecond
+		local descentWindow = airborneFloatConfig.DescentWindowStudsPerSecond
+		if vertical <= ascentWindow and vertical >= descentWindow then
+			local gravityScale
+			if vertical >= 0 then
+				gravityScale = airborneFloatConfig.GravityScaleAtApex
+					+ (1 - airborneFloatConfig.GravityScaleAtApex)
+						* math.clamp(vertical / math.max(ascentWindow, 0.001), 0, 1)
+			else
+				gravityScale = airborneFloatConfig.GravityScaleAtApex
+					+ (airborneFloatConfig.GravityScaleAtDescentExit
+						- airborneFloatConfig.GravityScaleAtApex)
+						* math.clamp(vertical / math.min(descentWindow, -0.001), 0, 1)
+			end
+			local compensation = math.min(
+				Workspace.Gravity * (1 - gravityScale) * math.max(deltaTime, 0),
+				airborneFloatConfig.MaximumCompensationStudsPerSecondPerFrame
+			)
+			rootPart.AssemblyLinearVelocity = Vector3.new(
+				velocity.X,
+				vertical + compensation,
+				velocity.Z
+			)
+		end
+	end
 	if not gameplayEnabled or inputSuppressed then
 		if dashState or isWallState(movementState) or movementState == "WallReturnDash"
 			or movementState == "TechniqueDash" then
@@ -806,7 +883,9 @@ local function heartbeat(deltaTime)
 		else
 			local groundedNow = humanoid.FloorMaterial ~= Enum.Material.Air
 			local cooldown = if groundedNow then dashConfig.GroundCooldownSeconds else dashConfig.AirCooldownSeconds
-			if now >= lastDashTime + cooldown then
+			local availableAt = request.AvailableAt or (lastDashTime + cooldown)
+			if not request.BypassesCooldown then availableAt = math.max(availableAt, lastDashTime + cooldown) end
+			if now >= availableAt then
 				bufferedDash = nil
 				tryDash(request.Action, request.Direction)
 			end
@@ -879,6 +958,7 @@ function MovementEngine:ConfirmSlashAccepted(timestamp)
 		if timestamp - movementStateStartedAt > WallConfig.SlashCancelWindowSeconds then return false end
 		setMovementState("WallCancelFreedom")
 		returnDashAvailable = true
+		returnDashAvailableAt = timestamp + WallConfig.ReturnDashDelaySeconds
 		returnDashExpiresAt = timestamp + WallConfig.ReturnDashAvailabilitySeconds
 		diagnose("wall recovery cancelled // return dash earned")
 		return true
@@ -916,6 +996,21 @@ end
 
 function MovementEngine:HandleAction(action, timestamp)
 	local now = timestamp or os.clock()
+	if action == "Dash" then
+		local direction = self:GetMoveVector()
+		if direction.Magnitude <= 0 and cameraController then
+			direction = select(1, cameraController:GetFlatBasis())
+		end
+		if direction.Magnitude > 0 then
+			local forward, right = cameraController:GetFlatBasis()
+			local forwardDot, rightDot = direction:Dot(forward), direction:Dot(right)
+			local dashAction = if math.abs(forwardDot) >= math.abs(rightDot)
+				then (if forwardDot >= 0 then "Forward" else "Backward")
+				else (if rightDot >= 0 then "Right" else "Left")
+			tryDash(dashAction, direction.Unit)
+		end
+		return
+	end
 	if action == "Secondary" then
 		wallPostHeld = true
 		beginWallPost(now)
@@ -923,6 +1018,15 @@ function MovementEngine:HandleAction(action, timestamp)
 	end
 	if action == "Jump" then
 		if not humanoid or humanoid.Health <= 0 then return end
+		if pendingWallScaleContact then
+			local elapsed = now - pendingWallScaleSlashAt
+			if elapsed >= 0 and elapsed < WallConfig.Scale.SlashToJumpMinimumSeconds then
+				pendingWallScaleJumpAt = now
+				ActionBuffer:Push("Jump", now)
+				diagnose("wall scale jump buffered // slash breathing beat")
+				return
+			end
+		end
 		if wallScaleLaunch(now) then return end
 		if movementState == "VerticalWallRun" or movementState == "HorizontalWallRun"
 			or movementState == "WallPost" then
@@ -982,11 +1086,12 @@ function MovementEngine:BindCharacter(nextCharacter)
 	lastWallNormal, lastWallPoint = Vector3.zero, Vector3.zero
 	lastWallContactAt, lastWallActionAt = -math.huge, -math.huge
 	hasSeparatedFromLastWall = false
-	returnDashAvailable, returnDashExpiresAt = false, -math.huge
+	returnDashAvailable, returnDashExpiresAt, returnDashAvailableAt = false, -math.huge, -math.huge
 	techniqueDashAvailable, techniqueDashExpiresAt = false, -math.huge
 	wallPostHeld = false
 	lastAirDashAt, lastAirDashDirection = -math.huge, Vector3.zero
 	clearPendingWallScale()
+	wallLaunchFloat = nil
 	groundVerticalRunJumpAt = -math.huge
 	setMovementState("AirborneFree")
 	character, humanoid, rootPart = nil, nil, nil
@@ -1005,11 +1110,12 @@ function MovementEngine:BindCharacter(nextCharacter)
 			bufferedDash = nil
 			wallContact, wallRun, lastWall = nil, nil, nil
 			lastGroundedAt = if humanoid.FloorMaterial ~= Enum.Material.Air then os.clock() else -math.huge
-			returnDashAvailable = false
+			returnDashAvailable, returnDashAvailableAt = false, -math.huge
 			techniqueDashAvailable = false
 			wallPostHeld = false
 			lastAirDashAt, lastAirDashDirection = -math.huge, Vector3.zero
 			clearPendingWallScale()
+			wallLaunchFloat = nil
 			groundVerticalRunJumpAt = -math.huge
 			measureCharacter()
 			setMovementState(if humanoid.FloorMaterial == Enum.Material.Air then "AirborneFree" else "Grounded")
@@ -1019,11 +1125,12 @@ function MovementEngine:BindCharacter(nextCharacter)
 					local wasAirborne = movementState ~= "Grounded"
 					airDashCount = 0
 					wallContact, wallRun, lastWall = nil, nil, nil
-					returnDashAvailable = false
+					returnDashAvailable, returnDashAvailableAt = false, -math.huge
 					techniqueDashAvailable = false
 					wallPostHeld = false
 					lastAirDashAt, lastAirDashDirection = -math.huge, Vector3.zero
 					clearPendingWallScale()
+					wallLaunchFloat = nil
 					groundVerticalRunJumpAt = -math.huge
 					finishDash(true)
 					setMovementState("Grounded")
@@ -1058,11 +1165,12 @@ function MovementEngine:Init(inputManager, gameplayCamera)
 		lastWallNormal, lastWallPoint = Vector3.zero, Vector3.zero
 		lastWallContactAt, lastWallActionAt = -math.huge, -math.huge
 		hasSeparatedFromLastWall = false
-		returnDashAvailable, returnDashExpiresAt = false, -math.huge
+		returnDashAvailable, returnDashExpiresAt, returnDashAvailableAt = false, -math.huge, -math.huge
 		techniqueDashAvailable, techniqueDashExpiresAt = false, -math.huge
 		wallPostHeld = false
 		lastAirDashAt, lastAirDashDirection = -math.huge, Vector3.zero
 		clearPendingWallScale()
+		wallLaunchFloat = nil
 		groundVerticalRunJumpAt = -math.huge
 		setMovementState("AirborneFree")
 		character, humanoid, rootPart = nil, nil, nil

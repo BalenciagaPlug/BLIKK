@@ -2,6 +2,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 local UIStyle = require(script.Parent.UIStyle)
@@ -28,6 +29,11 @@ local collapseButton = nil
 local setCollapsed
 local CHAT_WHEEL_OWNER = "ChatHistoryScroll"
 
+local function isMobileTouch()
+	return UserInputService.TouchEnabled
+		and UserInputService.PreferredInput == Enum.PreferredInput.Touch
+end
+
 local function addStroke(instance, color)
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = color
@@ -43,9 +49,20 @@ local function applySettings()
 	if not gui then return end
 	gui.Enabled = context ~= "Hidden" and SessionSettings:Get("ChatVisible")
 	if not gui.Enabled then setPointerOverMessages(false) end
-	panel.BackgroundTransparency = SessionSettings:Get("ChatOpacity")
+	local mobile = isMobileTouch()
+	panel.BackgroundTransparency = if mobile
+		then math.max(SessionSettings:Get("ChatOpacity"), SettingsConfig.Chat.MobileMinimumPanelTransparency)
+		else SessionSettings:Get("ChatOpacity")
+	messageList.BackgroundTransparency = if mobile
+		then math.max(0.25, SettingsConfig.Chat.MobileMinimumMessageTransparency)
+		else 0.25
+	panel.Position = if mobile then UDim2.new(1, -10, 0, 10) else UDim2.new(1, -18, 0, 18)
 	local scale = panel:FindFirstChildOfClass("UIScale")
-	if scale then scale.Scale = SessionSettings:Get("ChatScale") end
+	if scale then
+		scale.Scale = SessionSettings:Get("ChatScale")
+			* (if mobile then SettingsConfig.Chat.MobileScaleMultiplier else 1)
+	end
+	if setCollapsed then setCollapsed(collapsed, false) end
 end
 
 local function getMessageLabels()
@@ -71,7 +88,14 @@ end
 
 local function updateMessageLayout(shouldFollow, previousCanvasY, removedHeight)
 	local messages = getMessageLabels()
-	for _, message in messages do message.Visible = true end
+	local mobileCollapsed = isMobileTouch() and collapsed
+	local visibleStart = if mobileCollapsed
+		then math.max(1, #messages - SettingsConfig.Chat.MobileCollapsedVisibleMessages + 1)
+		else 1
+	for index, message in messages do
+		message.Visible = index >= visibleStart
+		message.TextSize = if mobileCollapsed then 10 else 11
+	end
 	local expectedGeneration = historyGeneration
 	task.defer(function()
 		if not messageList or expectedGeneration ~= historyGeneration then return end
@@ -161,18 +185,36 @@ end
 
 setCollapsed = function(isCollapsed, focusInput)
 	collapsed = isCollapsed
+	local mobile = isMobileTouch()
 	if collapsed and inputBox:IsFocused() then inputBox:ReleaseFocus(false) end
 	messageList.Visible = true
 	inputBox.Visible = not collapsed
 	channelLabel.Visible = not collapsed
-	panel.Size = if collapsed
-		then UDim2.fromOffset(SettingsConfig.Chat.CollapsedWidthPixels, SettingsConfig.Chat.CollapsedHeightPixels)
-		else UDim2.fromOffset(SettingsConfig.Chat.ExpandedWidthPixels, SettingsConfig.Chat.ExpandedHeightPixels)
-	collapseButton.Text = if collapsed then "BLIKK CHAT // ENTER" else "COLLAPSE"
+	local camera = Workspace.CurrentCamera
+	local viewport = camera and camera.ViewportSize or Vector2.new(1280, 720)
+	if mobile then
+		panel.Size = if collapsed
+			then UDim2.fromOffset(SettingsConfig.Chat.MobileCollapsedWidthPixels, SettingsConfig.Chat.MobileCollapsedHeightPixels)
+			else UDim2.fromOffset(
+				math.min(SettingsConfig.Chat.MobileExpandedWidthPixels, viewport.X - 24),
+				math.min(SettingsConfig.Chat.MobileExpandedHeightPixels, viewport.Y - 80)
+			)
+	else
+		panel.Size = if collapsed
+			then UDim2.fromOffset(SettingsConfig.Chat.CollapsedWidthPixels, SettingsConfig.Chat.CollapsedHeightPixels)
+			else UDim2.fromOffset(SettingsConfig.Chat.ExpandedWidthPixels, SettingsConfig.Chat.ExpandedHeightPixels)
+	end
+	collapseButton.Text = if collapsed then (if mobile then "CHAT" else "BLIKK CHAT // ENTER") else "COLLAPSE"
 	collapseButton.Position = if collapsed then UDim2.fromOffset(0, 0) else UDim2.new(1, -82, 0, 5)
-	collapseButton.Size = if collapsed then UDim2.new(1, 0, 0, 28) else UDim2.fromOffset(72, 25)
-	messageList.Position = if collapsed then UDim2.fromOffset(8, 32) else UDim2.fromOffset(8, 36)
-	messageList.Size = if collapsed then UDim2.new(1, -16, 1, -40) else UDim2.new(1, -16, 1, -82)
+	collapseButton.Size = if collapsed then UDim2.new(1, 0, 0, if mobile then 21 else 28) else UDim2.fromOffset(72, 25)
+	collapseButton.TextSize = if mobile then 9 else 10
+	collapseButton.BackgroundTransparency = if mobile then 0.62 else 0
+	messageList.Position = if collapsed
+		then UDim2.fromOffset(if mobile then 5 else 8, if mobile then 23 else 32)
+		else UDim2.fromOffset(8, 36)
+	messageList.Size = if collapsed
+		then UDim2.new(1, if mobile then -10 else -16, 1, if mobile then -27 else -40)
+		else UDim2.new(1, -16, 1, -82)
 	messageList.ScrollBarThickness = if collapsed then 0 else 4
 	updateMessageLayout(isFollowingNewest)
 	if focusInput and not collapsed then task.defer(function() if inputBox.Visible then inputBox:CaptureFocus() end end) end
@@ -317,6 +359,10 @@ function ChatController:Init(gameplayInputManager)
 	SessionSettings.Changed.Event:Connect(function(key)
 		if key == "ChatVisible" or key == "ChatOpacity" or key == "ChatScale" then applySettings() end
 	end)
+	UserInputService:GetPropertyChangedSignal("PreferredInput"):Connect(applySettings)
+	Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(applySettings)
+	local currentCamera = Workspace.CurrentCamera
+	if currentCamera then currentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(applySettings) end
 	script.Destroying:Connect(function() setPointerOverMessages(false) end)
 	applySettings()
 end

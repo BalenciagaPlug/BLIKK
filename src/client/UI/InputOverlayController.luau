@@ -1,5 +1,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 
 local BindingState = require(script.Parent.Parent.Input.BindingState)
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
@@ -19,6 +20,12 @@ local root = nil
 local visualsByToken = {}
 local pressedTokens = {}
 local rootScale = nil
+
+local function shouldShowOverlay()
+	return SessionSettings:Get("InputOverlayVisible")
+		and not (UserInputService.TouchEnabled
+			and UserInputService.PreferredInput == Enum.PreferredInput.Touch)
+end
 
 local keyboardKeys = {
 	{ Token = "KeyCode.One", Label = "1", X = 48, Y = 0 },
@@ -337,7 +344,7 @@ function InputOverlayController:Init(inputManager)
 	rootScale = Instance.new("UIScale")
 	rootScale.Scale = SessionSettings:Get("UIScale") * SessionSettings:Get("InputOverlayScale")
 	rootScale.Parent = root
-	screenGui.Enabled = SessionSettings:Get("InputOverlayVisible")
+	screenGui.Enabled = shouldShowOverlay()
 	screenGui.Parent = playerGui
 	rebuild()
 
@@ -352,7 +359,7 @@ function InputOverlayController:Init(inputManager)
 	end)
 	SessionSettings.Changed.Event:Connect(function(key, value)
 		if key == "InputOverlayVisible" then
-			screenGui.Enabled = value
+			screenGui.Enabled = shouldShowOverlay()
 		elseif key == "InputOverlayOpacity" then
 			for token in visualsByToken do
 				updateVisual(token)
@@ -360,6 +367,9 @@ function InputOverlayController:Init(inputManager)
 		elseif key == "UIScale" or key == "InputOverlayScale" then
 			rootScale.Scale = SessionSettings:Get("UIScale") * SessionSettings:Get("InputOverlayScale")
 		end
+	end)
+	UserInputService:GetPropertyChangedSignal("PreferredInput"):Connect(function()
+		screenGui.Enabled = shouldShowOverlay()
 	end)
 end
 

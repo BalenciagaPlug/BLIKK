@@ -8,6 +8,7 @@ local BindingState = require(script.Parent.Parent.Input.BindingState)
 local SessionSettings = require(script.Parent.Parent.Settings.SessionSettings)
 local PlayerPreferencesController = require(script.Parent.Parent.Settings.PlayerPreferencesController)
 local UIStyle = require(script.Parent.UIStyle)
+local UIAtlas = require(script.Parent.UIAtlas)
 local UINavigationController = require(script.Parent.UINavigationController)
 
 local Shared = ReplicatedStorage:FindFirstChild("Shared")
@@ -141,6 +142,11 @@ local displaySliders = {
 	{ Key = "InputOverlayOpacity", Label = "INPUT OVERLAY OPACITY", Decimals = 0, Suffix = "%", DisplayMultiplier = 100 },
 	{ Key = "ChatOpacity", Label = "CHAT OPACITY", Decimals = 0, Suffix = "%", DisplayMultiplier = 100 },
 	{ Key = "ChatScale", Label = "CHAT SCALE", Decimals = 0, Suffix = "%", DisplayMultiplier = 100 },
+	{ Key = "CrosshairLength", Label = "CROSSHAIR LINE LENGTH", Decimals = 0, Suffix = " PX", DisplayMultiplier = 1 },
+	{ Key = "CrosshairThickness", Label = "CROSSHAIR THICKNESS", Decimals = 0, Suffix = " PX", DisplayMultiplier = 1 },
+	{ Key = "CrosshairDotSize", Label = "CENTRE DOT SIZE", Decimals = 0, Suffix = " PX", DisplayMultiplier = 1 },
+	{ Key = "CrosshairGap", Label = "CROSSHAIR CENTRE GAP", Decimals = 0, Suffix = " PX", DisplayMultiplier = 1 },
+	{ Key = "CrosshairOpacity", Label = "CROSSHAIR OPACITY", Decimals = 0, Suffix = "%", DisplayMultiplier = 100 },
 }
 
 local function addCorner(instance, radiusPixels)
@@ -185,6 +191,7 @@ local function createButton(parent, name, text, position, size)
 	button.Parent = parent
 	addCorner(button, 2)
 	addStroke(button, colors.Edge, 1)
+	UIAtlas:SkinTextButton(button)
 	return button
 end
 
@@ -702,7 +709,7 @@ local function createExtrasPage(parent)
 	content.BackgroundTransparency = 1
 	content.BorderSizePixel = 0
 	content.Size = UDim2.fromScale(1, 1)
-	content.CanvasSize = UDim2.fromOffset(0, 1310)
+	content.CanvasSize = UDim2.fromOffset(0, 1731)
 	content.ScrollBarThickness = 5
 	content.ScrollBarImageColor3 = colors.AccentDim
 	content.Parent = parent
@@ -712,12 +719,12 @@ local function createExtrasPage(parent)
 	for index, definition in displaySliders do
 		createSlider(content, definition, index, SessionSettings, SettingsConfig.ExtrasRanges)
 	end
-	createToggle(content, "HudVisible", "GAMEPLAY HUD", 1, SessionSettings, 444)
-	createToggle(content, "InputOverlayVisible", "LIVE INPUT OVERLAY", 1, SessionSettings, 495)
-	createToggle(content, "ReducedEffects", "REDUCED DASH EFFECTS", 1, SessionSettings, 546)
-	createToggle(content, "ChatVisible", "BLIKK CHAT", 1, SessionSettings, 597)
-	createToggle(content, "ChatTimestamps", "CHAT TIMESTAMPS", 1, SessionSettings, 648)
-	local quality = createButton(content, "EffectsQuality", "EFFECTS QUALITY // " .. SessionSettings:Get("EffectsQuality"), UDim2.fromOffset(16, 700), UDim2.new(1, -32, 0, 38))
+	createToggle(content, "HudVisible", "GAMEPLAY HUD", 1, SessionSettings, 751)
+	createToggle(content, "InputOverlayVisible", "LIVE INPUT OVERLAY", 1, SessionSettings, 802)
+	createToggle(content, "ReducedEffects", "REDUCED DASH EFFECTS", 1, SessionSettings, 853)
+	createToggle(content, "ChatVisible", "BLIKK CHAT", 1, SessionSettings, 904)
+	createToggle(content, "ChatTimestamps", "CHAT TIMESTAMPS", 1, SessionSettings, 955)
+	local quality = createButton(content, "EffectsQuality", "EFFECTS QUALITY // " .. SessionSettings:Get("EffectsQuality"), UDim2.fromOffset(16, 1007), UDim2.new(1, -32, 0, 38))
 	effectsQualityButton = quality
 	bindActivation(quality, function()
 		local current = SessionSettings:Get("EffectsQuality")
@@ -725,35 +732,43 @@ local function createExtrasPage(parent)
 		PlayerPreferencesController:SetPreference("EffectsQuality", nextValue)
 		quality.Text = "EFFECTS QUALITY // " .. SessionSettings:Get("EffectsQuality")
 	end)
-	local preset = createButton(content, "RenderPreset", "RENDER PRESET // " .. SessionSettings:Get("RenderPreset"), UDim2.fromOffset(16, 752), UDim2.new(1, -32, 0, 38))
+	local preset = createButton(content, "RenderPreset", "RENDER PRESET // " .. SessionSettings:Get("RenderPreset"), UDim2.fromOffset(16, 1058), UDim2.new(1, -32, 0, 38))
 	bindActivation(preset, function()
 		local current = SessionSettings:Get("RenderPreset")
 		local nextValue = if current == "COMPETITIVE" then "BALANCED" elseif current == "BALANCED" then "CINEMATIC" elseif current == "CINEMATIC" then "CUSTOM" else "COMPETITIVE"
 		PlayerPreferencesController:SetPreference("RenderPreset", nextValue)
 		preset.Text = "RENDER PRESET // " .. SessionSettings:Get("RenderPreset")
 	end)
-	createToggle(content, "ShowFPS", "SHOW FPS", 1, SessionSettings, 803)
-	createToggle(content, "ShowPing", "SHOW PING", 1, SessionSettings, 854)
-	createToggle(content, "LocalLightShadows", "CUSTOM // LOCAL LIGHT SHADOWS", 1, SessionSettings, 905)
-	createToggle(content, "BloomEnabled", "CUSTOM // BLOOM", 1, SessionSettings, 956)
-	createToggle(content, "ColorCorrectionEnabled", "CUSTOM // COLOR CORRECTION", 1, SessionSettings, 1007)
-	createToggle(content, "AtmosphereEnabled", "CUSTOM // ATMOSPHERE", 1, SessionSettings, 1058)
-	createToggle(content, "WeaponTrailsEnabled", "CUSTOM // WEAPON TRAILS", 1, SessionSettings, 1109)
-	local particleDensity = createButton(content, "ParticleDensity", "CUSTOM // PARTICLE DENSITY // " .. SessionSettings:Get("ParticleDensity"), UDim2.fromOffset(16, 1160), UDim2.new(1, -32, 0, 38))
+	local crosshair = createButton(content, "CrosshairStyle", "CROSSHAIR STYLE // " .. SessionSettings:Get("CrosshairStyle"), UDim2.fromOffset(16, 1109), UDim2.new(1, -32, 0, 38))
+	bindActivation(crosshair, function()
+		local current = SessionSettings:Get("CrosshairStyle")
+		local nextValue = if current == "PRECISION" then "SHOTGUN" elseif current == "SHOTGUN" then "MELEE" else "PRECISION"
+		PlayerPreferencesController:SetPreference("CrosshairStyle", nextValue)
+		crosshair.Text = "CROSSHAIR STYLE // " .. SessionSettings:Get("CrosshairStyle")
+	end)
+	createToggle(content, "CrosshairCenterDot", "CROSSHAIR CENTRE DOT", 1, SessionSettings, 1160)
+	createToggle(content, "ShowFPS", "SHOW FPS", 1, SessionSettings, 1211)
+	createToggle(content, "ShowPing", "SHOW PING", 1, SessionSettings, 1262)
+	createToggle(content, "LocalLightShadows", "CUSTOM // LOCAL LIGHT SHADOWS", 1, SessionSettings, 1313)
+	createToggle(content, "BloomEnabled", "CUSTOM // BLOOM", 1, SessionSettings, 1364)
+	createToggle(content, "ColorCorrectionEnabled", "CUSTOM // COLOR CORRECTION", 1, SessionSettings, 1415)
+	createToggle(content, "AtmosphereEnabled", "CUSTOM // ATMOSPHERE", 1, SessionSettings, 1466)
+	createToggle(content, "WeaponTrailsEnabled", "CUSTOM // WEAPON TRAILS", 1, SessionSettings, 1517)
+	local particleDensity = createButton(content, "ParticleDensity", "CUSTOM // PARTICLE DENSITY // " .. SessionSettings:Get("ParticleDensity"), UDim2.fromOffset(16, 1568), UDim2.new(1, -32, 0, 38))
 	bindActivation(particleDensity, function()
 		local current = SessionSettings:Get("ParticleDensity")
 		local nextValue = if current < 0.35 then 0.35 elseif current < 0.7 then 0.7 elseif current < 1 then 1 else 0
 		PlayerPreferencesController:SetPreference("ParticleDensity", nextValue)
 		particleDensity.Text = "CUSTOM // PARTICLE DENSITY // " .. SessionSettings:Get("ParticleDensity")
 	end)
-	local shake = createButton(content, "ScreenShakeScale", "CUSTOM // SCREEN IMPULSE // " .. SessionSettings:Get("ScreenShakeScale"), UDim2.fromOffset(16, 1211), UDim2.new(1, -32, 0, 38))
+	local shake = createButton(content, "ScreenShakeScale", "CUSTOM // SCREEN IMPULSE // " .. SessionSettings:Get("ScreenShakeScale"), UDim2.fromOffset(16, 1619), UDim2.new(1, -32, 0, 38))
 	bindActivation(shake, function()
 		local current = SessionSettings:Get("ScreenShakeScale")
 		local nextValue = if current < 0.35 then 0.35 elseif current < 0.7 then 0.7 elseif current < 1 then 1 else 0
 		PlayerPreferencesController:SetPreference("ScreenShakeScale", nextValue)
 		shake.Text = "CUSTOM // SCREEN IMPULSE // " .. SessionSettings:Get("ScreenShakeScale")
 	end)
-	createLabel(content, "ResolutionNote", "ROBLOX CONTROLS RESOLUTION, ENGINE AA, TEXTURE QUALITY AND NATIVE AO. BLIKK PRESETS CONTROL ONLY BLIKK-OWNED EFFECTS.", UDim2.fromOffset(16, 1262), UDim2.new(1, -32, 0, 34), 9, colors.TextMuted).TextWrapped = true
+	createLabel(content, "ResolutionNote", "ROBLOX CONTROLS RESOLUTION, ENGINE AA, TEXTURE QUALITY AND NATIVE AO. BLIKK PRESETS CONTROL ONLY BLIKK-OWNED EFFECTS.", UDim2.fromOffset(16, 1670), UDim2.new(1, -32, 0, 34), 9, colors.TextMuted).TextWrapped = true
 end
 
 local function selectTab(tabName)

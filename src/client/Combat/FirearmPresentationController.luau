@@ -491,6 +491,7 @@ local function fireActive()
 		-- The stable root-relative origin converges on the centered crosshair point.
 		-- The rendered muzzle may animate, but presentation must never steer a shot.
 		AimDirection = gameplayDirection.Unit,
+		AimPoint = aim.AimPoint,
 		ClientTimestamp = acceptedAt,
 	})
 	slot.Barrels[barrel] = false

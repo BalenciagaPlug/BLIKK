@@ -12,7 +12,7 @@ local Controller = {}
 local colors = {
 	Text = Color3.fromRGB(232, 230, 216),
 	Muted = Color3.fromRGB(133, 140, 132),
-	Accent = Color3.fromRGB(157, 216, 83),
+	Accent = Color3.fromRGB(157, 69, 232),
 	Panel = Color3.fromRGB(17, 19, 19),
 	Error = Color3.fromRGB(194, 68, 72),
 }
@@ -30,6 +30,7 @@ local function createButton(parent, text, height)
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = Color3.fromRGB(68, 75, 69)
 	stroke.Parent = button
+	FrontendLayout:SkinButton(button, { SelectionAccent = "Side" })
 	return button
 end
 
